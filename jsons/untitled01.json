@@ -1,0 +1,199 @@
+Subaccounts response: AddressResponse { subaccounts: [SubaccountResponseObject { address: Address("dydx14zzueazeh0hj67cghhf9jypslcf9sh2n5k6art"), subaccount_number: SubaccountNumber(0), equity: BigDecimal(sign=Plus, scale=9, digits=[
+                173511484487237
+            ]), free_collateral: BigDecimal(sign=Plus, scale=11, digits=[
+                17225318595872174
+            ]), open_perpetual_positions: {Ticker("BTC-USD"): PerpetualPositionResponseObject { market: Ticker("BTC-USD"), status: Open, side: Short, size: Quantity(BigDecimal(sign=Minus, scale=4, digits=[
+                        6891
+                    ])), max_size: Quantity(BigDecimal(sign=Minus, scale=3, digits=[
+                        9
+                    ])), entry_price: Price(BigDecimal(sign=Plus, scale=20, digits=[
+                        12151324410830692440,
+                        606249
+                    ])), realized_pnl: BigDecimal(sign=Plus, scale=23, digits=[
+                        8370191867739650262,
+                        3786294
+                    ]), created_at: 2025-07-14T07: 53: 55.631Z, created_at_height: Height(44140908), sum_open: BigDecimal(sign=Plus, scale=4, digits=[
+                        54961
+                    ]), sum_close: BigDecimal(sign=Plus, scale=3, digits=[
+                        4806
+                    ]), net_funding: BigDecimal(sign=Minus, scale=6, digits=[
+                        40527862755
+                    ]), unrealized_pnl: BigDecimal(sign=Plus, scale=24, digits=[
+                        11850827652128612552,
+                        767041402
+                    ]), closed_at: None, exit_price: Some(Price(BigDecimal(sign=Plus, scale=20, digits=[
+                        13430699475225414911,
+                        559747
+                    ]))), subaccount_number: SubaccountNumber(0)
+                }
+            }, asset_positions: {Ticker("USDC"): AssetPositionResponseObject { symbol: Symbol("USDC"), side: Long, size: Quantity(BigDecimal(sign=Plus, scale=6, digits=[
+                        236426410913
+                    ])), subaccount_number: SubaccountNumber(0), asset_id: AssetId("0")
+                }
+            }, margin_enabled: true, updated_at_height: Height(54985535), latest_processed_block_height: Height(55278531)
+        }, SubaccountResponseObject { address: Address("dydx14zzueazeh0hj67cghhf9jypslcf9sh2n5k6art"), subaccount_number: SubaccountNumber(1), equity: BigDecimal(sign=Plus, scale=6, digits=[
+                3979030328
+            ]), free_collateral: BigDecimal(sign=Plus, scale=6, digits=[
+                3979030328
+            ]), open_perpetual_positions: {}, asset_positions: {Ticker("USDC"): AssetPositionResponseObject { symbol: Symbol("USDC"), side: Long, size: Quantity(BigDecimal(sign=Plus, scale=6, digits=[
+                        3979030328
+                    ])), subaccount_number: SubaccountNumber(1), asset_id: AssetId("0")
+                }
+            }, margin_enabled: true, updated_at_height: Height(54538441), latest_processed_block_height: Height(55278531)
+        }, SubaccountResponseObject { address: Address("dydx14zzueazeh0hj67cghhf9jypslcf9sh2n5k6art"), subaccount_number: SubaccountNumber(2), equity: BigDecimal(sign=Plus, scale=6, digits=[
+                5
+            ]), free_collateral: BigDecimal(sign=Plus, scale=6, digits=[
+                5
+            ]), open_perpetual_positions: {}, asset_positions: {Ticker("USDC"): AssetPositionResponseObject { symbol: Symbol("USDC"), side: Long, size: Quantity(BigDecimal(sign=Plus, scale=6, digits=[
+                        5
+                    ])), subaccount_number: SubaccountNumber(2), asset_id: AssetId("0")
+                }
+            }, margin_enabled: true, updated_at_height: Height(4583132), latest_processed_block_height: Height(55278531)
+        }, SubaccountResponseObject { address: Address("dydx14zzueazeh0hj67cghhf9jypslcf9sh2n5k6art"), subaccount_number: SubaccountNumber(3), equity: BigDecimal(sign=Plus, scale=6, digits=[
+                83581041
+            ]), free_collateral: BigDecimal(sign=Plus, scale=6, digits=[
+                83581041
+            ]), open_perpetual_positions: {}, asset_positions: {Ticker("USDC"): AssetPositionResponseObject { symbol: Symbol("USDC"), side: Long, size: Quantity(BigDecimal(sign=Plus, scale=6, digits=[
+                        83581041
+                    ])), subaccount_number: SubaccountNumber(3), asset_id: AssetId("0")
+                }
+            }, margin_enabled: true, updated_at_height: Height(25290958), latest_processed_block_height: Height(55278531)
+        }, SubaccountResponseObject { address: Address("dydx14zzueazeh0hj67cghhf9jypslcf9sh2n5k6art"), subaccount_number: SubaccountNumber(4), equity: BigDecimal(sign=Plus, scale=0, digits=[
+                60
+            ]), free_collateral: BigDecimal(sign=Plus, scale=0, digits=[
+                60
+            ]), open_perpetual_positions: {}, asset_positions: {Ticker("USDC"): AssetPositionResponseObject { symbol: Symbol("USDC"), side: Long, size: Quantity(BigDecimal(sign=Plus, scale=0, digits=[
+                        60
+                    ])), subaccount_number: SubaccountNumber(4), asset_id: AssetId("0")
+                }
+            }, margin_enabled: true, updated_at_height: Height(8014310), latest_processed_block_height: Height(55278531)
+        }, SubaccountResponseObject { address: Address("dydx14zzueazeh0hj67cghhf9jypslcf9sh2n5k6art"), subaccount_number: SubaccountNumber(5), equity: BigDecimal(sign=Plus, scale=0, digits=[
+                60
+            ]), free_collateral: BigDecimal(sign=Plus, scale=0, digits=[
+                60
+            ]), open_perpetual_positions: {}, asset_positions: {Ticker("USDC"): AssetPositionResponseObject { symbol: Symbol("USDC"), side: Long, size: Quantity(BigDecimal(sign=Plus, scale=0, digits=[
+                        60
+                    ])), subaccount_number: SubaccountNumber(5), asset_id: AssetId("0")
+                }
+            }, margin_enabled: true, updated_at_height: Height(8016805), latest_processed_block_height: Height(55278531)
+        }, SubaccountResponseObject { address: Address("dydx14zzueazeh0hj67cghhf9jypslcf9sh2n5k6art"), subaccount_number: SubaccountNumber(6), equity: BigDecimal(sign=Plus, scale=0, digits=[
+                10
+            ]), free_collateral: BigDecimal(sign=Plus, scale=0, digits=[
+                10
+            ]), open_perpetual_positions: {}, asset_positions: {Ticker("USDC"): AssetPositionResponseObject { symbol: Symbol("USDC"), side: Long, size: Quantity(BigDecimal(sign=Plus, scale=0, digits=[
+                        10
+                    ])), subaccount_number: SubaccountNumber(6), asset_id: AssetId("0")
+                }
+            }, margin_enabled: true, updated_at_height: Height(8016716), latest_processed_block_height: Height(55278531)
+        }, SubaccountResponseObject { address: Address("dydx14zzueazeh0hj67cghhf9jypslcf9sh2n5k6art"), subaccount_number: SubaccountNumber(7), equity: BigDecimal(sign=Plus, scale=0, digits=[
+                10
+            ]), free_collateral: BigDecimal(sign=Plus, scale=0, digits=[
+                10
+            ]), open_perpetual_positions: {}, asset_positions: {Ticker("USDC"): AssetPositionResponseObject { symbol: Symbol("USDC"), side: Long, size: Quantity(BigDecimal(sign=Plus, scale=0, digits=[
+                        10
+                    ])), subaccount_number: SubaccountNumber(7), asset_id: AssetId("0")
+                }
+            }, margin_enabled: true, updated_at_height: Height(8016766), latest_processed_block_height: Height(55278531)
+        }, SubaccountResponseObject { address: Address("dydx14zzueazeh0hj67cghhf9jypslcf9sh2n5k6art"), subaccount_number: SubaccountNumber(8), equity: BigDecimal(sign=Plus, scale=0, digits=[
+                10
+            ]), free_collateral: BigDecimal(sign=Plus, scale=0, digits=[
+                10
+            ]), open_perpetual_positions: {}, asset_positions: {Ticker("USDC"): AssetPositionResponseObject { symbol: Symbol("USDC"), side: Long, size: Quantity(BigDecimal(sign=Plus, scale=0, digits=[
+                        10
+                    ])), subaccount_number: SubaccountNumber(8), asset_id: AssetId("0")
+                }
+            }, margin_enabled: true, updated_at_height: Height(8035176), latest_processed_block_height: Height(55278531)
+        }, SubaccountResponseObject { address: Address("dydx14zzueazeh0hj67cghhf9jypslcf9sh2n5k6art"), subaccount_number: SubaccountNumber(9), equity: BigDecimal(sign=Plus, scale=0, digits=[
+                10
+            ]), free_collateral: BigDecimal(sign=Plus, scale=0, digits=[
+                10
+            ]), open_perpetual_positions: {}, asset_positions: {Ticker("USDC"): AssetPositionResponseObject { symbol: Symbol("USDC"), side: Long, size: Quantity(BigDecimal(sign=Plus, scale=0, digits=[
+                        10
+                    ])), subaccount_number: SubaccountNumber(9), asset_id: AssetId("0")
+                }
+            }, margin_enabled: true, updated_at_height: Height(8085998), latest_processed_block_height: Height(55278531)
+        }, SubaccountResponseObject { address: Address("dydx14zzueazeh0hj67cghhf9jypslcf9sh2n5k6art"), subaccount_number: SubaccountNumber(10), equity: BigDecimal(sign=Plus, scale=6, digits=[
+                6
+            ]), free_collateral: BigDecimal(sign=Plus, scale=6, digits=[
+                6
+            ]), open_perpetual_positions: {}, asset_positions: {Ticker("USDC"): AssetPositionResponseObject { symbol: Symbol("USDC"), side: Long, size: Quantity(BigDecimal(sign=Plus, scale=6, digits=[
+                        6
+                    ])), subaccount_number: SubaccountNumber(10), asset_id: AssetId("0")
+                }
+            }, margin_enabled: true, updated_at_height: Height(8086917), latest_processed_block_height: Height(55278531)
+        }, SubaccountResponseObject { address: Address("dydx14zzueazeh0hj67cghhf9jypslcf9sh2n5k6art"), subaccount_number: SubaccountNumber(11), equity: BigDecimal(sign=Plus, scale=0, digits=[
+                20
+            ]), free_collateral: BigDecimal(sign=Plus, scale=0, digits=[
+                20
+            ]), open_perpetual_positions: {}, asset_positions: {Ticker("USDC"): AssetPositionResponseObject { symbol: Symbol("USDC"), side: Long, size: Quantity(BigDecimal(sign=Plus, scale=0, digits=[
+                        20
+                    ])), subaccount_number: SubaccountNumber(11), asset_id: AssetId("0")
+                }
+            }, margin_enabled: true, updated_at_height: Height(9792510), latest_processed_block_height: Height(55278531)
+        }, SubaccountResponseObject { address: Address("dydx14zzueazeh0hj67cghhf9jypslcf9sh2n5k6art"), subaccount_number: SubaccountNumber(128), equity: BigDecimal(sign=Plus, scale=6, digits=[
+                74813537
+            ]), free_collateral: BigDecimal(sign=Plus, scale=6, digits=[
+                74813537
+            ]), open_perpetual_positions: {}, asset_positions: {Ticker("USDC"): AssetPositionResponseObject { symbol: Symbol("USDC"), side: Long, size: Quantity(BigDecimal(sign=Plus, scale=6, digits=[
+                        74813537
+                    ])), subaccount_number: SubaccountNumber(128), asset_id: AssetId("0")
+                }
+            }, margin_enabled: true, updated_at_height: Height(25210831), latest_processed_block_height: Height(55278531)
+        }, SubaccountResponseObject { address: Address("dydx14zzueazeh0hj67cghhf9jypslcf9sh2n5k6art"), subaccount_number: SubaccountNumber(129), equity: BigDecimal(sign=Plus, scale=0, digits=[
+                80
+            ]), free_collateral: BigDecimal(sign=Plus, scale=0, digits=[
+                80
+            ]), open_perpetual_positions: {}, asset_positions: {Ticker("USDC"): AssetPositionResponseObject { symbol: Symbol("USDC"), side: Long, size: Quantity(BigDecimal(sign=Plus, scale=0, digits=[
+                        80
+                    ])), subaccount_number: SubaccountNumber(129), asset_id: AssetId("0")
+                }
+            }, margin_enabled: true, updated_at_height: Height(18368774), latest_processed_block_height: Height(55278531)
+        }, SubaccountResponseObject { address: Address("dydx14zzueazeh0hj67cghhf9jypslcf9sh2n5k6art"), subaccount_number: SubaccountNumber(130), equity: BigDecimal(sign=Plus, scale=9, digits=[
+                35550902678
+            ]), free_collateral: BigDecimal(sign=Plus, scale=11, digits=[
+                3548911557156
+            ]), open_perpetual_positions: {Ticker("ETH-USD"): PerpetualPositionResponseObject { market: Ticker("ETH-USD"), status: Open, side: Short, size: Quantity(BigDecimal(sign=Minus, scale=3, digits=[
+                        1
+                    ])), max_size: Quantity(BigDecimal(sign=Minus, scale=3, digits=[
+                        1
+                    ])), entry_price: Price(BigDecimal(sign=Plus, scale=1, digits=[
+                        12317
+                    ])), realized_pnl: BigDecimal(sign=Plus, scale=6, digits=[
+                        1198275
+                    ]), created_at: 2024-11-04T06: 19: 08.685Z, created_at_height: Height(24520575), sum_open: BigDecimal(sign=Plus, scale=3, digits=[
+                        1
+                    ]), sum_close: BigDecimal(sign=NoSign, scale=0, digits=[]), net_funding: BigDecimal(sign=Plus, scale=6, digits=[
+                        1198275
+                    ]), unrealized_pnl: BigDecimal(sign=Minus, scale=9, digits=[
+                        1857655322
+                    ]), closed_at: None, exit_price: None, subaccount_number: SubaccountNumber(130)
+                }
+            }, asset_positions: {Ticker("USDC"): AssetPositionResponseObject { symbol: Symbol("USDC"), side: Long, size: Quantity(BigDecimal(sign=Plus, scale=6, digits=[
+                        38640258
+                    ])), subaccount_number: SubaccountNumber(130), asset_id: AssetId("0")
+                }
+            }, margin_enabled: true, updated_at_height: Height(24522672), latest_processed_block_height: Height(55278531)
+        }, SubaccountResponseObject { address: Address("dydx14zzueazeh0hj67cghhf9jypslcf9sh2n5k6art"), subaccount_number: SubaccountNumber(131), equity: BigDecimal(sign=Plus, scale=6, digits=[
+                24479874
+            ]), free_collateral: BigDecimal(sign=Plus, scale=6, digits=[
+                24479874
+            ]), open_perpetual_positions: {}, asset_positions: {Ticker("USDC"): AssetPositionResponseObject { symbol: Symbol("USDC"), side: Long, size: Quantity(BigDecimal(sign=Plus, scale=6, digits=[
+                        24479874
+                    ])), subaccount_number: SubaccountNumber(131), asset_id: AssetId("0")
+                }
+            }, margin_enabled: true, updated_at_height: Height(27886620), latest_processed_block_height: Height(55278531)
+        }, SubaccountResponseObject { address: Address("dydx14zzueazeh0hj67cghhf9jypslcf9sh2n5k6art"), subaccount_number: SubaccountNumber(4567), equity: BigDecimal(sign=Plus, scale=4, digits=[
+                7000001
+            ]), free_collateral: BigDecimal(sign=Plus, scale=4, digits=[
+                7000001
+            ]), open_perpetual_positions: {}, asset_positions: {Ticker("USDC"): AssetPositionResponseObject { symbol: Symbol("USDC"), side: Long, size: Quantity(BigDecimal(sign=Plus, scale=4, digits=[
+                        7000001
+                    ])), subaccount_number: SubaccountNumber(4567), asset_id: AssetId("0")
+                }
+            }, margin_enabled: true, updated_at_height: Height(19009783), latest_processed_block_height: Height(55278531)
+        }
+    ], total_trading_rewards: BigDecimal(sign=Plus, scale=18, digits=[
+        9458662326853841625,
+        1
+    ])
+}

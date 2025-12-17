@@ -1,0 +1,63 @@
+[package]
+name = "dydx"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+readme.workspace = true
+description = "dYdX v4 asynchronous client."
+repository = "https://github.com/dydxprotocol/v4-clients/tree/main/v4-client-rs"
+
+# https://crates.io/categories
+categories = ["api-bindings", "asynchronous", "finance"]
+keywords = ["trading", "dex"]
+
+[features]
+default = ["faucet", "noble", "telemetry"]
+faucet = []
+noble = [
+    "dep:ibc-proto"
+]
+telemetry = [
+    "dep:metrics",
+]
+# Enables strict Serde deserialization by denying unknown fields in API response types.
+strict-serde = []
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+base64 = "0.22"
+bigdecimal.workspace = true
+bip32 = { version = "0.5", default-features = false, features = ["bip39", "alloc", "secp256k1"] }
+cosmrs = "0.21.1"
+chrono = { version = "0.4", features = ["serde"] }
+delegate = "0.13"
+derive_more.workspace = true
+futures-util = "0.3"
+governor = { version = "0.8", default-features = false, features = ["std"] }
+ibc-proto = { version = "0.52", optional = true }
+log.workspace = true
+rand = "0.9"
+reqwest = { version = "0.12", features = ["json"] }
+rustls = { version = "0.23", features = ["ring"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_with = "3.12"
+strum = { version = "0.26", features = ["derive"] }
+thiserror.workspace = true
+tonic = { version = "0.13", features = ["tls-native-roots"] }
+tokio.workspace = true
+tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
+toml = "0.8"
+tower = { version = "0.5", features = ["timeout"] }
+dydx-proto.workspace = true
+
+# Telemetry
+metrics = { version = "0.24", optional = true }
+
+[dev-dependencies]
+metrics-exporter-tcp = "0.11.0"
+serial_test = "3.2.0"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+

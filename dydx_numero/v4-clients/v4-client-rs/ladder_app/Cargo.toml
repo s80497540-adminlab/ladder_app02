@@ -1,0 +1,30 @@
+[package]
+name = "ladder_app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+default-run = "ladder_app"
+
+[dependencies]
+# reuse workspace deps
+anyhow.workspace = true
+bigdecimal.workspace = true
+tokio.workspace = true
+
+# app-specific deps
+ratatui = "0.28"
+crossterm = "0.27"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+# depend on the dYdX client crate in ../client
+dydx_client = { package = "dydx", path = "../client" }
+rand = "0.9.2"
+eframe = { version = "0.27", features = ["glow"] }
+egui = "0.27"
+egui_plot = "0.27"
+
+dydx-proto.workspace = true
+rustls = { version = "0.23", features = ["ring"] }
+chrono = "0.4"
+rhai = "1"

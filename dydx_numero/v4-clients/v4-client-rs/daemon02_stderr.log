@@ -1,0 +1,5 @@
+[daemon] started for tickers: ETH-USD, BTC-USD, SOL-USD
+[daemon] writing CSVs under ./data/ ...
+[daemon] subscribing orders for BTC-USD
+[daemon] subscribing orders for ETH-USD
+[daemon] subscribing orders for SOL-USD

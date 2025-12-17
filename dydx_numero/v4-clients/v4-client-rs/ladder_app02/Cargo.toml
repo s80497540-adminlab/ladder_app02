@@ -1,0 +1,41 @@
+[package]
+name = "ladder_app02"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# Pin Slint runtime to match what your workspace is already using (cargo tree showed 1.14.1)
+slint = "1.14.1"
+
+chrono = "0.4"
+bigdecimal = "0.4"
+rhai = "1.19"
+tokio = { version = "1", features = ["full"] }
+rustls = { version = "0.23", features = ["ring"] }
+rand = "0.8"
+
+# Your existing dYdX client crate (we're not using it yet in this version,
+# but it's fine to leave it here).
+dydx = { path = "../client" }
+
+[build-dependencies]
+# Pin Slint build tooling to the same version as runtime
+slint-build = "1.14.1"
+
+[[bin]]
+name = "ladder_app02"
+path = "src/main.rs"
+
+[[bin]]
+name = "data_daemon02"
+path = "src/bin/data_daemon02.rs"
+
+# NOTE: You’ll keep seeing the “profiles ignored” warning until this section is moved
+# to the WORKSPACE root Cargo.toml (v4-client-rs/Cargo.toml).
+[profile.release]
+opt-level = 3
+codegen-units = 16
+lto = "thin"
+incremental = true
+debug = false

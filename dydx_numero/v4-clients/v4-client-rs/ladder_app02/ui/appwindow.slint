@@ -1,0 +1,992 @@
+import { Button, CheckBox, LineEdit, ListView, TextEdit } from "std-widgets.slint";
+
+// ---------- Data structs exposed to Rust ----------------------------
+
+export struct BookLevel {
+    price: string,
+    size: string,
+    depth_ratio: float,
+    is_best: bool,
+}
+
+export struct Trade {
+    ts: string,
+    side: string,
+    size: string,
+    is_buy: bool,
+}
+
+export struct CandleRow {
+    ts: string,
+    open: string,
+    high: string,
+    low: string,
+    close: string,
+    volume: string,
+}
+
+export struct CandlePoint {
+    x: float,
+    w: float,
+    open: float,
+    high: float,
+    low: float,
+    close: float,
+    is_up: bool,
+    volume: float,   // normalized 0..1 volume
+}
+
+export struct Receipt {
+    ts: string,
+    ticker: string,
+    side: string,
+    kind: string,
+    size: string,
+    status: string,
+    comment: string,
+}
+
+// ---------- Orderbook panel with drag + richer rows + intensity -----
+
+component OrderbookPanel inherits Rectangle {
+    in-out property <[BookLevel]> bids;
+    in-out property <[BookLevel]> asks;
+    in property <string> title;
+    in property <float> mid;
+    in property <float> spread;
+
+    background: #202533;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: #31384a;
+
+    // Header bar
+    Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: 24px;
+        background: #303545;
+
+        Text {
+            x: 6px;
+            y: 4px;
+            width: parent.width - 120px;
+            height: 16px;
+            text: title;
+            color: #ffffff;
+        }
+
+        // Small spread badge on the right
+        Rectangle {
+            x: parent.width - 110px;
+            y: 4px;
+            width: 104px;
+            height: 16px;
+            border-radius: 8px;
+            background: spread < mid * 0.0005
+                ? #123922
+                : (spread > mid * 0.0015 ? #45161c : #303545);
+
+            Text {
+                x: 4px;
+                y: 1px;
+                width: parent.width - 8px;
+                height: parent.height - 2px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                text: "Spr: " + spread;
+                color: #e0e0e0;
+                font-size: 10px;
+            }
+        }
+
+        // --- Drag area (drag by grabbing the header) ----------------
+        TouchArea {
+            x: 0px;
+            y: 0px;
+            width: parent.width;
+            height: parent.height;
+
+            property <length> last_x;
+            property <length> last_y;
+            property <bool> dragging;
+
+            pointer-event(event) => {
+                if event.kind == PointerEventKind.down {
+                    dragging = true;
+                    last_x = self.mouse-x;
+                    last_y = self.mouse-y;
+                } else if event.kind == PointerEventKind.up {
+                    dragging = false;
+                } else if event.kind == PointerEventKind.move && dragging {
+                    let dx = self.mouse-x - last_x;
+                    let dy = self.mouse-y - last_y;
+
+                    root.x = root.x + dx;
+                    root.y = root.y + dy;
+
+                    last_x = self.mouse-x;
+                    last_y = self.mouse-y;
+                }
+            }
+        }
+    }
+
+    // Bids
+    Rectangle {
+        x: 4px;
+        y: 28px;
+        width: (parent.width * 0.5) - 6px;
+        height: parent.height - 32px;
+        background: #10131a;
+        border-radius: 2px;
+        border-width: 1px;
+        border-color: #222634;
+
+        Text { x: 4px; y: 4px; text: "Bids"; color: #66ff66; }
+        Text { x: 4px; y: 20px; text: "Price"; color: #88ff88; }
+        Text { x: parent.width - 70px; y: 20px; text: "Size"; color: #88ff88; }
+
+        ListView {
+            x: 4px;
+            y: 36px;
+            width: parent.width - 8px;
+            height: parent.height - 40px;
+
+            for b in root.bids : Rectangle {
+                width: parent.width;
+                height: 18px;
+                background: #10131a;
+                border-width: b.is_best ? 1px : 0px;
+                border-color: #a0ffb0;
+
+                property <float> row_fade: 0.25 + (1.0 - (self.y / parent.height)) * 0.75;
+                property <float> heat: b.depth_ratio * (2.0 - b.depth_ratio);
+
+                Rectangle {
+                    x: 0px;
+                    y: 2px;
+                    width: parent.width * heat;
+                    height: parent.height - 4px;
+                    background: #123922;
+                    opacity: (0.12 + heat * 0.88) * row_fade;
+                }
+
+                Text {
+                    x: 4px;
+                    y: 1px;
+                    text: b.price;
+                    color: b.depth_ratio > 0.7 ? #ffffff : (b.depth_ratio > 0.3 ? #b0ffb0 : #80b080);
+                }
+
+                Text {
+                    x: parent.width - 4px;
+                    y: 1px;
+                    horizontal-alignment: right;
+                    width: 70px;
+                    text: b.size;
+                    color: b.depth_ratio > 0.7 ? #f0fff0 : (b.depth_ratio > 0.3 ? #e0ffe0 : #a0c0a0);
+                }
+            }
+        }
+    }
+
+    // Asks
+    Rectangle {
+        x: (parent.width * 0.5) + 2px;
+        y: 28px;
+        width: (parent.width * 0.5) - 6px;
+        height: parent.height - 32px;
+        background: #10131a;
+        border-radius: 2px;
+        border-width: 1px;
+        border-color: #222634;
+
+        Text { x: 4px; y: 4px; text: "Asks"; color: #ff6666; }
+        Text { x: 4px; y: 20px; text: "Price"; color: #ffaaaa; }
+        Text { x: parent.width - 70px; y: 20px; text: "Size"; color: #ffaaaa; }
+
+        ListView {
+            x: 4px;
+            y: 36px;
+            width: parent.width - 8px;
+            height: parent.height - 40px;
+
+            for a in root.asks : Rectangle {
+                width: parent.width;
+                height: 18px;
+                background: #10131a;
+                border-width: a.is_best ? 1px : 0px;
+                border-color: #ffb0b0;
+
+                property <float> row_fade: 0.25 + (1.0 - (self.y / parent.height)) * 0.75;
+                property <float> heat: a.depth_ratio * a.depth_ratio;
+
+                Rectangle {
+                    width: parent.width * heat;
+                    height: parent.height - 4px;
+                    x: parent.width - self.width;
+                    y: 2px;
+                    background: #45161c;
+                    opacity: (0.12 + heat * 0.88) * row_fade;
+                }
+
+                Text {
+                    x: 4px;
+                    y: 1px;
+                    text: a.price;
+                    color: a.depth_ratio > 0.7 ? #ffffff : (a.depth_ratio > 0.3 ? #ffd0d0 : #c08080);
+                }
+
+                Text {
+                    x: parent.width - 4px;
+                    y: 1px;
+                    horizontal-alignment: right;
+                    width: 70px;
+                    text: a.size;
+                    color: a.depth_ratio > 0.7 ? #ffeaea : (a.depth_ratio > 0.3 ? #ffdada : #c0a0a0);
+                }
+            }
+        }
+    }
+}
+
+// ---------- Micro depth panel (two-wall trough) ---------------------
+
+component MicroDepthPanel inherits Rectangle {
+    in-out property <[BookLevel]> bids;
+    in-out property <[BookLevel]> asks;
+    in property <float> imbalance;
+
+    property <float> top_bid_ratio: bids.length > 0 ? bids[0].depth_ratio : 0.0;
+    property <float> top_ask_ratio: asks.length > 0 ? asks[0].depth_ratio : 0.0;
+
+    background: #11141d;
+    border-radius: 3px;
+    border-width: 1px;
+    border-color: #262b38;
+
+    Text { x: 4px; y: 2px; text: "Micro Depth"; color: #bbbbbb; font-size: 10px; }
+    Text { x: parent.width - 80px; y: 2px; width: 76px; horizontal-alignment: right;
+           text: "Imb: " + imbalance; color: #c0c0c0; font-size: 10px; }
+
+    Rectangle {
+        x: 4px;
+        y: 16px;
+        width: parent.width - 8px;
+        height: parent.height - 20px;
+        background: #151821;
+
+        Rectangle { x: 0.5 * parent.width - 1px; y: 2px; width: 2px; height: parent.height - 4px;
+                    background: #303545; opacity: 0.8; }
+
+        Rectangle {
+            x: 0px;
+            width: 0.5 * parent.width;
+
+            property <length> bar_height: 2px + (parent.height - 4px) * root.top_bid_ratio;
+            y: parent.height - bar_height;
+            height: bar_height;
+
+            background: #1e5a2f;
+            opacity: 0.2 + root.top_bid_ratio * 0.8;
+        }
+
+        Rectangle {
+            x: 0.5 * parent.width;
+            width: 0.5 * parent.width;
+
+            property <length> bar_height: 2px + (parent.height - 4px) * root.top_ask_ratio;
+            y: parent.height - bar_height;
+            height: bar_height;
+
+            background: #7a2a30;
+            opacity: 0.2 + root.top_ask_ratio * 0.8;
+        }
+    }
+}
+
+// ---------- Candlestick chart (zoom + pan + cursor + wheel zoom) ----
+
+component CandleChart inherits Rectangle {
+    in property <[CandlePoint]> points;
+    in property <float> mid_line_y;  // 0..1 normalized (0 = top, 1 = bottom)
+
+    // in-out so wheel handler can update these.
+    in-out property <float> x_zoom;
+    in-out property <float> y_zoom;
+
+    // pan offsets in normalized screen space
+    in-out property <float> pan_x;
+    in-out property <float> pan_y;
+
+    // last cursor inside chart (0..1)
+    in-out property <float> cursor_x;
+    in-out property <float> cursor_y;
+
+    background: #10131a;
+    border-radius: 2px;
+    border-width: 1px;
+    border-color: #222634;
+
+    Rectangle { x: 0px; width: parent.width; height: 1px; y: parent.height * 0.25; background: #202633; opacity: 0.35; }
+    Rectangle { x: 0px; width: parent.width; height: 1px; y: parent.height * 0.5;  background: #202633; opacity: 0.35; }
+    Rectangle { x: 0px; width: parent.width; height: 1px; y: parent.height * 0.75; background: #202633; opacity: 0.35; }
+
+    Rectangle {
+        x: 0px;
+        width: parent.width;
+        height: 1px;
+        property <float> mid_z: Math.max(0.0, Math.min(1.0, mid_line_y + root.pan_y));
+        y: mid_z * parent.height;
+        background: #303545;
+        opacity: 0.7;
+    }
+
+    // Volume
+    for cp in points : Rectangle {
+        property <float> zx: Math.max(0.25, Math.min(20.0, root.x_zoom));
+        property <float> x_n: 0.5 + (cp.x - 0.5) * zx + root.pan_x;
+        property <float> w_n: cp.w * zx;
+
+        x: (x_n - w_n * 0.5) * parent.width;
+        width: w_n * parent.width;
+        visible: (x_n + w_n) > -0.2 && (x_n - w_n) < 1.2;
+
+        y: parent.height - Math.max(1px, cp.volume * parent.height * 0.25);
+        height: Math.max(1px, cp.volume * parent.height * 0.25);
+        background: #303545;
+        opacity: 0.35;
+    }
+
+    // Candles
+    for cp in points : Rectangle {
+        property <float> zx: Math.max(0.25, Math.min(20.0, root.x_zoom));
+        property <float> zy: Math.max(0.25, Math.min(20.0, root.y_zoom));
+
+        property <float> x_n: 0.5 + (cp.x - 0.5) * zx + root.pan_x;
+        property <float> w_n: cp.w * zx;
+
+        property <float> open_z:  Math.max(0.0, Math.min(1.0, root.mid_line_y + (cp.open  - root.mid_line_y) * zy + root.pan_y));
+        property <float> high_z:  Math.max(0.0, Math.min(1.0, root.mid_line_y + (cp.high  - root.mid_line_y) * zy + root.pan_y));
+        property <float> low_z:   Math.max(0.0, Math.min(1.0, root.mid_line_y + (cp.low   - root.mid_line_y) * zy + root.pan_y));
+        property <float> close_z: Math.max(0.0, Math.min(1.0, root.mid_line_y + (cp.close - root.mid_line_y) * zy + root.pan_y));
+
+        x: (x_n - w_n * 0.5) * parent.width;
+        width: w_n * parent.width;
+        y: 0px;
+        height: parent.height;
+        visible: (x_n + w_n) > -0.2 && (x_n - w_n) < 1.2;
+
+        Rectangle {
+            x: parent.width * 0.5 - 0.5px;
+            width: 1px;
+            y: high_z * parent.height;
+            height: Math.max(1px, (low_z - high_z) * parent.height);
+            background: cp.is_up ? #66cc88 : #cc6677;
+        }
+
+        Rectangle {
+            x: parent.width * 0.5 - Math.max(1px, parent.width * 0.18);
+            width: Math.max(2px, parent.width * 0.36);
+
+            y: Math.min(open_z, close_z) * parent.height;
+            height: Math.max(1px, (Math.max(open_z, close_z) - Math.min(open_z, close_z)) * parent.height);
+            background: cp.is_up ? #44aa66 : #aa4455;
+        }
+    }
+
+    // Cursor crosshair (visible; updates on hover)
+    Rectangle {
+        x: Math.max(0px, Math.min(parent.width - 1px, root.cursor_x * parent.width));
+        y: 0px;
+        width: 1px;
+        height: parent.height;
+        background: #303545;
+        opacity: 0.45;
+    }
+
+    Rectangle {
+        x: 0px;
+        y: Math.max(0px, Math.min(parent.height - 1px, root.cursor_y * parent.height));
+        width: parent.width;
+        height: 1px;
+        background: #303545;
+        opacity: 0.45;
+    }
+
+    // Drag-pan + cursor tracking + wheel zoom-to-cursor
+    TouchArea {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+
+        property <length> last_x;
+        property <length> last_y;
+        property <bool> dragging;
+
+        pointer-event(event) => {
+            // Always update cursor on hover/move/down
+            root.cursor_x = Math.max(0.0, Math.min(1.0, self.mouse-x / parent.width));
+            root.cursor_y = Math.max(0.0, Math.min(1.0, self.mouse-y / parent.height));
+
+            if event.kind == PointerEventKind.down {
+                dragging = true;
+                last_x = self.mouse-x;
+                last_y = self.mouse-y;
+            } else if event.kind == PointerEventKind.up {
+                dragging = false;
+            } else if event.kind == PointerEventKind.move && dragging {
+                let dx = (self.mouse-x - last_x) / parent.width;
+                let dy = (self.mouse-y - last_y) / parent.height;
+
+                root.pan_x = Math.max(-2.0, Math.min(2.0, root.pan_x + dx));
+                root.pan_y = Math.max(-2.0, Math.min(2.0, root.pan_y + dy));
+
+                last_x = self.mouse-x;
+                last_y = self.mouse-y;
+            }
+        }
+
+        // Slint 1.14.x: wheel/trackpad scroll arrives via scroll-event
+        scroll-event(event) => {
+            // keep cursor “alive” during wheel
+            root.cursor_x = Math.max(0.0, Math.min(1.0, self.mouse-x / parent.width));
+            root.cursor_y = Math.max(0.0, Math.min(1.0, self.mouse-y / parent.height));
+
+            let dy = event.delta-y; // length (usually +/- pixels)
+            let is_shift = event.modifiers.shift;
+            let is_ctrl  = event.modifiers.control;
+
+            // dy<0 zoom in, dy>0 zoom out (trackpads invert sometimes; this feels right on most)
+            let dir  = dy < 0px ? 1.0 : -1.0;
+            let step = is_ctrl ? 0.05 : 0.25;
+
+            if is_shift {
+                // X zoom-to-cursor
+                let old_z = Math.max(0.25, Math.min(20.0, root.x_zoom));
+                let cx = root.cursor_x;
+                let px = root.pan_x;
+
+                let xw = 0.5 + (cx - 0.5 - px) / old_z;
+
+                let new_z = Math.max(0.25, Math.min(20.0, old_z + dir * step));
+                root.x_zoom = new_z;
+
+                let px2 = cx - 0.5 - (xw - 0.5) * new_z;
+                root.pan_x = Math.max(-2.0, Math.min(2.0, px2));
+            } else {
+                // Y zoom-to-cursor
+                let old_z = Math.max(0.25, Math.min(20.0, root.y_zoom));
+                let cy = root.cursor_y;
+                let py = root.pan_y;
+                let mid = root.mid_line_y;
+
+                let yw = mid + (cy - mid - py) / old_z;
+
+                let new_z = Math.max(0.25, Math.min(20.0, old_z + dir * step));
+                root.y_zoom = new_z;
+
+                let py2 = cy - mid - (yw - mid) * new_z;
+                root.pan_y = Math.max(-2.0, Math.min(2.0, py2));
+            }
+
+            // IMPORTANT: scroll-event must return EventResult
+            EventResult.accept
+        }
+    }
+}
+
+// ---------- Tiny PnL-style sparkline --------------------------------
+
+component PnLSparkline inherits Rectangle {
+    in property <[CandlePoint]> points;
+    background: #00000000;
+
+    for cp in points : Rectangle {
+        x: cp.x * parent.width;
+        width: 2px;
+        y: cp.close * parent.height;
+        height: 2px;
+        background: cp.is_up ? #80ff80 : #ff8080;
+    }
+}
+
+// ---------- Main window component -----------------------------------
+
+export component AppWindow inherits Window {
+    width: 1200px;
+    height: 800px;
+    title: "Ladder App 02";
+
+    in-out property <string> mode;
+    in-out property <string> time_mode;
+
+    in-out property <bool> show_depth;
+    in-out property <bool> show_ladders;
+    in-out property <bool> show_trades;
+    in-out property <bool> show_volume;
+
+    in-out property <string> trade_side;
+    in-out property <float> trade_size;
+    in-out property <float> trade_leverage;
+
+    in-out property <string> bot_signal;
+    in-out property <float> bot_size;
+    in-out property <string> bot_comment;
+    in-out property <bool> bot_auto_trade;
+
+    in-out property <float> balance_usdc;
+    in-out property <float> balance_pnl;
+
+    in-out property <int> candle_tf_secs;
+    in-out property <int> candle_window_minutes;
+
+    in-out property <string> script_text;
+    in-out property <string> script_error;
+
+    in-out property <string> data_range;
+    in-out property <string> current_ticker;
+
+    in-out property <float> mid_price;
+    in-out property <float> best_bid;
+    in-out property <float> best_ask;
+    in-out property <float> spread;
+    in-out property <float> imbalance;
+
+    in-out property <[BookLevel]> bids;
+    in-out property <[BookLevel]> asks;
+    in-out property <[Trade]> recent_trades;
+    in-out property <[CandleRow]> candles;
+    in-out property <[CandlePoint]> candle_points;
+    in-out property <[Receipt]> receipts;
+
+    in-out property <float> candle_midline;
+    in-out property <string> last_move;
+    in-out property <int> dom_depth_levels;
+
+    // zoom defaults
+    in-out property <float> chart_x_zoom: 1.0;
+    in-out property <float> chart_y_zoom: 1.0;
+
+    // pan + cursor defaults
+    in-out property <float> chart_pan_x: 0.0;
+    in-out property <float> chart_pan_y: 0.0;
+    in-out property <float> chart_cursor_x: 0.5;
+    in-out property <float> chart_cursor_y: 0.5;
+
+    in-out property <string> current_time;
+    in-out property <string> order_message;
+
+    callback ticker_changed(new_ticker: string);
+    callback mode_changed(new_mode: string);
+    callback time_mode_changed(new_time_mode: string);
+    callback candle_tf_changed(new_tf: int);
+    callback candle_window_changed(new_window: int);
+    callback dom_depth_changed(new_depth: int);
+    callback send_order();
+    callback reload_data();
+    callback run_script();
+    callback deposit(amount: float);
+    callback withdraw(amount: float);
+
+    Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        background: #151821;
+
+        Rectangle {
+            x: 0px;
+            y: 0px;
+            width: parent.width;
+            height: 40px;
+            background: #1c202b;
+
+            Text {
+                x: 8px;
+                y: 6px;
+                width: parent.width - 16px;
+                height: 28px;
+                text:
+                    "Ticker: " + current_ticker
+                    + "  | Mode: " + mode
+                    + "  | Time: " + time_mode
+                    + "  | Range: " + data_range
+                    + "  | Now: " + current_time;
+                color: #e0e0e0;
+            }
+        }
+
+        Rectangle {
+            x: 0px;
+            y: 44px;
+            width: parent.width;
+            height: 60px;
+            background: #1a1e27;
+
+            property <color> mid_text_color: root.last_move == "up"
+                ? #80ff80
+                : (root.last_move == "down" ? #ff8080 : #c0c0c0);
+
+            property <string> mid_move_symbol: root.last_move == "up"
+                ? "▲"
+                : (root.last_move == "down" ? "▼" : "•");
+
+            Text { x: 8px; y: 4px; text: "Balances  USDC: " + balance_usdc + "   PnL: " + balance_pnl; color: #d0e080; }
+
+            Text {
+                x: 8px;
+                y: 26px;
+                text:
+                    "Mid: " + mid_price + " " + mid_move_symbol
+                    + "  Bid: " + best_bid
+                    + "  Ask: " + best_ask
+                    + "  Spread: " + spread
+                    + "  Imb: " + imbalance;
+                color: mid_text_color;
+            }
+
+            PnLSparkline { x: parent.width - 170px; y: 10px; width: 160px; height: 40px; points <=> root.candle_points; }
+        }
+
+        Rectangle {
+            x: 0px;
+            y: 108px;
+            width: parent.width;
+            height: 56px;
+            background: #181b24;
+
+            Text { x: 8px; y: 6px; text: "Ticker:"; color: #cccccc; }
+
+            Button { x: 70px;  y: 4px; text: "ETH-USD"; clicked => { root.ticker_changed("ETH-USD"); } }
+            Button { x: 150px; y: 4px; text: "BTC-USD"; clicked => { root.ticker_changed("BTC-USD"); } }
+            Button { x: 230px; y: 4px; text: "SOL-USD"; clicked => { root.ticker_changed("SOL-USD"); } }
+
+            Text { x: 320px; y: 6px; text: "Mode:"; color: #cccccc; }
+            Button { x: 370px; y: 4px; text: "Live";   clicked => { root.mode_changed("Live"); } }
+            Button { x: 430px; y: 4px; text: "Replay"; clicked => { root.mode_changed("Replay"); } }
+
+            Text { x: 520px; y: 6px; text: "Time:"; color: #cccccc; }
+            Button { x: 570px; y: 4px; text: "Local"; clicked => { root.time_mode_changed("Local"); } }
+            Button { x: 640px; y: 4px; text: "UTC";   clicked => { root.time_mode_changed("UTC"); } }
+
+            Text { x: 8px; y: 32px; text: "TF / Window:"; color: #aaaaaa; }
+            Button { x: 110px; y: 30px; text: "TF 60s";  clicked => { root.candle_tf_changed(60); } }
+            Button { x: 180px; y: 30px; text: "TF 300s"; clicked => { root.candle_tf_changed(300); } }
+            Button { x: 260px; y: 30px; text: "Win 60m"; clicked => { root.candle_window_changed(60); } }
+            Button { x: 340px; y: 30px; text: "Win 240m"; clicked => { root.candle_window_changed(240); } }
+
+            Text { x: 450px; y: 32px; text: "Panels:"; color: #aaaaaa; }
+            CheckBox { x: 510px; y: 30px; text: "Depth";  checked <=> show_depth; }
+            CheckBox { x: 590px; y: 30px; text: "Trades"; checked <=> show_trades; }
+            CheckBox { x: 680px; y: 30px; text: "Volume"; checked <=> show_volume; }
+
+            Text { x: 760px; y: 32px; text: "DOM depth:"; color: #aaaaaa; }
+
+            Rectangle {
+                x: 840px; y: 34px; width: 180px; height: 10px;
+                background: #202633; border-radius: 5px;
+
+                property <length> knob_x: (root.dom_depth_levels - 5) * (parent.width - 12px) / 45;
+
+                Rectangle { x: knob_x; y: -2px; width: 12px; height: parent.height + 4px; border-radius: 6px; background: #7070ff; }
+
+                TouchArea {
+                    x: 0px; y: -4px; width: parent.width; height: parent.height + 8px;
+                    property <bool> dragging;
+                    property <int> last_sent;
+
+                    pointer-event(event) => {
+                        if event.kind == PointerEventKind.down {
+                            dragging = true;
+                            last_sent = root.dom_depth_levels;
+                        } else if event.kind == PointerEventKind.up {
+                            dragging = false;
+                        } else if event.kind == PointerEventKind.move && dragging {
+                            let pos = self.mouse-x;
+
+                            if pos < 0px {
+                                let lvl = 5;
+                                if lvl != last_sent {
+                                    last_sent = lvl;
+                                    root.dom_depth_levels = lvl;
+                                    root.dom_depth_changed(lvl);
+                                }
+                            } else if pos > parent.width {
+                                let lvl = 50;
+                                if lvl != last_sent {
+                                    last_sent = lvl;
+                                    root.dom_depth_levels = lvl;
+                                    root.dom_depth_changed(lvl);
+                                }
+                            } else {
+                                let t = pos / parent.width;
+                                let lvl = 5 + Math.floor(t * 45.0);
+                                if lvl != last_sent {
+                                    last_sent = lvl;
+                                    root.dom_depth_levels = lvl;
+                                    root.dom_depth_changed(lvl);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Text { x: 1030px; y: 32px; text: dom_depth_levels + " lvls"; color: #cccccc; font-size: 10px; }
+
+            // Zoom-to-cursor buttons (uses chart_cursor_x/y tracked by CandleChart)
+            Text { x: 1060px; y: 6px; text: "Chart zoom:"; color: #aaaaaa; font-size: 10px; }
+
+            Button {
+                x: 1060px; y: 26px; text: "X-";
+                clicked => {
+                    let old_z = Math.max(0.25, Math.min(20.0, root.chart_x_zoom));
+                    let cx = root.chart_cursor_x;
+                    let px = root.chart_pan_x;
+
+                    let xw = 0.5 + (cx - 0.5 - px) / old_z;
+                    let new_z = Math.max(0.25, old_z - 0.25);
+                    root.chart_x_zoom = new_z;
+
+                    let px2 = cx - 0.5 - (xw - 0.5) * new_z;
+                    root.chart_pan_x = Math.max(-2.0, Math.min(2.0, px2));
+                }
+            }
+            Button {
+                x: 1100px; y: 26px; text: "X+";
+                clicked => {
+                    let old_z = Math.max(0.25, Math.min(20.0, root.chart_x_zoom));
+                    let cx = root.chart_cursor_x;
+                    let px = root.chart_pan_x;
+
+                    let xw = 0.5 + (cx - 0.5 - px) / old_z;
+                    let new_z = Math.min(20.0, old_z + 0.25);
+                    root.chart_x_zoom = new_z;
+
+                    let px2 = cx - 0.5 - (xw - 0.5) * new_z;
+                    root.chart_pan_x = Math.max(-2.0, Math.min(2.0, px2));
+                }
+            }
+            Button {
+                x: 1140px; y: 26px; text: "Y-";
+                clicked => {
+                    let old_z = Math.max(0.25, Math.min(20.0, root.chart_y_zoom));
+                    let cy = root.chart_cursor_y;
+                    let py = root.chart_pan_y;
+                    let mid = root.candle_midline;
+
+                    let yw = mid + (cy - mid - py) / old_z;
+                    let new_z = Math.max(0.25, old_z - 0.25);
+                    root.chart_y_zoom = new_z;
+
+                    let py2 = cy - mid - (yw - mid) * new_z;
+                    root.chart_pan_y = Math.max(-2.0, Math.min(2.0, py2));
+                }
+            }
+            Button {
+                x: 1180px; y: 26px; text: "Y+";
+                clicked => {
+                    let old_z = Math.max(0.25, Math.min(20.0, root.chart_y_zoom));
+                    let cy = root.chart_cursor_y;
+                    let py = root.chart_pan_y;
+                    let mid = root.candle_midline;
+
+                    let yw = mid + (cy - mid - py) / old_z;
+                    let new_z = Math.min(20.0, old_z + 0.25);
+                    root.chart_y_zoom = new_z;
+
+                    let py2 = cy - mid - (yw - mid) * new_z;
+                    root.chart_pan_y = Math.max(-2.0, Math.min(2.0, py2));
+                }
+            }
+        }
+
+        Rectangle {
+            x: 0px;
+            y: 168px;
+            width: parent.width;
+            height: 70px;
+            background: #181b24;
+
+            Button { x: 8px; y: 8px; text: "Buy";  clicked => { root.trade_side = "Buy"; } }
+            Button { x: 80px; y: 8px; text: "Sell"; clicked => { root.trade_side = "Sell"; } }
+            Button { x: 152px; y: 8px; text: "Send Order"; clicked => { root.send_order(); } }
+
+            Text {
+                x: 8px;
+                y: 40px;
+                text: "Side: " + trade_side + "  Size: " + trade_size + "  Lev: " + trade_leverage;
+                color: #aaaaaa;
+            }
+
+            CheckBox { x: 350px; y: 8px; text: "Bot auto trade"; checked <=> bot_auto_trade; }
+
+            Button { x: 520px; y: 8px; text: "Deposit 100";  clicked => { root.deposit(100.0); } }
+            Button { x: 620px; y: 8px; text: "Withdraw 100"; clicked => { root.withdraw(100.0); } }
+            Button { x: 740px; y: 8px; text: "Reload data";  clicked => { root.reload_data(); } }
+        }
+
+        Rectangle {
+            x: 0px;
+            y: 244px;
+            width: parent.width * 0.5;
+            height: parent.height - 320px;
+            background: #181b24;
+
+            Text {
+                x: 8px;
+                y: 4px;
+                text:
+                    "Candles  tf=" + candle_tf_secs
+                    + "s  window=" + candle_window_minutes + "m"
+                    + "   | X=" + chart_x_zoom + "  Y=" + chart_y_zoom;
+                color: #ffffff;
+            }
+
+            CandleChart {
+                x: 8px;
+                y: 24px;
+                width: parent.width - 16px;
+                height: 160px;
+
+                points <=> root.candle_points;
+                mid_line_y: root.candle_midline;
+
+                x_zoom <=> root.chart_x_zoom;
+                y_zoom <=> root.chart_y_zoom;
+
+                pan_x <=> root.chart_pan_x;
+                pan_y <=> root.chart_pan_y;
+                cursor_x <=> root.chart_cursor_x;
+                cursor_y <=> root.chart_cursor_y;
+
+                visible: root.show_volume;
+            }
+
+            ListView {
+                x: 8px;
+                y: 190px;
+                width: parent.width - 16px;
+                height: parent.height - 198px;
+
+                for c in root.candles : Text {
+                    text: c.ts + "  O:" + c.open + " H:" + c.high + " L:" + c.low + " C:" + c.close + " V:" + c.volume;
+                    color: #d0d0d0;
+                }
+            }
+        }
+
+        Rectangle {
+            x: parent.width * 0.5;
+            y: 244px;
+            width: parent.width * 0.5;
+            height: parent.height - 320px;
+            background: #181b24;
+
+            Rectangle {
+                x: 4px;
+                y: 4px;
+                width: parent.width - 8px;
+                height: 110px;
+                background: #10131a;
+                visible: root.show_trades;
+
+                Text { x: 4px; y: 4px; text: "Recent trades"; color: #ffffff; }
+
+                ListView {
+                    x: 4px;
+                    y: 22px;
+                    width: parent.width - 8px;
+                    height: parent.height - 26px;
+
+                    for t in root.recent_trades : Rectangle {
+                        width: parent.width;
+                        height: 18px;
+                        background: t.is_buy ? #102b19 : #2b1418;
+
+                        Text {
+                            x: 2px;
+                            y: 1px;
+                            text: t.ts + "  " + t.side + "  " + t.size;
+                            color: t.is_buy ? #80ff80 : #ff8080;
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                x: 4px;
+                y: 120px;
+                width: parent.width - 8px;
+                height: 130px;
+                background: #10131a;
+
+                Text { x: 4px; y: 4px; text: "Receipts"; color: #ffffff; }
+
+                ListView {
+                    x: 4px;
+                    y: 22px;
+                    width: parent.width - 8px;
+                    height: parent.height - 26px;
+
+                    for r in root.receipts : Text {
+                        text: r.ts + "  " + r.ticker + "  " + r.side + " " + r.kind + " " + r.size + " " + r.status;
+                        color: r.status == "ok" ? #80ff80 : (r.status == "fail" ? #ff8080 : #c0c0c0);
+                    }
+                }
+            }
+
+            Rectangle {
+                x: 4px;
+                y: 254px;
+                width: parent.width - 8px;
+                height: parent.height - 262px;
+                background: #10131a;
+
+                Text { x: 4px; y: 4px; text: "Bot: " + bot_signal + "  size=" + bot_size; color: #ffffff; }
+                Text { x: 4px; y: 24px; text: "Comment: " + bot_comment; color: #cccccc; }
+
+                TextEdit {
+                    x: 4px;
+                    y: 44px;
+                    width: parent.width - 8px;
+                    height: parent.height - 120px;
+                    text <=> root.script_text;
+                }
+
+                Button { x: 4px; y: parent.height - 68px; text: "Run Script"; clicked => { root.run_script(); } }
+                Text { x: 4px; y: parent.height - 44px; text: script_error; color: #ff8080; }
+                Text { x: 4px; y: parent.height - 24px; text: order_message; color: #80ff80; }
+            }
+        }
+
+        OrderbookPanel {
+            x: 16px;
+            y: 80px;
+            width: 360px;
+            height: 260px;
+            title: "Orderbook";
+            bids <=> root.bids;
+            asks <=> root.asks;
+            mid: root.mid_price;
+            spread: root.spread;
+            visible: root.show_depth || root.show_ladders;
+        }
+
+        MicroDepthPanel {
+            x: parent.width - 260px;
+            y: 48px;
+            width: 240px;
+            height: 72px;
+            bids <=> root.bids;
+            asks <=> root.asks;
+            imbalance: root.imbalance;
+            visible: root.show_depth;
+        }
+    }
+}
