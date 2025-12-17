@@ -246,10 +246,10 @@ fn compute_snapshot_for(data: &TickerData, tf_secs: u64, window_secs: u64) -> Sn
 
     for e in &data.book_events {
         if !e.ticker.is_empty() && e.ticker != data.ticker {
-            // inconsistent line, ignore silently
+            // ignore
         }
         if !e.kind.is_empty() && e.kind != "orderbook" {
-            // other kinds could be special; just acknowledged
+            // ignore
         }
 
         if e.ts < window_start {
@@ -400,13 +400,19 @@ struct AppCore {
 
     receipts: Vec<Receipt>,
 
-    // Cached snapshot + metrics to avoid recomputing every second.
     cached_snapshot: Option<Snapshot>,
     cached_metrics: Option<BubbleMetrics>,
     snapshot_dirty: bool,
 
-    // DOM zoom depth (how many levels to show)
     dom_depth_levels: usize,
+
+    // --- Settings state (stubbed but wired) ---
+    wallet_connected: bool,
+    settings_network: String,
+    settings_rpc_endpoint: String,
+    auto_sign_enabled: bool,
+    session_active: bool,
+    session_ttl_minutes: u64,
 }
 
 impl AppCore {
@@ -468,6 +474,13 @@ impl AppCore {
             cached_metrics: None,
             snapshot_dirty: true,
             dom_depth_levels: 20,
+
+            wallet_connected: false,
+            settings_network: "Testnet".to_string(),
+            settings_rpc_endpoint: "".to_string(),
+            auto_sign_enabled: false,
+            session_active: false,
+            session_ttl_minutes: 30,
         }
     }
 
@@ -689,7 +702,12 @@ impl AppCore {
 
 // ---- UI wiring -------------------------------------------------------------
 
-fn apply_snapshot_to_ui(app: &AppWindow, snap: &Snapshot, metrics: &BubbleMetrics, dom_depth_levels: usize) {
+fn apply_snapshot_to_ui(
+    app: &AppWindow,
+    snap: &Snapshot,
+    metrics: &BubbleMetrics,
+    dom_depth_levels: usize,
+) {
     app.set_mid_price(metrics.mid as f32);
     app.set_best_bid(metrics.best_bid as f32);
     app.set_best_ask(metrics.best_ask as f32);
@@ -879,23 +897,6 @@ fn apply_snapshot_to_ui(app: &AppWindow, snap: &Snapshot, metrics: &BubbleMetric
     let _ = (snap.last_mid, snap.last_vol);
 }
 
-#[allow(dead_code)]
-fn debug_print_candle_meta(label: &str, candles: &[Candle]) {
-    if candles.is_empty() {
-        eprintln!("[DEBUG][{}] no candles", label);
-        return;
-    }
-    let first = &candles[0];
-    let last = &candles[candles.len().saturating_sub(1)];
-    eprintln!(
-        "[DEBUG][{}] candles: count={}  t_range={}..{}",
-        label,
-        candles.len(),
-        first.t,
-        last.t
-    );
-}
-
 fn main() {
     let base_dir = PathBuf::from("data");
     let tickers = vec!["ETH-USD".to_string(), "BTC-USD".to_string(), "SOL-USD".to_string()];
@@ -924,6 +925,16 @@ fn main() {
     app.set_balance_pnl(0.0);
     app.set_candle_midline(0.5);
     app.set_last_move(SharedString::from("flat"));
+
+    // ---- Settings defaults (UI state) ----
+    app.set_settings_wallet_address(SharedString::from(""));
+    app.set_settings_wallet_status(SharedString::from("disconnected"));
+    app.set_settings_network(SharedString::from("Testnet"));
+    app.set_settings_rpc_endpoint(SharedString::from(""));
+    app.set_settings_auto_sign(false);
+    app.set_settings_session_ttl_minutes(SharedString::from("30"));
+    app.set_settings_signer_status(SharedString::from("inactive"));
+    app.set_settings_last_error(SharedString::from(""));
 
     {
         let core = core_rc.borrow();
@@ -985,6 +996,7 @@ if imbalance > 2.5 && spread < mid * 0.0005 {
         app.set_current_ticker(SharedString::from(&core.current_ticker));
     }
 
+    // --- Existing callback wiring (unchanged, kept as-is) ---
     {
         let core_rc_ticker = core_rc.clone();
         let app_weak_ticker = app_weak.clone();
@@ -1216,6 +1228,207 @@ if imbalance > 2.5 && spread < mid * 0.0005 {
         });
     }
 
+    // ---------------------------------------------------------------
+    // NEW: Settings panel callback wiring (fully hooked up)
+    // ---------------------------------------------------------------
+
+    {
+        let app_weak_s = app_weak.clone();
+        let core_rc_s = core_rc.clone();
+        app.on_settings_connect_wallet(move || {
+            if let Some(app) = app_weak_s.upgrade() {
+                let mut core = core_rc_s.borrow_mut();
+
+                core.wallet_connected = true;
+
+                // If user didn't type an address, put a placeholder.
+                let addr = app.get_settings_wallet_address().to_string();
+                if addr.trim().is_empty() {
+                    app.set_settings_wallet_address(SharedString::from("0xDEMO_WALLET_ADDRESS"));
+                }
+
+                app.set_settings_last_error(SharedString::from(""));
+                app.set_settings_wallet_status(SharedString::from("connected (stub)"));
+                app.set_settings_signer_status(SharedString::from("ready (no session)"));
+
+                println!("[SETTINGS] wallet connected (stub)");
+            }
+        });
+    }
+
+    {
+        let app_weak_s = app_weak.clone();
+        let core_rc_s = core_rc.clone();
+        app.on_settings_disconnect_wallet(move || {
+            if let Some(app) = app_weak_s.upgrade() {
+                let mut core = core_rc_s.borrow_mut();
+
+                core.wallet_connected = false;
+                core.auto_sign_enabled = false;
+                core.session_active = false;
+
+                app.set_settings_auto_sign(false);
+                app.set_settings_last_error(SharedString::from(""));
+                app.set_settings_wallet_status(SharedString::from("disconnected"));
+                app.set_settings_signer_status(SharedString::from("inactive"));
+
+                println!("[SETTINGS] wallet disconnected");
+            }
+        });
+    }
+
+    {
+        let app_weak_s = app_weak.clone();
+        let core_rc_s = core_rc.clone();
+        app.on_settings_select_network(move |net| {
+            if let Some(app) = app_weak_s.upgrade() {
+                let mut core = core_rc_s.borrow_mut();
+                core.settings_network = net.to_string();
+                app.set_settings_network(net);
+
+                app.set_settings_last_error(SharedString::from(""));
+                println!("[SETTINGS] network set to {}", core.settings_network);
+            }
+        });
+    }
+
+    {
+        let app_weak_s = app_weak.clone();
+        let core_rc_s = core_rc.clone();
+        app.on_settings_apply_rpc(move |endpoint| {
+            if let Some(app) = app_weak_s.upgrade() {
+                let mut core = core_rc_s.borrow_mut();
+                core.settings_rpc_endpoint = endpoint.to_string();
+                app.set_settings_rpc_endpoint(endpoint);
+
+                app.set_settings_last_error(SharedString::from(""));
+                println!("[SETTINGS] rpc endpoint applied: {}", core.settings_rpc_endpoint);
+            }
+        });
+    }
+
+    {
+        let app_weak_s = app_weak.clone();
+        let core_rc_s = core_rc.clone();
+        app.on_settings_toggle_auto_sign(move |enabled| {
+            if let Some(app) = app_weak_s.upgrade() {
+                let mut core = core_rc_s.borrow_mut();
+
+                if enabled && !core.wallet_connected {
+                    app.set_settings_last_error(SharedString::from("Connect wallet first."));
+                    app.set_settings_auto_sign(false);
+                    core.auto_sign_enabled = false;
+                    core.session_active = false;
+                    app.set_settings_signer_status(SharedString::from("inactive"));
+                    return;
+                }
+
+                core.auto_sign_enabled = enabled;
+                if !enabled {
+                    core.session_active = false;
+                    app.set_settings_signer_status(SharedString::from("ready (no session)"));
+                } else {
+                    app.set_settings_signer_status(SharedString::from("ready (session not created)"));
+                }
+
+                app.set_settings_last_error(SharedString::from(""));
+                app.set_settings_auto_sign(enabled);
+
+                println!("[SETTINGS] auto_sign_enabled={}", core.auto_sign_enabled);
+            }
+        });
+    }
+
+    {
+        let app_weak_s = app_weak.clone();
+        let core_rc_s = core_rc.clone();
+        app.on_settings_create_session(move |ttl_str| {
+            if let Some(app) = app_weak_s.upgrade() {
+                let mut core = core_rc_s.borrow_mut();
+
+                if !core.wallet_connected {
+                    app.set_settings_last_error(SharedString::from("Connect wallet first."));
+                    return;
+                }
+                if !core.auto_sign_enabled {
+                    app.set_settings_last_error(SharedString::from("Enable Auto-sign first."));
+                    return;
+                }
+
+                let ttl_trim = ttl_str.to_string();
+                let ttl_parsed = ttl_trim.trim().parse::<u64>().ok();
+                let ttl = ttl_parsed.unwrap_or(30).max(1).min(24 * 60);
+
+                core.session_active = true;
+                core.session_ttl_minutes = ttl;
+
+                app.set_settings_last_error(SharedString::from(""));
+                app.set_settings_session_ttl_minutes(SharedString::from(ttl.to_string()));
+                app.set_settings_signer_status(SharedString::from(format!("session active (ttl={}m)", ttl)));
+
+                println!("[SETTINGS] session created (stub), ttl={}m", ttl);
+            }
+        });
+    }
+
+    {
+        let app_weak_s = app_weak.clone();
+        let core_rc_s = core_rc.clone();
+        app.on_settings_revoke_session(move || {
+            if let Some(app) = app_weak_s.upgrade() {
+                let mut core = core_rc_s.borrow_mut();
+                core.session_active = false;
+
+                app.set_settings_last_error(SharedString::from(""));
+                app.set_settings_signer_status(SharedString::from("session revoked"));
+
+                println!("[SETTINGS] session revoked (stub)");
+            }
+        });
+    }
+
+    {
+        let app_weak_s = app_weak.clone();
+        let core_rc_s = core_rc.clone();
+        app.on_settings_refresh_status(move || {
+            if let Some(app) = app_weak_s.upgrade() {
+                let core = core_rc_s.borrow();
+
+                let wallet = if core.wallet_connected {
+                    "connected"
+                } else {
+                    "disconnected"
+                };
+
+                let rpc = if core.settings_rpc_endpoint.trim().is_empty() {
+                    "default"
+                } else {
+                    "custom"
+                };
+
+                let signer = if core.session_active {
+                    format!("session active (ttl={}m)", core.session_ttl_minutes)
+                } else if core.auto_sign_enabled {
+                    "ready (session not created)".to_string()
+                } else if core.wallet_connected {
+                    "ready (no session)".to_string()
+                } else {
+                    "inactive".to_string()
+                };
+
+                app.set_settings_wallet_status(SharedString::from(format!(
+                    "{wallet} | {} | rpc:{rpc}",
+                    core.settings_network
+                )));
+                app.set_settings_signer_status(SharedString::from(signer));
+                app.set_settings_last_error(SharedString::from(""));
+
+                println!("[SETTINGS] refresh status");
+            }
+        });
+    }
+
+    // ---- Timer loop (unchanged) ----
     let timer = Timer::default();
     {
         let app_weak_timer = app_weak.clone();

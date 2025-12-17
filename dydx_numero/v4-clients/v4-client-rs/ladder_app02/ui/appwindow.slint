@@ -252,6 +252,160 @@ component OrderbookPanel inherits Rectangle {
     }
 }
 
+// ---------- Settings panel (movable) --------------------------------
+
+component SettingsPanel inherits Rectangle {
+    in-out property <string> wallet_address;
+    in-out property <string> wallet_status;
+
+    in-out property <string> network;
+    in-out property <string> rpc_endpoint;
+
+    in-out property <bool> auto_sign;
+    in-out property <string> session_ttl_minutes;
+    in-out property <string> signer_status;
+
+    in-out property <string> last_error;
+
+    callback connect_wallet();
+    callback disconnect_wallet();
+    callback refresh_status();
+
+    callback select_network(net: string);
+    callback apply_rpc(endpoint: string);
+
+    callback toggle_auto_sign(enabled: bool);
+    callback create_session(ttl_minutes: string);
+    callback revoke_session();
+
+    background: #202533;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: #31384a;
+
+    // Header (drag to move)
+    Rectangle {
+        x: 0px; y: 0px; width: parent.width; height: 24px;
+        background: #303545;
+
+        Text { x: 6px; y: 4px; text: "Settings"; color: #ffffff; }
+
+        TouchArea {
+            x: 0px; y: 0px; width: parent.width; height: parent.height;
+
+            property <length> last_x;
+            property <length> last_y;
+            property <bool> dragging;
+
+            pointer-event(event) => {
+                if event.kind == PointerEventKind.down {
+                    dragging = true;
+                    last_x = self.mouse-x;
+                    last_y = self.mouse-y;
+                } else if event.kind == PointerEventKind.up {
+                    dragging = false;
+                } else if event.kind == PointerEventKind.move && dragging {
+                    let dx = self.mouse-x - last_x;
+                    let dy = self.mouse-y - last_y;
+                    root.x = root.x + dx;
+                    root.y = root.y + dy;
+                    last_x = self.mouse-x;
+                    last_y = self.mouse-y;
+                }
+            }
+        }
+    }
+
+    // Body
+    Rectangle {
+        x: 6px;
+        y: 28px;
+        width: parent.width - 12px;
+        height: parent.height - 34px;
+        background: #10131a;
+        border-radius: 3px;
+        border-width: 1px;
+        border-color: #222634;
+
+        // ---- Wallet ----
+        Text { x: 6px; y: 6px; text: "Wallet"; color: #ffffff; }
+
+        Text { x: 6px; y: 26px; text: "Address:"; color: #aaaaaa; font-size: 10px; }
+        LineEdit {
+            x: 68px;
+            y: 22px;
+            width: parent.width - 74px;
+            height: 20px;
+            text <=> root.wallet_address;
+        }
+
+        Button { x: 6px;  y: 48px; text: "Connect";    clicked => { root.connect_wallet(); } }
+        Button { x: 92px; y: 48px; text: "Disconnect"; clicked => { root.disconnect_wallet(); } }
+        Button { x: 196px; y: 48px; text: "Refresh";   clicked => { root.refresh_status(); } }
+
+        Text {
+            x: 6px; y: 76px; width: parent.width - 12px;
+            text: "Status: " + root.wallet_status;
+            color: #c0c0c0; font-size: 10px;
+        }
+
+        // ---- Network ----
+        Rectangle { x: 6px; y: 94px; width: parent.width - 12px; height: 1px; background: #222634; opacity: 0.8; }
+        Text { x: 6px; y: 102px; text: "Network"; color: #ffffff; }
+
+        Button { x: 6px;  y: 122px; text: "Mainnet"; clicked => { root.select_network("Mainnet"); } }
+        Button { x: 92px; y: 122px; text: "Testnet"; clicked => { root.select_network("Testnet"); } }
+
+        Text {
+            x: 188px; y: 126px;
+            text: "Selected: " + root.network;
+            color: #c0c0c0; font-size: 10px;
+        }
+
+        Text { x: 6px; y: 150px; text: "RPC/Endpoint:"; color: #aaaaaa; font-size: 10px; }
+        LineEdit {
+            x: 92px; y: 146px;
+            width: parent.width - 160px; height: 20px;
+            text <=> root.rpc_endpoint;
+        }
+        Button {
+            x: parent.width - 62px;
+            y: 146px;
+            text: "Apply";
+            clicked => { root.apply_rpc(root.rpc_endpoint); }
+        }
+
+        // ---- Signing ----
+        Rectangle { x: 6px; y: 174px; width: parent.width - 12px; height: 1px; background: #222634; opacity: 0.8; }
+        Text { x: 6px; y: 182px; text: "Signing"; color: #ffffff; }
+
+        CheckBox {
+            x: 6px; y: 202px;
+            text: "Auto-sign (session)";
+            checked <=> root.auto_sign;
+            toggled => { root.toggle_auto_sign(self.checked); }
+        }
+
+        Text { x: 6px; y: 226px; text: "Session TTL (min):"; color: #aaaaaa; font-size: 10px; }
+        LineEdit { x: 110px; y: 222px; width: 60px; height: 20px; text <=> root.session_ttl_minutes; }
+
+        Button { x: 178px; y: 220px; text: "Create"; clicked => { root.create_session(root.session_ttl_minutes); } }
+        Button { x: 252px; y: 220px; text: "Revoke"; clicked => { root.revoke_session(); } }
+
+        Text {
+            x: 6px; y: 248px; width: parent.width - 12px;
+            text: "Signer: " + root.signer_status;
+            color: #c0c0c0; font-size: 10px;
+        }
+
+        Text {
+            x: 6px; y: 266px; width: parent.width - 12px;
+            text: root.last_error;
+            color: #ff8080; font-size: 10px;
+        }
+    }
+}
+
 // ---------- Micro depth panel (two-wall trough) ---------------------
 
 component MicroDepthPanel inherits Rectangle {
@@ -313,15 +467,12 @@ component CandleChart inherits Rectangle {
     in property <[CandlePoint]> points;
     in property <float> mid_line_y;  // 0..1 normalized (0 = top, 1 = bottom)
 
-    // in-out so wheel handler can update these.
     in-out property <float> x_zoom;
     in-out property <float> y_zoom;
 
-    // pan offsets in normalized screen space
     in-out property <float> pan_x;
     in-out property <float> pan_y;
 
-    // last cursor inside chart (0..1)
     in-out property <float> cursor_x;
     in-out property <float> cursor_y;
 
@@ -344,7 +495,6 @@ component CandleChart inherits Rectangle {
         opacity: 0.7;
     }
 
-    // Volume
     for cp in points : Rectangle {
         property <float> zx: Math.max(0.25, Math.min(20.0, root.x_zoom));
         property <float> x_n: 0.5 + (cp.x - 0.5) * zx + root.pan_x;
@@ -360,7 +510,6 @@ component CandleChart inherits Rectangle {
         opacity: 0.35;
     }
 
-    // Candles
     for cp in points : Rectangle {
         property <float> zx: Math.max(0.25, Math.min(20.0, root.x_zoom));
         property <float> zy: Math.max(0.25, Math.min(20.0, root.y_zoom));
@@ -397,7 +546,6 @@ component CandleChart inherits Rectangle {
         }
     }
 
-    // Cursor crosshair (visible; updates on hover)
     Rectangle {
         x: Math.max(0px, Math.min(parent.width - 1px, root.cursor_x * parent.width));
         y: 0px;
@@ -416,7 +564,6 @@ component CandleChart inherits Rectangle {
         opacity: 0.45;
     }
 
-    // Drag-pan + cursor tracking + wheel zoom-to-cursor
     TouchArea {
         x: 0px;
         y: 0px;
@@ -428,7 +575,6 @@ component CandleChart inherits Rectangle {
         property <bool> dragging;
 
         pointer-event(event) => {
-            // Always update cursor on hover/move/down
             root.cursor_x = Math.max(0.0, Math.min(1.0, self.mouse-x / parent.width));
             root.cursor_y = Math.max(0.0, Math.min(1.0, self.mouse-y / parent.height));
 
@@ -450,22 +596,18 @@ component CandleChart inherits Rectangle {
             }
         }
 
-        // Slint 1.14.x: wheel/trackpad scroll arrives via scroll-event
         scroll-event(event) => {
-            // keep cursor “alive” during wheel
             root.cursor_x = Math.max(0.0, Math.min(1.0, self.mouse-x / parent.width));
             root.cursor_y = Math.max(0.0, Math.min(1.0, self.mouse-y / parent.height));
 
-            let dy = event.delta-y; // length (usually +/- pixels)
+            let dy = event.delta-y;
             let is_shift = event.modifiers.shift;
             let is_ctrl  = event.modifiers.control;
 
-            // dy<0 zoom in, dy>0 zoom out (trackpads invert sometimes; this feels right on most)
             let dir  = dy < 0px ? 1.0 : -1.0;
             let step = is_ctrl ? 0.05 : 0.25;
 
             if is_shift {
-                // X zoom-to-cursor
                 let old_z = Math.max(0.25, Math.min(20.0, root.x_zoom));
                 let cx = root.cursor_x;
                 let px = root.pan_x;
@@ -478,7 +620,6 @@ component CandleChart inherits Rectangle {
                 let px2 = cx - 0.5 - (xw - 0.5) * new_z;
                 root.pan_x = Math.max(-2.0, Math.min(2.0, px2));
             } else {
-                // Y zoom-to-cursor
                 let old_z = Math.max(0.25, Math.min(20.0, root.y_zoom));
                 let cy = root.cursor_y;
                 let py = root.pan_y;
@@ -493,7 +634,6 @@ component CandleChart inherits Rectangle {
                 root.pan_y = Math.max(-2.0, Math.min(2.0, py2));
             }
 
-            // IMPORTANT: scroll-event must return EventResult
             EventResult.accept
         }
     }
@@ -580,17 +720,38 @@ export component AppWindow inherits Window {
     in-out property <string> current_time;
     in-out property <string> order_message;
 
+    // ---- Settings panel state (wired to Rust) ----
+    in-out property <string> settings_wallet_address;
+    in-out property <string> settings_wallet_status;
+    in-out property <string> settings_network: "Testnet";
+    in-out property <string> settings_rpc_endpoint;
+    in-out property <bool>   settings_auto_sign: false;
+    in-out property <string> settings_session_ttl_minutes: "30";
+    in-out property <string> settings_signer_status;
+    in-out property <string> settings_last_error;
+
     callback ticker_changed(new_ticker: string);
     callback mode_changed(new_mode: string);
     callback time_mode_changed(new_time_mode: string);
     callback candle_tf_changed(new_tf: int);
     callback candle_window_changed(new_window: int);
     callback dom_depth_changed(new_depth: int);
+
     callback send_order();
     callback reload_data();
     callback run_script();
     callback deposit(amount: float);
     callback withdraw(amount: float);
+
+    // ---- Settings callbacks that Rust will handle ----
+    callback settings_connect_wallet();
+    callback settings_disconnect_wallet();
+    callback settings_refresh_status();
+    callback settings_select_network(net: string);
+    callback settings_apply_rpc(endpoint: string);
+    callback settings_toggle_auto_sign(enabled: bool);
+    callback settings_create_session(ttl_minutes: string);
+    callback settings_revoke_session();
 
     Rectangle {
         x: 0px;
@@ -739,7 +900,6 @@ export component AppWindow inherits Window {
 
             Text { x: 1030px; y: 32px; text: dom_depth_levels + " lvls"; color: #cccccc; font-size: 10px; }
 
-            // Zoom-to-cursor buttons (uses chart_cursor_x/y tracked by CandleChart)
             Text { x: 1060px; y: 6px; text: "Chart zoom:"; color: #aaaaaa; font-size: 10px; }
 
             Button {
@@ -976,6 +1136,37 @@ export component AppWindow inherits Window {
             mid: root.mid_price;
             spread: root.spread;
             visible: root.show_depth || root.show_ladders;
+        }
+
+        // NEW: Movable Settings panel
+        SettingsPanel {
+            x: 392px;
+            y: 80px;
+            width: 380px;
+            height: 320px;
+
+            wallet_address <=> root.settings_wallet_address;
+            wallet_status  <=> root.settings_wallet_status;
+
+            network      <=> root.settings_network;
+            rpc_endpoint <=> root.settings_rpc_endpoint;
+
+            auto_sign           <=> root.settings_auto_sign;
+            session_ttl_minutes <=> root.settings_session_ttl_minutes;
+            signer_status       <=> root.settings_signer_status;
+
+            last_error <=> root.settings_last_error;
+
+            connect_wallet => { root.settings_connect_wallet(); }
+            disconnect_wallet => { root.settings_disconnect_wallet(); }
+            refresh_status => { root.settings_refresh_status(); }
+
+            select_network(net) => { root.settings_select_network(net); }
+            apply_rpc(endpoint) => { root.settings_apply_rpc(endpoint); }
+
+            toggle_auto_sign(enabled) => { root.settings_toggle_auto_sign(enabled); }
+            create_session(ttl_minutes) => { root.settings_create_session(ttl_minutes); }
+            revoke_session => { root.settings_revoke_session(); }
         }
 
         MicroDepthPanel {
