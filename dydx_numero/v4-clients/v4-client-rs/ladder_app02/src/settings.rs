@@ -1,6 +1,6 @@
 use std::fs::{create_dir_all, File};
 use std::io::{BufRead, BufReader, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(Clone, Debug)]
 pub enum Network {
@@ -26,7 +26,6 @@ impl Network {
 
 #[derive(Clone, Debug)]
 pub struct SettingsState {
-    // UI-facing fields
     pub wallet_address: String,
     pub wallet_status: String,
 
@@ -39,7 +38,6 @@ pub struct SettingsState {
 
     pub last_error: String,
 
-    // Internal bits (no secrets stored)
     pub wallet_connected: bool,
     pub session_active: bool,
     pub session_expires_at_unix: Option<u64>,
@@ -91,7 +89,6 @@ impl SettingsManager {
     }
 
     pub fn tick(&mut self, now_unix: u64) -> bool {
-        // Returns true if something changed (eg. session expired)
         let mut changed = false;
 
         if self.state.session_active {
@@ -106,7 +103,6 @@ impl SettingsManager {
 
         if changed {
             self.recompute_statuses(now_unix);
-            // no need to save; session is ephemeral by design
         }
 
         changed
@@ -122,8 +118,6 @@ impl SettingsManager {
             return;
         }
 
-        // IMPORTANT: We are NOT importing private keys here. This is just the
-        // connection “state machine” + UI wiring. Real wallet integration comes later.
         self.state.wallet_address = addr;
         self.state.wallet_connected = true;
 
@@ -146,7 +140,6 @@ impl SettingsManager {
     pub fn refresh_status(&mut self, now_unix: u64) {
         self.state.last_error.clear();
         self.recompute_statuses(now_unix);
-        // no save needed
     }
 
     pub fn select_network(&mut self, now_unix: u64, net: Network) {
@@ -218,16 +211,10 @@ impl SettingsManager {
         self.state.session_expires_at_unix = None;
 
         self.recompute_statuses(now_unix);
-        // no save required, but harmless if we keep TTL / auto_sign persisted
         self.save_to_disk();
     }
 
-    // -----------------------------
-    // Internals: statuses + config
-    // -----------------------------
-
     fn recompute_statuses(&mut self, now_unix: u64) {
-        // Wallet status
         self.state.wallet_status = if self.state.wallet_connected {
             let net = self.state.network.as_str();
             let rpc = if self.state.rpc_endpoint.trim().is_empty() {
@@ -240,7 +227,6 @@ impl SettingsManager {
             "disconnected".to_string()
         };
 
-        // Signer status
         self.state.signer_status = if !self.state.wallet_connected {
             "inactive".to_string()
         } else if !self.state.auto_sign {
@@ -265,7 +251,6 @@ impl SettingsManager {
         let Ok(f) = File::open(&self.cfg_path) else { return; };
         let reader = BufReader::new(f);
 
-        // very small key=value config (no extra deps)
         for line in reader.lines().flatten() {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
@@ -289,9 +274,6 @@ impl SettingsManager {
             }
         }
 
-        // NOTE:
-        // We intentionally do NOT persist wallet_connected/session_active.
-        // Those are runtime/session concepts.
         self.state.wallet_connected = false;
         self.state.session_active = false;
         self.state.session_expires_at_unix = None;
@@ -319,7 +301,6 @@ impl SettingsManager {
         let _ = writeln!(f, "auto_sign={}", if self.state.auto_sign { "true" } else { "false" });
         let _ = writeln!(f, "session_ttl_minutes={}", self.state.session_ttl_minutes);
 
-        // Atomic-ish replace
         let _ = std::fs::rename(tmp, &self.cfg_path);
     }
 }
