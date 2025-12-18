@@ -808,7 +808,7 @@ fn apply_snapshot_to_ui(app: &AppWindow, snap: &Snapshot, metrics: &BubbleMetric
 
         let mut min_price = f64::MAX;
         let mut max_price = f64::MIN;
-        let mut max_vol = 0.0;
+        let mut max_vol: f64 = 0.0;
 
         for c in slice {
             min_price = min_price.min(c.low);
