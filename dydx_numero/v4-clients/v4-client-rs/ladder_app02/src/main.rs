@@ -549,7 +549,12 @@ impl AppCore {
 
 // ---- UI wiring (unchanged snapshot function) -------------------------------
 
-fn apply_snapshot_to_ui(app: &AppWindow, snap: &Snapshot, metrics: &BubbleMetrics, dom_depth_levels: usize) {
+fn apply_snapshot_to_ui(
+    app: &AppWindow,
+    snap: &Snapshot,
+    metrics: &BubbleMetrics,
+    dom_depth_levels: usize,
+) {
     app.set_mid_price(metrics.mid as f32);
     app.set_best_bid(metrics.best_bid as f32);
     app.set_best_ask(metrics.best_ask as f32);
@@ -744,6 +749,10 @@ fn main() {
     app.set_trade_side(SharedString::from("Buy"));
     app.set_trade_size(0.01);
     app.set_trade_leverage(5.0);
+
+    // 4D: explicit REAL trading toggle (default OFF)
+    app.set_trade_real_mode(false);
+
     app.set_balance_usdc(1000.0);
     app.set_balance_pnl(0.0);
     app.set_candle_midline(0.5);
@@ -786,7 +795,7 @@ fn main() {
     let app_weak = app.as_weak();
 
     // -----------------------------------------------------------------------
-    // 4C: SEND ORDER is now gated by signer session when in "wallet live mode"
+    // 4D: SEND ORDER is gated by explicit "REAL trading" toggle (NOT network)
     // -----------------------------------------------------------------------
     {
         let app_weak_send = app_weak.clone();
@@ -801,16 +810,16 @@ fn main() {
                 let leverage = app.get_trade_leverage() as f64;
                 let ticker = core.current_ticker.clone();
 
-                // Determine if we consider this a "real/wallet" send:
-                // Live + wallet connected + network not "Sim"
                 let mode = app.get_mode().to_string();
-                let st = core.settings.state();
-                let net_str = st.network.as_str().to_string();
-                let network_is_sim = net_str.eq_ignore_ascii_case("sim");
-                let requires_signing =
-                    mode.eq_ignore_ascii_case("live") && st.wallet_connected && !network_is_sim;
+                let real_mode = app.get_trade_real_mode();
 
-                // If signing is required, enforce it.
+                // 4D rule:
+                // - If Live + REAL => require signing (will block if wallet/session not valid)
+                // - Otherwise => no signing required
+                let requires_signing = mode.eq_ignore_ascii_case("live") && real_mode;
+
+                let st = core.settings.state();
+
                 let mut signature_preview: Option<String> = None;
 
                 if requires_signing {
@@ -824,7 +833,6 @@ fn main() {
 
                     match core.signer.sign_request(&req, now) {
                         Ok(sig) => {
-                            // show just a short preview so UI stays clean
                             let s = sig.0;
                             let preview = if s.len() > 16 {
                                 format!("{}…{}", &s[..8], &s[s.len() - 6..])
@@ -834,14 +842,14 @@ fn main() {
                             signature_preview = Some(preview);
                         }
                         Err(e) => {
-                            let msg = format!("Blocked: {}", signer_err_to_string(&e));
+                            let msg = format!("Blocked (REAL mode): {}", signer_err_to_string(&e));
                             app.set_order_message(SharedString::from(&msg));
 
                             let receipt = Receipt {
                                 ts: SharedString::from(format_ts_local(now)),
                                 ticker: SharedString::from(&ticker),
                                 side: SharedString::from(&side),
-                                kind: SharedString::from("Manual"),
+                                kind: SharedString::from("ManualReal"),
                                 size: SharedString::from(format!("{:.8}", size)),
                                 status: SharedString::from("fail"),
                                 comment: SharedString::from(&msg),
@@ -856,16 +864,38 @@ fn main() {
                     }
                 }
 
-                // For now: still write to CSV (simulated execution path)
+                // Still simulated execution: write to CSV
                 let size_str = format!("{:.8}", size);
-                let source = if requires_signing { "gui_signed" } else { "gui_manual" };
+
+                let source = if requires_signing {
+                    "gui_real_signed"
+                } else if real_mode {
+                    // REAL requested, but not in Live (e.g. Replay). We'll log it clearly.
+                    "gui_real_unverified"
+                } else {
+                    "gui_sim"
+                };
+
                 append_trade_csv(&core.base_dir, &ticker, source, &side, &size_str);
 
-                let msg = if let Some(prev) = &signature_preview {
-                    format!("Order submitted (signed): {} {} on {}  sig={}", side, size_str, ticker, prev)
+                let msg = if requires_signing {
+                    if let Some(prev) = &signature_preview {
+                        format!(
+                            "Order submitted (REAL+signed): {} {} on {}  sig={}",
+                            side, size_str, ticker, prev
+                        )
+                    } else {
+                        format!("Order submitted (REAL+signed): {} {} on {}", side, size_str, ticker)
+                    }
+                } else if real_mode {
+                    format!(
+                        "Order submitted (REAL requested, not Live): {} {} on {}",
+                        side, size_str, ticker
+                    )
                 } else {
-                    format!("Order submitted: {} {} on {}", side, size_str, ticker)
+                    format!("Order submitted (SIM): {} {} on {}", side, size_str, ticker)
                 };
+
                 app.set_order_message(SharedString::from(&msg));
 
                 let comment = if let Some(prev) = &signature_preview {
@@ -874,11 +904,19 @@ fn main() {
                     "no-sign".to_string()
                 };
 
+                let kind = if requires_signing {
+                    "ManualRealSigned"
+                } else if real_mode {
+                    "ManualReal"
+                } else {
+                    "ManualSim"
+                };
+
                 let receipt = Receipt {
                     ts: SharedString::from(format_ts_local(now)),
                     ticker: SharedString::from(&ticker),
                     side: SharedString::from(&side),
-                    kind: SharedString::from(if requires_signing { "ManualSigned" } else { "Manual" }),
+                    kind: SharedString::from(kind),
                     size: SharedString::from(&size_str),
                     status: SharedString::from("submitted"),
                     comment: SharedString::from(comment),
