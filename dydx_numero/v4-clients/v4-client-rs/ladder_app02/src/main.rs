@@ -1,10 +1,12 @@
 mod candle_agg;
 mod settings;
+mod signer;
 
 slint::include_modules!();
 
 use crate::candle_agg::{Candle, CandleAgg};
 use crate::settings::{Network, SettingsManager};
+use crate::signer::{SignRequest, SignerError, SignerManager};
 
 use std::cell::RefCell;
 use std::cmp::{max, min};
@@ -373,9 +375,46 @@ fn append_trade_csv(base_dir: &Path, ticker: &str, source: &str, side: &str, siz
     }
 }
 
+// ---- Signer/UI helpers -----------------------------------------------------
+
+fn signer_err_to_string(e: &SignerError) -> String {
+    match e {
+        SignerError::WalletNotConnected => "Connect wallet first.".to_string(),
+        SignerError::AutoSignDisabled => "Enable Auto-sign first.".to_string(),
+        SignerError::NoActiveSession => "Create a signing session.".to_string(),
+        SignerError::SessionExpired => "Signing session expired. Create a new one.".to_string(),
+        SignerError::InvalidRequest(msg) => format!("Invalid sign request: {msg}"),
+    }
+}
+
+fn signer_status_for_ui(signer: &SignerManager, now: u64) -> String {
+    let sess = signer.session_state();
+    if sess.active {
+        if let Some(exp) = sess.expires_at_unix {
+            let mins_left = exp.saturating_sub(now) / 60;
+            return format!("session active ({}m left)", mins_left);
+        }
+        return "session active".to_string();
+    }
+
+    match signer.can_sign(now) {
+        Ok(()) => "session active".to_string(), // should not usually happen if sess.active=false
+        Err(SignerError::WalletNotConnected) => "inactive".to_string(),
+        Err(SignerError::AutoSignDisabled) => "ready (no session)".to_string(),
+        Err(SignerError::NoActiveSession) => "ready (session not created)".to_string(),
+        Err(SignerError::SessionExpired) => "expired".to_string(),
+        Err(SignerError::InvalidRequest(_)) => "ready".to_string(),
+    }
+}
+
 // ---- Settings UI helper ----------------------------------------------------
 
-fn apply_settings_to_ui(app: &AppWindow, st: &crate::settings::SettingsState) {
+fn apply_settings_to_ui(
+    app: &AppWindow,
+    st: &crate::settings::SettingsState,
+    signer_status: &str,
+    last_error_override: Option<&str>,
+) {
     app.set_settings_wallet_address(SharedString::from(&st.wallet_address));
     app.set_settings_wallet_status(SharedString::from(&st.wallet_status));
 
@@ -384,9 +423,12 @@ fn apply_settings_to_ui(app: &AppWindow, st: &crate::settings::SettingsState) {
 
     app.set_settings_auto_sign(st.auto_sign);
     app.set_settings_session_ttl_minutes(SharedString::from(st.session_ttl_minutes.to_string()));
-    app.set_settings_signer_status(SharedString::from(&st.signer_status));
 
-    app.set_settings_last_error(SharedString::from(&st.last_error));
+    // IMPORTANT: signer status is sourced from SignerManager now
+    app.set_settings_signer_status(SharedString::from(signer_status));
+
+    let err = last_error_override.unwrap_or(&st.last_error);
+    app.set_settings_last_error(SharedString::from(err));
 }
 
 // ---- App core --------------------------------------------------------------
@@ -417,8 +459,11 @@ struct AppCore {
 
     dom_depth_levels: usize,
 
-    // NEW: real settings manager (clean separation)
+    // Persisted + UI settings
     settings: SettingsManager,
+
+    // NEW: signer/session authority (source of truth for sessions)
+    signer: SignerManager,
 }
 
 impl AppCore {
@@ -460,6 +505,7 @@ impl AppCore {
         let scope = Scope::new();
 
         let settings = SettingsManager::new(base_dir.clone());
+        let signer = SignerManager::new();
 
         Self {
             base_dir,
@@ -483,6 +529,7 @@ impl AppCore {
             snapshot_dirty: true,
             dom_depth_levels: 20,
             settings,
+            signer,
         }
     }
 
@@ -520,185 +567,22 @@ impl AppCore {
         self.ticker_data.get(ticker).map(|td| (td.min_ts, td.max_ts))
     }
 
-    fn reload_current_ticker(&mut self) {
-        if let Some(td) = load_ticker_data(&self.base_dir, &self.current_ticker) {
-            println!(
-                "[RELOAD] {}: events={}, trades={}, ts {}..{}",
-                td.ticker,
-                td.book_events.len(),
-                td.trade_events.len(),
-                td.min_ts,
-                td.max_ts
-            );
-            self.ticker_data.insert(self.current_ticker.clone(), td);
-            self.last_reload_ts = now_unix();
-            self.mark_snapshot_dirty();
-        }
-    }
-
-    fn set_tf_from_ui(&mut self, new_tf_secs: u64) {
-        if new_tf_secs == 0 || new_tf_secs == self.tf_secs {
-            return;
-        }
-        println!(
-            "[TF] changing candle tf from {} to {} seconds",
-            self.tf_secs, new_tf_secs
-        );
-        self.tf_secs = new_tf_secs;
-        self.mark_snapshot_dirty();
-    }
-
-    fn set_window_from_ui(&mut self, minutes: u64) {
-        if minutes == 0 {
-            return;
-        }
-        let new_secs = minutes.saturating_mul(60);
-        if new_secs == self.window_secs {
-            return;
-        }
-        println!(
-            "[WINDOW] changing window from {}s to {}s",
-            self.window_secs, new_secs
-        );
-        self.window_secs = new_secs;
-        self.mark_snapshot_dirty();
-    }
-
-    fn set_dom_depth_from_ui(&mut self, levels: i32) {
-        let mut lv = if levels < 1 { 1 } else { levels } as usize;
-        if lv < 5 {
-            lv = 5;
-        }
-        if lv > 50 {
-            lv = 50;
-        }
-        if lv == self.dom_depth_levels {
-            return;
-        }
-        println!(
-            "[DOM] changing depth levels from {} to {}",
-            self.dom_depth_levels, lv
-        );
-        self.dom_depth_levels = lv;
-    }
-
     fn dom_depth_levels(&self) -> usize {
         self.dom_depth_levels
     }
 
-    fn run_bot_script(&mut self, app: &AppWindow, metrics: &BubbleMetrics) {
-        if !self.script_error.is_empty() {
-            eprintln!("[SCRIPT] previous error: {}", self.script_error);
-        }
-
-        self.script_error.clear();
-
-        let script: String = app.get_script_text().to_string();
-
-        self.scope.clear();
-
-        self.scope.set_value("ticker", self.current_ticker.clone());
-        self.scope.set_value("best_bid", metrics.best_bid);
-        self.scope.set_value("best_ask", metrics.best_ask);
-        self.scope.set_value("mid", metrics.mid);
-        self.scope.set_value("spread", metrics.spread);
-        self.scope.set_value("bid_liquidity_near", metrics.bid_liq);
-        self.scope.set_value("ask_liquidity_near", metrics.ask_liq);
-        self.scope.set_value("tf_secs", self.tf_secs as i64);
-
-        self.scope.set_value("bot_signal", self.bot_signal.clone());
-        self.scope.set_value("bot_size", self.bot_size);
-        self.scope.set_value("bot_comment", self.bot_comment.clone());
-
-        let res = self
-            .engine
-            .eval_with_scope::<()>(&mut self.scope, &script);
-
-        match res {
-            Ok(()) => {
-                if let Some(sig) = self.scope.get_value::<String>("bot_signal") {
-                    self.bot_signal = sig;
-                } else {
-                    self.bot_signal = "none".to_string();
-                }
-                if let Some(sz) = self.scope.get_value::<f64>("bot_size") {
-                    self.bot_size = sz.max(0.0);
-                } else {
-                    self.bot_size = 0.0;
-                }
-                if let Some(cmt) = self.scope.get_value::<String>("bot_comment") {
-                    self.bot_comment = cmt;
-                } else {
-                    self.bot_comment.clear();
-                }
-
-                self.script_error.clear();
-                app.set_script_error(SharedString::from(""));
-            }
-            Err(e) => {
-                self.bot_signal = "none".to_string();
-                self.bot_size = 0.0;
-                self.bot_comment.clear();
-                self.script_error = e.to_string();
-                app.set_script_error(SharedString::from(&self.script_error));
-                eprintln!("[SCRIPT] error: {}", self.script_error);
-            }
-        }
-
-        app.set_bot_signal(SharedString::from(&self.bot_signal));
-        app.set_bot_size(self.bot_size as f32);
-        app.set_bot_comment(SharedString::from(&self.bot_comment));
-    }
-
-    fn push_receipt(&mut self, app: &AppWindow, r: Receipt) {
-        self.receipts.push(r);
-        if self.receipts.len() > 300 {
-            let extra = self.receipts.len() - 300;
-            self.receipts.drain(0..extra);
-        }
-        let model = VecModel::from(self.receipts.clone());
-        app.set_receipts(ModelRc::new(model));
-    }
-
-    fn maybe_auto_trade(&mut self, app: &AppWindow, metrics: &BubbleMetrics) {
-        self.bot_auto_trade = app.get_bot_auto_trade();
-
-        if !self.bot_auto_trade {
-            return;
-        }
-        if self.bot_signal != "buy" && self.bot_signal != "sell" {
-            return;
-        }
-        if self.bot_signal == self.last_bot_fired_signal {
-            return;
-        }
-        if self.bot_size <= 0.0 {
-            return;
-        }
-
-        let side = self.bot_signal.clone();
-        let ticker = self.current_ticker.clone();
-        let size_str = format!("{:.8}", self.bot_size);
-
-        append_trade_csv(&self.base_dir, &ticker, "bot_auto", &side, &size_str);
-
-        let receipt = Receipt {
-            ts: SharedString::from(format_ts_local(now_unix())),
-            ticker: SharedString::from(&ticker),
-            side: SharedString::from(&side),
-            kind: SharedString::from("BotAuto"),
-            size: SharedString::from(&size_str),
-            status: SharedString::from("submitted"),
-            comment: SharedString::from(&self.bot_comment),
+    #[allow(dead_code)]
+    fn demo_sign_one_order(&self, now: u64) -> Result<String, SignerError> {
+        // Not wired to UI yet — just here to show how order signing plugs in.
+        let req = SignRequest {
+            ticker: self.current_ticker.clone(),
+            side: "Buy".to_string(),
+            size: 0.01,
+            leverage: 5.0,
+            ts_unix: now,
         };
-        self.push_receipt(app, receipt);
-
-        self.last_bot_fired_signal = self.bot_signal.clone();
-
-        eprintln!(
-            "[BOT] auto-trade: {} {} size {} (mid {:.2}, spread {:.5})",
-            side, ticker, size_str, metrics.mid, metrics.spread
-        );
+        let sig = self.signer.sign_request(&req, now)?;
+        Ok(sig.0)
     }
 }
 
@@ -908,13 +792,24 @@ fn main() {
     app.set_candle_midline(0.5);
     app.set_last_move(SharedString::from("flat"));
 
-    // Apply persisted settings into UI
+    // Apply persisted settings into UI + initialize signer view
     {
         let mut core = core_rc.borrow_mut();
         let now = now_unix();
+
         core.settings.refresh_status(now);
         let st = core.settings.state();
-        apply_settings_to_ui(&app, &st);
+
+        // Signer starts disconnected until wallet is connected.
+        core.signer.set_wallet_connected(st.wallet_connected, now);
+        if st.wallet_connected {
+            let _ = core.signer.set_auto_sign_enabled(st.auto_sign, now);
+        } else {
+            let _ = core.signer.set_auto_sign_enabled(false, now);
+        }
+
+        let signer_status = signer_status_for_ui(&core.signer, now);
+        apply_settings_to_ui(&app, &st, &signer_status, None);
 
         app.set_candle_tf_secs(core.tf_secs as i32);
         app.set_candle_window_minutes((core.window_secs / 60) as i32);
@@ -922,7 +817,11 @@ fn main() {
 
         if let Some((snap, metrics)) = core.snapshot_for_ui() {
             if let Some((min_ts, max_ts)) = core.ticker_range(&core.current_ticker) {
-                let range_str = format!("Range: {} -> {}", format_ts_local(min_ts), format_ts_local(max_ts));
+                let range_str = format!(
+                    "Range: {} -> {}",
+                    format_ts_local(min_ts),
+                    format_ts_local(max_ts)
+                );
                 app.set_data_range(SharedString::from(range_str));
             }
             apply_snapshot_to_ui(&app, &snap, &metrics, core.dom_depth_levels());
@@ -932,7 +831,7 @@ fn main() {
 
     let app_weak = app.as_weak();
 
-    // --- Settings callbacks (now routed through SettingsManager) ---
+    // --- Settings callbacks (SettingsManager persists; SignerManager owns sessions) ---
 
     {
         let app_weak_s = app_weak.clone();
@@ -941,10 +840,22 @@ fn main() {
             if let Some(app) = app_weak_s.upgrade() {
                 let now = now_unix();
                 let mut core = core_rc_s.borrow_mut();
+
                 let addr = app.get_settings_wallet_address().to_string();
                 core.settings.connect_wallet(now, addr);
+
                 let st = core.settings.state();
-                apply_settings_to_ui(&app, &st);
+
+                core.signer.set_wallet_connected(st.wallet_connected, now);
+                if st.wallet_connected {
+                    // sync auto-sign preference on connect
+                    let _ = core.signer.set_auto_sign_enabled(st.auto_sign, now);
+                } else {
+                    let _ = core.signer.set_auto_sign_enabled(false, now);
+                }
+
+                let signer_status = signer_status_for_ui(&core.signer, now);
+                apply_settings_to_ui(&app, &st, &signer_status, None);
             }
         });
     }
@@ -956,9 +867,14 @@ fn main() {
             if let Some(app) = app_weak_s.upgrade() {
                 let now = now_unix();
                 let mut core = core_rc_s.borrow_mut();
+
                 core.settings.disconnect_wallet(now);
+                core.signer.set_wallet_connected(false, now);
+                let _ = core.signer.set_auto_sign_enabled(false, now);
+
                 let st = core.settings.state();
-                apply_settings_to_ui(&app, &st);
+                let signer_status = signer_status_for_ui(&core.signer, now);
+                apply_settings_to_ui(&app, &st, &signer_status, None);
             }
         });
     }
@@ -970,9 +886,20 @@ fn main() {
             if let Some(app) = app_weak_s.upgrade() {
                 let now = now_unix();
                 let mut core = core_rc_s.borrow_mut();
+
                 core.settings.refresh_status(now);
                 let st = core.settings.state();
-                apply_settings_to_ui(&app, &st);
+
+                // Keep signer synchronized with current wallet/auto-sign flags
+                core.signer.set_wallet_connected(st.wallet_connected, now);
+                if st.wallet_connected {
+                    let _ = core.signer.set_auto_sign_enabled(st.auto_sign, now);
+                } else {
+                    let _ = core.signer.set_auto_sign_enabled(false, now);
+                }
+
+                let signer_status = signer_status_for_ui(&core.signer, now);
+                apply_settings_to_ui(&app, &st, &signer_status, None);
             }
         });
     }
@@ -984,10 +911,13 @@ fn main() {
             if let Some(app) = app_weak_s.upgrade() {
                 let now = now_unix();
                 let mut core = core_rc_s.borrow_mut();
+
                 let n = Network::from_str(&net.to_string());
                 core.settings.select_network(now, n);
+
                 let st = core.settings.state();
-                apply_settings_to_ui(&app, &st);
+                let signer_status = signer_status_for_ui(&core.signer, now);
+                apply_settings_to_ui(&app, &st, &signer_status, None);
             }
         });
     }
@@ -999,9 +929,12 @@ fn main() {
             if let Some(app) = app_weak_s.upgrade() {
                 let now = now_unix();
                 let mut core = core_rc_s.borrow_mut();
+
                 core.settings.apply_rpc(now, endpoint.to_string());
+
                 let st = core.settings.state();
-                apply_settings_to_ui(&app, &st);
+                let signer_status = signer_status_for_ui(&core.signer, now);
+                apply_settings_to_ui(&app, &st, &signer_status, None);
             }
         });
     }
@@ -1013,9 +946,26 @@ fn main() {
             if let Some(app) = app_weak_s.upgrade() {
                 let now = now_unix();
                 let mut core = core_rc_s.borrow_mut();
+
+                // Persist preference + run SettingsManager’s validation rules
                 core.settings.toggle_auto_sign(now, enabled);
+
                 let st = core.settings.state();
-                apply_settings_to_ui(&app, &st);
+
+                // Source of truth: signer
+                let mut signer_err: Option<String> = None;
+                core.signer.set_wallet_connected(st.wallet_connected, now);
+                match core.signer.set_auto_sign_enabled(st.auto_sign, now) {
+                    Ok(()) => {}
+                    Err(e) => {
+                        signer_err = Some(signer_err_to_string(&e));
+                        // ensure signer is safe
+                        let _ = core.signer.set_auto_sign_enabled(false, now);
+                    }
+                }
+
+                let signer_status = signer_status_for_ui(&core.signer, now);
+                apply_settings_to_ui(&app, &st, &signer_status, signer_err.as_deref());
             }
         });
     }
@@ -1027,9 +977,25 @@ fn main() {
             if let Some(app) = app_weak_s.upgrade() {
                 let now = now_unix();
                 let mut core = core_rc_s.borrow_mut();
+
+                // We still use SettingsManager here to parse/clamp/persist TTL
+                // (even though SignerManager is the session authority).
                 core.settings.create_session(now, ttl.to_string());
+
                 let st = core.settings.state();
-                apply_settings_to_ui(&app, &st);
+
+                // Create actual signer session (truth)
+                let mut signer_err: Option<String> = None;
+                core.signer.set_wallet_connected(st.wallet_connected, now);
+                let _ = core.signer.set_auto_sign_enabled(st.auto_sign, now);
+
+                match core.signer.create_session(now, st.session_ttl_minutes) {
+                    Ok(_sid) => {}
+                    Err(e) => signer_err = Some(signer_err_to_string(&e)),
+                }
+
+                let signer_status = signer_status_for_ui(&core.signer, now);
+                apply_settings_to_ui(&app, &st, &signer_status, signer_err.as_deref());
             }
         });
     }
@@ -1041,18 +1007,21 @@ fn main() {
             if let Some(app) = app_weak_s.upgrade() {
                 let now = now_unix();
                 let mut core = core_rc_s.borrow_mut();
+
+                // Persist-side (keeps UI consistent)
                 core.settings.revoke_session(now);
+
+                // Truth-side
+                core.signer.revoke_session();
+
                 let st = core.settings.state();
-                apply_settings_to_ui(&app, &st);
+                let signer_status = signer_status_for_ui(&core.signer, now);
+                apply_settings_to_ui(&app, &st, &signer_status, None);
             }
         });
     }
 
-    // --- Everything else you already had (ticker/mode/time/etc) stays as-is ---
-    // (I’m not re-pasting all your existing non-settings callbacks here in Step 3,
-    // because we’re not changing them. If you want, we can fold them back in next.)
-
-    // Timer: keep current time + also expire sessions live
+    // Timer: keep current time + live session expiry
     let timer = Timer::default();
     {
         let app_weak_timer = app_weak.clone();
@@ -1060,12 +1029,13 @@ fn main() {
         timer.start(TimerMode::Repeated, Duration::from_secs(1), move || {
             if let Some(app) = app_weak_timer.upgrade() {
                 let now = now_unix();
-
-                // session expiry update
                 let mut core = core_rc_timer.borrow_mut();
-                if core.settings.tick(now) {
+
+                // If signer session expires, refresh Settings panel status
+                if core.signer.tick(now) {
                     let st = core.settings.state();
-                    apply_settings_to_ui(&app, &st);
+                    let signer_status = signer_status_for_ui(&core.signer, now);
+                    apply_settings_to_ui(&app, &st, &signer_status, None);
                 }
 
                 app.set_current_time(SharedString::from(format_ts_local(now)));
