@@ -60,7 +60,6 @@ component OrderbookPanel inherits Rectangle {
     border-width: 1px;
     border-color: #31384a;
 
-    // Header bar
     Rectangle {
         x: 0px;
         y: 0px;
@@ -77,7 +76,6 @@ component OrderbookPanel inherits Rectangle {
             color: #ffffff;
         }
 
-        // Small spread badge on the right
         Rectangle {
             x: parent.width - 110px;
             y: 4px;
@@ -101,7 +99,6 @@ component OrderbookPanel inherits Rectangle {
             }
         }
 
-        // --- Drag area (drag by grabbing the header) ----------------
         TouchArea {
             x: 0px;
             y: 0px;
@@ -133,7 +130,6 @@ component OrderbookPanel inherits Rectangle {
         }
     }
 
-    // Bids
     Rectangle {
         x: 4px;
         y: 28px;
@@ -192,7 +188,6 @@ component OrderbookPanel inherits Rectangle {
         }
     }
 
-    // Asks
     Rectangle {
         x: (parent.width * 0.5) + 2px;
         y: 28px;
@@ -283,7 +278,6 @@ component SettingsPanel inherits Rectangle {
     border-width: 1px;
     border-color: #31384a;
 
-    // Header (drag to move)
     Rectangle {
         x: 0px; y: 0px; width: parent.width; height: 24px;
         background: #303545;
@@ -316,7 +310,6 @@ component SettingsPanel inherits Rectangle {
         }
     }
 
-    // Body
     Rectangle {
         x: 6px;
         y: 28px;
@@ -327,7 +320,6 @@ component SettingsPanel inherits Rectangle {
         border-width: 1px;
         border-color: #222634;
 
-        // ---- Wallet ----
         Text { x: 6px; y: 6px; text: "Wallet"; color: #ffffff; }
 
         Text { x: 6px; y: 26px; text: "Address:"; color: #aaaaaa; font-size: 10px; }
@@ -349,7 +341,6 @@ component SettingsPanel inherits Rectangle {
             color: #c0c0c0; font-size: 10px;
         }
 
-        // ---- Network ----
         Rectangle { x: 6px; y: 94px; width: parent.width - 12px; height: 1px; background: #222634; opacity: 0.8; }
         Text { x: 6px; y: 102px; text: "Network"; color: #ffffff; }
 
@@ -375,7 +366,6 @@ component SettingsPanel inherits Rectangle {
             clicked => { root.apply_rpc(root.rpc_endpoint); }
         }
 
-        // ---- Signing ----
         Rectangle { x: 6px; y: 174px; width: parent.width - 12px; height: 1px; background: #222634; opacity: 0.8; }
         Text { x: 6px; y: 182px; text: "Signing"; color: #ffffff; }
 
@@ -465,7 +455,7 @@ component MicroDepthPanel inherits Rectangle {
 
 component CandleChart inherits Rectangle {
     in property <[CandlePoint]> points;
-    in property <float> mid_line_y;  // 0..1 normalized (0 = top, 1 = bottom)
+    in property <float> mid_line_y;
 
     in-out property <float> x_zoom;
     in-out property <float> y_zoom;
@@ -676,6 +666,13 @@ export component AppWindow inherits Window {
     // 4D: explicit REAL trading toggle
     in-out property <bool> trade_real_mode: false;
 
+    // 4E: If REAL is toggled on, force Live mode immediately
+    //trade_real_mode-changed => {
+    //    if trade_real_mode {
+    //        root.mode = "Live";
+    //    }
+    //}
+
     in-out property <string> bot_signal;
     in-out property <float> bot_size;
     in-out property <string> bot_comment;
@@ -710,11 +707,9 @@ export component AppWindow inherits Window {
     in-out property <string> last_move;
     in-out property <int> dom_depth_levels;
 
-    // zoom defaults
     in-out property <float> chart_x_zoom: 1.0;
     in-out property <float> chart_y_zoom: 1.0;
 
-    // pan + cursor defaults
     in-out property <float> chart_pan_x: 0.0;
     in-out property <float> chart_pan_y: 0.0;
     in-out property <float> chart_cursor_x: 0.5;
@@ -723,7 +718,6 @@ export component AppWindow inherits Window {
     in-out property <string> current_time;
     in-out property <string> order_message;
 
-    // ---- Settings panel state (wired to Rust) ----
     in-out property <string> settings_wallet_address;
     in-out property <string> settings_wallet_status;
     in-out property <string> settings_network: "Testnet";
@@ -746,7 +740,6 @@ export component AppWindow inherits Window {
     callback deposit(amount: float);
     callback withdraw(amount: float);
 
-    // ---- Settings callbacks that Rust will handle ----
     callback settings_connect_wallet();
     callback settings_disconnect_wallet();
     callback settings_refresh_status();
@@ -832,8 +825,8 @@ export component AppWindow inherits Window {
             Button { x: 230px; y: 4px; text: "SOL-USD"; clicked => { root.ticker_changed("SOL-USD"); } }
 
             Text { x: 320px; y: 6px; text: "Mode:"; color: #cccccc; }
-            Button { x: 370px; y: 4px; text: "Live";   clicked => { root.mode_changed("Live"); } }
-            Button { x: 430px; y: 4px; text: "Replay"; clicked => { root.mode_changed("Replay"); } }
+            Button { x: 370px; y: 4px; text: "Live";   clicked => { root.mode = "Live"; } }
+            Button { x: 430px; y: 4px; text: "Replay"; clicked => { root.mode = "Replay"; } }
 
             Text { x: 520px; y: 6px; text: "Time:"; color: #cccccc; }
             Button { x: 570px; y: 4px; text: "Local"; clicked => { root.time_mode_changed("Local"); } }
@@ -981,7 +974,7 @@ export component AppWindow inherits Window {
             Button { x: 80px; y: 8px; text: "Sell"; clicked => { root.trade_side = "Sell"; } }
             Button { x: 152px; y: 8px; text: "Send Order"; clicked => { root.send_order(); } }
 
-            // 4D: REAL trading checkbox
+            // REAL checkbox (Auto-switch is handled by trade_real_mode-changed)
             CheckBox { x: 260px; y: 8px; text: "REAL"; checked <=> trade_real_mode; }
 
             Text {
@@ -1145,7 +1138,6 @@ export component AppWindow inherits Window {
             visible: root.show_depth || root.show_ladders;
         }
 
-        // NEW: Movable Settings panel
         SettingsPanel {
             x: 392px;
             y: 80px;

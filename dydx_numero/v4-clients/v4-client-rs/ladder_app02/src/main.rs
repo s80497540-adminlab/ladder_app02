@@ -1016,12 +1016,20 @@ fn main() {
     {
         let app_weak_s = app_weak.clone();
         let core_rc_s = core_rc.clone();
-        app.on_settings_apply_rpc(move |endpoint| {
+        app.on_settings_select_network(move |net| {
             if let Some(app) = app_weak_s.upgrade() {
                 let now = now_unix();
                 let mut core = core_rc_s.borrow_mut();
 
-                core.settings.apply_rpc(now, endpoint.to_string());
+                let n = Network::from_str(&net.to_string());
+                let is_real = matches!(n, Network::Mainnet);    
+
+                core.settings.select_network(now, n);
+
+                // 4E: Auto-switch to Live if REAL is toggled (Mainnet)
+                if is_real {
+                    app.set_mode(SharedString::from("Live"));
+                }
 
                 let st = core.settings.state();
                 let signer_status = signer_status_for_ui(&core.signer, now);
