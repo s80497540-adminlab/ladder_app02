@@ -673,6 +673,9 @@ export component AppWindow inherits Window {
     in-out property <float> trade_size;
     in-out property <float> trade_leverage;
 
+    // 4D: explicit REAL trading toggle
+    in-out property <bool> trade_real_mode: false;
+
     in-out property <string> bot_signal;
     in-out property <float> bot_size;
     in-out property <string> bot_comment;
@@ -777,7 +780,8 @@ export component AppWindow inherits Window {
                     + "  | Mode: " + mode
                     + "  | Time: " + time_mode
                     + "  | Range: " + data_range
-                    + "  | Now: " + current_time;
+                    + "  | Now: " + current_time
+                    + "  | Trade: " + (trade_real_mode ? "REAL" : "SIM");
                 color: #e0e0e0;
             }
         }
@@ -976,6 +980,9 @@ export component AppWindow inherits Window {
             Button { x: 8px; y: 8px; text: "Buy";  clicked => { root.trade_side = "Buy"; } }
             Button { x: 80px; y: 8px; text: "Sell"; clicked => { root.trade_side = "Sell"; } }
             Button { x: 152px; y: 8px; text: "Send Order"; clicked => { root.send_order(); } }
+
+            // 4D: REAL trading checkbox
+            CheckBox { x: 260px; y: 8px; text: "REAL"; checked <=> trade_real_mode; }
 
             Text {
                 x: 8px;
