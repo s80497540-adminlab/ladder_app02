@@ -452,7 +452,6 @@ component MicroDepthPanel inherits Rectangle {
 }
 
 // ---------- Candlestick chart (zoom + pan + cursor + wheel zoom) ----
-// (unchanged — omitted here for brevity in explanation, but included fully below)
 
 component CandleChart inherits Rectangle {
     in property <[CandlePoint]> points;
@@ -664,6 +663,11 @@ export component AppWindow inherits Window {
     // 4F: explicit REAL toggle stored in UI state
     in-out property <bool> trade_real_mode: false;
 
+    // 4H: ARM gate for REAL (must be armed before sending REAL orders)
+    in-out property <bool> trade_real_armed: false;
+    in-out property <string> trade_real_arm_status: "NOT ARMED";
+    in-out property <string> trade_real_arm_phrase: "";
+
     in-out property <string> bot_signal;
     in-out property <float> bot_size;
     in-out property <string> bot_comment;
@@ -742,6 +746,10 @@ export component AppWindow inherits Window {
 
     // 4F: REAL toggle callback (no *-changed usage)
     callback trade_real_mode_toggled(enabled: bool);
+
+    // 4H: ARM / DISARM callbacks
+    callback arm_real_request(phrase: string);
+    callback disarm_real();
 
     Rectangle {
         x: 0px;
@@ -965,7 +973,13 @@ export component AppWindow inherits Window {
 
             Button { x: 8px; y: 8px; text: "Buy";  clicked => { root.trade_side = "Buy"; } }
             Button { x: 80px; y: 8px; text: "Sell"; clicked => { root.trade_side = "Sell"; } }
-            Button { x: 152px; y: 8px; text: "Send Order"; clicked => { root.send_order(); } }
+
+            Button {
+                x: 152px; y: 8px;
+                text: "Send Order";
+                enabled: !root.trade_real_mode || root.trade_real_armed;
+                clicked => { root.send_order(); }
+            }
 
             // 4F: REAL toggle checkbox with explicit callback to Rust
             CheckBox {
@@ -973,6 +987,42 @@ export component AppWindow inherits Window {
                 text: "REAL";
                 checked <=> root.trade_real_mode;
                 toggled => { root.trade_real_mode_toggled(self.checked); }
+            }
+
+            // 4H: ARM controls (only show when REAL is enabled)
+            Text {
+                x: 340px; y: 12px;
+                text: "ARM:";
+                color: #cccccc;
+                visible: root.trade_real_mode;
+            }
+
+            LineEdit {
+                x: 380px; y: 8px;
+                width: 60px; height: 22px;
+                text <=> root.trade_real_arm_phrase;
+                visible: root.trade_real_mode;
+            }
+
+            Button {
+                x: 448px; y: 8px;
+                text: "ARM (60s)";
+                visible: root.trade_real_mode;
+                clicked => { root.arm_real_request(root.trade_real_arm_phrase); }
+            }
+
+            Button {
+                x: 540px; y: 8px;
+                text: "Disarm";
+                visible: root.trade_real_mode;
+                clicked => { root.disarm_real(); }
+            }
+
+            Text {
+                x: 620px; y: 12px;
+                text: root.trade_real_arm_status;
+                color: root.trade_real_armed ? #80ff80 : #ff8080;
+                visible: root.trade_real_mode;
             }
 
             Text {
@@ -988,9 +1038,6 @@ export component AppWindow inherits Window {
             Button { x: 620px; y: 8px; text: "Withdraw 100"; clicked => { root.withdraw(100.0); } }
             Button { x: 740px; y: 8px; text: "Reload data";  clicked => { root.reload_data(); } }
         }
-
-        // (rest of your file continues unchanged)
-        // NOTE: I’m keeping the rest identical to your last shared version.
 
         Rectangle {
             x: 0px;
