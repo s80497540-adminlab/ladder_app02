@@ -440,10 +440,9 @@ struct AppCore {
     tf_secs: u64,
     window_secs: u64,
 
-    // 4F: latch last REAL toggle so we can message only on transitions
+    // 4F/4G latch
     last_real_mode: bool,
 
-    // you can add these back later; leaving in place for future wiring
     #[allow(dead_code)]
     last_reload_ts: u64,
 
@@ -551,7 +550,7 @@ impl AppCore {
     }
 }
 
-// ---- UI wiring (unchanged snapshot function) -------------------------------
+// ---- UI wiring (snapshot) --------------------------------------------------
 
 fn apply_snapshot_to_ui(
     app: &AppWindow,
@@ -754,7 +753,7 @@ fn main() {
     app.set_trade_size(0.01);
     app.set_trade_leverage(5.0);
 
-    // 4D: explicit REAL trading toggle (default OFF)
+    // REAL trading toggle default OFF
     app.set_trade_real_mode(false);
 
     app.set_balance_usdc(1000.0);
@@ -779,7 +778,6 @@ fn main() {
             let _ = core.signer.set_auto_sign_enabled(false, now);
         }
 
-        // 4F: init latch from UI default
         core.last_real_mode = app.get_trade_real_mode();
 
         let signer_status = signer_status_for_ui(&core.signer, now);
@@ -802,7 +800,7 @@ fn main() {
     let app_weak = app.as_weak();
 
     // -----------------------------------------------------------------------
-    // 4F: REAL toggle => force Live + confirmation message (NO slint *-changed)
+    // 4G: REAL toggle requires Mainnet + forces Live + confirmation message
     // -----------------------------------------------------------------------
     {
         let app_weak_r = app_weak.clone();
@@ -811,21 +809,32 @@ fn main() {
             if let Some(app) = app_weak_r.upgrade() {
                 let mut core = core_rc_r.borrow_mut();
 
-                // Keep latch in sync
+                let st = core.settings.state();
+                let is_mainnet = matches!(st.network, Network::Mainnet);
+
+                // deny REAL if not mainnet
+                if enabled && !is_mainnet {
+                    app.set_trade_real_mode(false);
+                    core.last_real_mode = false;
+                    app.set_order_message(SharedString::from(
+                        "REAL requires Mainnet — switch Network to Mainnet first.",
+                    ));
+                    return;
+                }
+
                 let was = core.last_real_mode;
                 core.last_real_mode = enabled;
 
                 if enabled {
-                    // If REAL enabled, force Live
+                    // force Live
                     let mode_now = app.get_mode().to_string();
                     if !mode_now.eq_ignore_ascii_case("live") {
                         app.set_mode(SharedString::from("Live"));
                         app.set_order_message(SharedString::from(
-                            "REAL enabled → switched to Live.",
+                            "REAL enabled (Mainnet) → switched to Live.",
                         ));
                     } else if !was {
-                        // already live, but we just toggled REAL on
-                        app.set_order_message(SharedString::from("REAL enabled."));
+                        app.set_order_message(SharedString::from("REAL enabled (Mainnet)."));
                     }
                 } else if was {
                     app.set_order_message(SharedString::from("REAL disabled."));
@@ -835,14 +844,14 @@ fn main() {
     }
 
     // -----------------------------------------------------------------------
-    // 4F: Block Replay while REAL is enabled (Mode buttons call mode_changed)
+    // 4F/4G: Block Replay while REAL is enabled
     // -----------------------------------------------------------------------
     {
         let app_weak_m = app_weak.clone();
         let core_rc_m = core_rc.clone();
         app.on_mode_changed(move |new_mode| {
             if let Some(app) = app_weak_m.upgrade() {
-                let mut core = core_rc_m.borrow_mut();
+                let core = core_rc_m.borrow();
                 let requested = new_mode.to_string();
 
                 if core.last_real_mode && requested.eq_ignore_ascii_case("replay") {
@@ -858,7 +867,9 @@ fn main() {
     }
 
     // -----------------------------------------------------------------------
-    // 4D: SEND ORDER is gated by explicit "REAL trading" toggle (NOT network)
+    // SEND ORDER gating:
+    // - REAL requires Mainnet + Live + valid signing session
+    // - SIM orders still write CSV
     // -----------------------------------------------------------------------
     {
         let app_weak_send = app_weak.clone();
@@ -876,12 +887,28 @@ fn main() {
                 let mode = app.get_mode().to_string();
                 let real_mode = app.get_trade_real_mode();
 
-                // 4D rule:
-                // - If Live + REAL => require signing (will block if wallet/session not valid)
-                // - Otherwise => no signing required
-                let requires_signing = mode.eq_ignore_ascii_case("live") && real_mode;
-
                 let st = core.settings.state();
+                let is_mainnet = matches!(st.network, Network::Mainnet);
+
+                // 4G hard safety: REAL cannot operate off-mainnet
+                if real_mode && !is_mainnet {
+                    let msg = "Blocked: REAL requires Mainnet (network mismatch).".to_string();
+                    app.set_order_message(SharedString::from(&msg));
+
+                    let receipt = Receipt {
+                        ts: SharedString::from(format_ts_local(now)),
+                        ticker: SharedString::from(&ticker),
+                        side: SharedString::from(&side),
+                        kind: SharedString::from("ManualReal"),
+                        size: SharedString::from(format!("{:.8}", size)),
+                        status: SharedString::from("fail"),
+                        comment: SharedString::from(&msg),
+                    };
+                    core.push_receipt(&app, receipt);
+                    return;
+                }
+
+                let requires_signing = mode.eq_ignore_ascii_case("live") && real_mode && is_mainnet;
 
                 let mut signature_preview: Option<String> = None;
 
@@ -919,7 +946,6 @@ fn main() {
                             };
                             core.push_receipt(&app, receipt);
 
-                            // also update settings status line
                             let signer_status = signer_status_for_ui(&core.signer, now);
                             apply_settings_to_ui(&app, &st, &signer_status, Some(&msg));
                             return;
@@ -927,13 +953,11 @@ fn main() {
                     }
                 }
 
-                // Still simulated execution: write to CSV
                 let size_str = format!("{:.8}", size);
 
                 let source = if requires_signing {
                     "gui_real_signed"
                 } else if real_mode {
-                    // REAL requested, but not in Live (e.g. Replay). We'll log it clearly.
                     "gui_real_unverified"
                 } else {
                     "gui_sim"
@@ -989,7 +1013,7 @@ fn main() {
         });
     }
 
-    // --- Settings callbacks (persisted settings + signer truth) ---
+    // --- Settings callbacks ---
     {
         let app_weak_s = app_weak.clone();
         let core_rc_s = core_rc.clone();
@@ -1058,7 +1082,7 @@ fn main() {
         });
     }
 
-    // Keep ONE select_network callback (you currently had two)
+    // ONE select_network handler, with 4G enforcement
     {
         let app_weak_s = app_weak.clone();
         let core_rc_s = core_rc.clone();
@@ -1071,6 +1095,28 @@ fn main() {
                 core.settings.select_network(now, n);
 
                 let st = core.settings.state();
+                let is_mainnet = matches!(st.network, Network::Mainnet);
+
+                // 4G: if leaving Mainnet while REAL on -> auto disable REAL
+                if !is_mainnet && app.get_trade_real_mode() {
+                    app.set_trade_real_mode(false);
+                    core.last_real_mode = false;
+                    app.set_order_message(SharedString::from(
+                        "Network switched off Mainnet → REAL disabled.",
+                    ));
+                }
+
+                // If switching to Mainnet while REAL is already on, force Live (just in case)
+                if is_mainnet && app.get_trade_real_mode() {
+                    let mode_now = app.get_mode().to_string();
+                    if !mode_now.eq_ignore_ascii_case("live") {
+                        app.set_mode(SharedString::from("Live"));
+                        app.set_order_message(SharedString::from(
+                            "Mainnet + REAL → switched to Live.",
+                        ));
+                    }
+                }
+
                 let signer_status = signer_status_for_ui(&core.signer, now);
                 apply_settings_to_ui(&app, &st, &signer_status, None);
             }
@@ -1148,7 +1194,7 @@ fn main() {
         });
     }
 
-    // Timer: keep current time + live session expiry
+    // Timer: keep current time + session expiry refresh
     let timer = Timer::default();
     {
         let app_weak_timer = app_weak.clone();
