@@ -440,6 +440,9 @@ struct AppCore {
     tf_secs: u64,
     window_secs: u64,
 
+    // 4F: latch last REAL toggle so we can message only on transitions
+    last_real_mode: bool,
+
     // you can add these back later; leaving in place for future wiring
     #[allow(dead_code)]
     last_reload_ts: u64,
@@ -493,6 +496,7 @@ impl AppCore {
             current_ticker,
             tf_secs: 60,
             window_secs: 3600,
+            last_real_mode: false,
             last_reload_ts: now_unix(),
             engine,
             scope,
@@ -775,6 +779,9 @@ fn main() {
             let _ = core.signer.set_auto_sign_enabled(false, now);
         }
 
+        // 4F: init latch from UI default
+        core.last_real_mode = app.get_trade_real_mode();
+
         let signer_status = signer_status_for_ui(&core.signer, now);
         apply_settings_to_ui(&app, &st, &signer_status, None);
 
@@ -793,6 +800,62 @@ fn main() {
     }
 
     let app_weak = app.as_weak();
+
+    // -----------------------------------------------------------------------
+    // 4F: REAL toggle => force Live + confirmation message (NO slint *-changed)
+    // -----------------------------------------------------------------------
+    {
+        let app_weak_r = app_weak.clone();
+        let core_rc_r = core_rc.clone();
+        app.on_trade_real_mode_toggled(move |enabled| {
+            if let Some(app) = app_weak_r.upgrade() {
+                let mut core = core_rc_r.borrow_mut();
+
+                // Keep latch in sync
+                let was = core.last_real_mode;
+                core.last_real_mode = enabled;
+
+                if enabled {
+                    // If REAL enabled, force Live
+                    let mode_now = app.get_mode().to_string();
+                    if !mode_now.eq_ignore_ascii_case("live") {
+                        app.set_mode(SharedString::from("Live"));
+                        app.set_order_message(SharedString::from(
+                            "REAL enabled → switched to Live.",
+                        ));
+                    } else if !was {
+                        // already live, but we just toggled REAL on
+                        app.set_order_message(SharedString::from("REAL enabled."));
+                    }
+                } else if was {
+                    app.set_order_message(SharedString::from("REAL disabled."));
+                }
+            }
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // 4F: Block Replay while REAL is enabled (Mode buttons call mode_changed)
+    // -----------------------------------------------------------------------
+    {
+        let app_weak_m = app_weak.clone();
+        let core_rc_m = core_rc.clone();
+        app.on_mode_changed(move |new_mode| {
+            if let Some(app) = app_weak_m.upgrade() {
+                let mut core = core_rc_m.borrow_mut();
+                let requested = new_mode.to_string();
+
+                if core.last_real_mode && requested.eq_ignore_ascii_case("replay") {
+                    app.set_mode(SharedString::from("Live"));
+                    app.set_order_message(SharedString::from(
+                        "Replay is disabled while REAL is enabled — staying in Live.",
+                    ));
+                } else {
+                    app.set_mode(SharedString::from(requested));
+                }
+            }
+        });
+    }
 
     // -----------------------------------------------------------------------
     // 4D: SEND ORDER is gated by explicit "REAL trading" toggle (NOT network)
@@ -995,6 +1058,7 @@ fn main() {
         });
     }
 
+    // Keep ONE select_network callback (you currently had two)
     {
         let app_weak_s = app_weak.clone();
         let core_rc_s = core_rc.clone();
@@ -1005,31 +1069,6 @@ fn main() {
 
                 let n = Network::from_str(&net.to_string());
                 core.settings.select_network(now, n);
-
-                let st = core.settings.state();
-                let signer_status = signer_status_for_ui(&core.signer, now);
-                apply_settings_to_ui(&app, &st, &signer_status, None);
-            }
-        });
-    }
-
-    {
-        let app_weak_s = app_weak.clone();
-        let core_rc_s = core_rc.clone();
-        app.on_settings_select_network(move |net| {
-            if let Some(app) = app_weak_s.upgrade() {
-                let now = now_unix();
-                let mut core = core_rc_s.borrow_mut();
-
-                let n = Network::from_str(&net.to_string());
-                let is_real = matches!(n, Network::Mainnet);    
-
-                core.settings.select_network(now, n);
-
-                // 4E: Auto-switch to Live if REAL is toggled (Mainnet)
-                if is_real {
-                    app.set_mode(SharedString::from("Live"));
-                }
 
                 let st = core.settings.state();
                 let signer_status = signer_status_for_ui(&core.signer, now);

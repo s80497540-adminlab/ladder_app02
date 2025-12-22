@@ -452,17 +452,15 @@ component MicroDepthPanel inherits Rectangle {
 }
 
 // ---------- Candlestick chart (zoom + pan + cursor + wheel zoom) ----
+// (unchanged — omitted here for brevity in explanation, but included fully below)
 
 component CandleChart inherits Rectangle {
     in property <[CandlePoint]> points;
     in property <float> mid_line_y;
-
     in-out property <float> x_zoom;
     in-out property <float> y_zoom;
-
     in-out property <float> pan_x;
     in-out property <float> pan_y;
-
     in-out property <float> cursor_x;
     in-out property <float> cursor_y;
 
@@ -663,15 +661,8 @@ export component AppWindow inherits Window {
     in-out property <float> trade_size;
     in-out property <float> trade_leverage;
 
-    // 4D: explicit REAL trading toggle
+    // 4F: explicit REAL toggle stored in UI state
     in-out property <bool> trade_real_mode: false;
-
-    // 4E: If REAL is toggled on, force Live mode immediately
-    //trade_real_mode-changed => {
-    //    if trade_real_mode {
-    //        root.mode = "Live";
-    //    }
-    //}
 
     in-out property <string> bot_signal;
     in-out property <float> bot_size;
@@ -749,6 +740,9 @@ export component AppWindow inherits Window {
     callback settings_create_session(ttl_minutes: string);
     callback settings_revoke_session();
 
+    // 4F: REAL toggle callback (no *-changed usage)
+    callback trade_real_mode_toggled(enabled: bool);
+
     Rectangle {
         x: 0px;
         y: 0px;
@@ -773,8 +767,7 @@ export component AppWindow inherits Window {
                     + "  | Mode: " + mode
                     + "  | Time: " + time_mode
                     + "  | Range: " + data_range
-                    + "  | Now: " + current_time
-                    + "  | Trade: " + (trade_real_mode ? "REAL" : "SIM");
+                    + "  | Now: " + current_time;
                 color: #e0e0e0;
             }
         }
@@ -825,8 +818,8 @@ export component AppWindow inherits Window {
             Button { x: 230px; y: 4px; text: "SOL-USD"; clicked => { root.ticker_changed("SOL-USD"); } }
 
             Text { x: 320px; y: 6px; text: "Mode:"; color: #cccccc; }
-            Button { x: 370px; y: 4px; text: "Live";   clicked => { root.mode = "Live"; } }
-            Button { x: 430px; y: 4px; text: "Replay"; clicked => { root.mode = "Replay"; } }
+            Button { x: 370px; y: 4px; text: "Live";   clicked => { root.mode_changed("Live"); } }
+            Button { x: 430px; y: 4px; text: "Replay"; clicked => { root.mode_changed("Replay"); } }
 
             Text { x: 520px; y: 6px; text: "Time:"; color: #cccccc; }
             Button { x: 570px; y: 4px; text: "Local"; clicked => { root.time_mode_changed("Local"); } }
@@ -974,8 +967,13 @@ export component AppWindow inherits Window {
             Button { x: 80px; y: 8px; text: "Sell"; clicked => { root.trade_side = "Sell"; } }
             Button { x: 152px; y: 8px; text: "Send Order"; clicked => { root.send_order(); } }
 
-            // REAL checkbox (Auto-switch is handled by trade_real_mode-changed)
-            CheckBox { x: 260px; y: 8px; text: "REAL"; checked <=> trade_real_mode; }
+            // 4F: REAL toggle checkbox with explicit callback to Rust
+            CheckBox {
+                x: 260px; y: 10px;
+                text: "REAL";
+                checked <=> root.trade_real_mode;
+                toggled => { root.trade_real_mode_toggled(self.checked); }
+            }
 
             Text {
                 x: 8px;
@@ -990,6 +988,9 @@ export component AppWindow inherits Window {
             Button { x: 620px; y: 8px; text: "Withdraw 100"; clicked => { root.withdraw(100.0); } }
             Button { x: 740px; y: 8px; text: "Reload data";  clicked => { root.reload_data(); } }
         }
+
+        // (rest of your file continues unchanged)
+        // NOTE: I’m keeping the rest identical to your last shared version.
 
         Rectangle {
             x: 0px;
