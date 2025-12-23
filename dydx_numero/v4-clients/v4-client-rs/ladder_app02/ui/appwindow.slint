@@ -641,6 +641,152 @@ component PnLSparkline inherits Rectangle {
     }
 }
 
+// ---------- Popout chart panel (draggable + resizable) --------------
+
+component ChartPopoutPanel inherits Rectangle {
+    in-out property <bool> open;
+    in-out property <length> px;
+    in-out property <length> py;
+    in-out property <length> pw;
+    in-out property <length> ph;
+
+    in property <[CandlePoint]> points;
+    in property <float> mid_line_y;
+
+    in-out property <float> x_zoom;
+    in-out property <float> y_zoom;
+    in-out property <float> pan_x;
+    in-out property <float> pan_y;
+    in-out property <float> cursor_x;
+    in-out property <float> cursor_y;
+
+    in property <string> title;
+
+    x: px;
+    y: py;
+    width: pw;
+    height: ph;
+
+    visible: open;
+
+    background: #202533;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: #31384a;
+
+    // header
+    Rectangle {
+        x: 0px; y: 0px; width: parent.width; height: 26px;
+        background: #303545;
+
+        Text { x: 8px; y: 5px; text: title; color: #ffffff; }
+
+        Button {
+            x: parent.width - 54px; y: 3px; width: 48px; height: 20px;
+            text: "Close";
+            clicked => { root.open = false; }
+        }
+
+        TouchArea {
+            x: 0px; y: 0px; width: parent.width - 60px; height: parent.height;
+
+            property <length> last_x;
+            property <length> last_y;
+            property <bool> dragging;
+
+            pointer-event(event) => {
+                if event.kind == PointerEventKind.down {
+                    dragging = true;
+                    last_x = self.mouse-x;
+                    last_y = self.mouse-y;
+                } else if event.kind == PointerEventKind.up {
+                    dragging = false;
+                } else if event.kind == PointerEventKind.move && dragging {
+                    let dx = self.mouse-x - last_x;
+                    let dy = self.mouse-y - last_y;
+
+                    root.px = Math.max(0px, root.px + dx);
+                    root.py = Math.max(40px, root.py + dy);
+
+                    last_x = self.mouse-x;
+                    last_y = self.mouse-y;
+                }
+            }
+        }
+    }
+
+    // content
+    Rectangle {
+        x: 6px;
+        y: 32px;
+        width: parent.width - 12px;
+        height: parent.height - 38px;
+        background: #10131a;
+        border-radius: 4px;
+        border-width: 1px;
+        border-color: #222634;
+
+        CandleChart {
+            x: 6px;
+            y: 6px;
+            width: parent.width - 12px;
+            height: parent.height - 12px;
+
+            points: root.points;
+            mid_line_y: root.mid_line_y;
+
+            x_zoom <=> root.x_zoom;
+            y_zoom <=> root.y_zoom;
+            pan_x <=> root.pan_x;
+            pan_y <=> root.pan_y;
+            cursor_x <=> root.cursor_x;
+            cursor_y <=> root.cursor_y;
+        }
+    }
+
+    // resize grip
+    Rectangle {
+        x: parent.width - 14px;
+        y: parent.height - 14px;
+        width: 12px;
+        height: 12px;
+        background: #7070ff;
+        opacity: 0.7;
+        border-radius: 2px;
+
+        TouchArea {
+            x: -8px; y: -8px; width: 28px; height: 28px;
+
+            property <length> start_w;
+            property <length> start_h;
+            property <length> last_x;
+            property <length> last_y;
+            property <bool> resizing;
+
+            pointer-event(event) => {
+                if event.kind == PointerEventKind.down {
+                    resizing = true;
+                    start_w = root.pw;
+                    start_h = root.ph;
+                    last_x = self.mouse-x;
+                    last_y = self.mouse-y;
+                } else if event.kind == PointerEventKind.up {
+                    resizing = false;
+                } else if event.kind == PointerEventKind.move && resizing {
+                    let dx = self.mouse-x - last_x;
+                    let dy = self.mouse-y - last_y;
+
+                    let nw = start_w + dx;
+                    let nh = start_h + dy;
+
+                    root.pw = Math.max(420px, Math.min(1100px, nw));
+                    root.ph = Math.max(260px, Math.min(900px, nh));
+                }
+            }
+        }
+    }
+}
+
 // ---------- Main window component -----------------------------------
 
 export component AppWindow inherits Window {
@@ -667,10 +813,6 @@ export component AppWindow inherits Window {
     in-out property <bool> trade_real_armed: false;
     in-out property <string> trade_real_arm_status: "NOT ARMED";
     in-out property <string> trade_real_arm_phrase: "";
-
-    // ---- Chart VIEW controls (viewport zoom + collapse) ---------------
-    in-out property <float> chart_view_zoom: 1.0;     // 0.5 .. 2.5
-    in-out property <bool>  chart_collapsed: false;
 
     in-out property <string> bot_signal;
     in-out property <float> bot_size;
@@ -713,6 +855,16 @@ export component AppWindow inherits Window {
     in-out property <float> chart_pan_y: 0.0;
     in-out property <float> chart_cursor_x: 0.5;
     in-out property <float> chart_cursor_y: 0.5;
+
+    // --- inline chart gets REAL pixels via height control ---
+    in-out property <length> inline_chart_height: 160px;
+
+    // --- popout panel state (both inline + popout) ---
+    in-out property <bool> chart_popout_open: false;
+    in-out property <length> chart_popout_x: 80px;
+    in-out property <length> chart_popout_y: 240px;
+    in-out property <length> chart_popout_w: 760px;
+    in-out property <length> chart_popout_h: 440px;
 
     in-out property <string> current_time;
     in-out property <string> order_message;
@@ -902,10 +1054,38 @@ export component AppWindow inherits Window {
 
             Text { x: 1030px; y: 32px; text: dom_depth_levels + " lvls"; color: #cccccc; font-size: 10px; }
 
-            Text { x: 1060px; y: 6px; text: "Chart zoom:"; color: #aaaaaa; font-size: 10px; }
+            // --- NEW: popout + inline height controls (real pixel space) ---
+            Button {
+                x: 1010px; y: 4px; width: 70px; height: 20px;
+                text: root.chart_popout_open ? "Popout ✓" : "Popout";
+                clicked => {
+                    if !root.chart_popout_open {
+                        // make sure it spawns in a sane place if it was dragged off earlier
+                        root.chart_popout_x = 80px;
+                        root.chart_popout_y = 240px;
+                        root.chart_popout_w = 760px;
+                        root.chart_popout_h = 440px;
+                    }
+                    root.chart_popout_open = !root.chart_popout_open;
+                }
+            }
 
             Button {
-                x: 1060px; y: 26px; text: "X-";
+                x: 1090px; y: 4px; width: 48px; height: 20px;
+                text: "Chart-";
+                clicked => { root.inline_chart_height = Math.max(80px, root.inline_chart_height - 40px); }
+            }
+            Button {
+                x: 1144px; y: 4px; width: 48px; height: 20px;
+                text: "Chart+";
+                clicked => { root.inline_chart_height = Math.min(420px, root.inline_chart_height + 40px); }
+            }
+
+            Text { x: 1060px; y: 28px; text: "Zoom:"; color: #aaaaaa; font-size: 10px; }
+
+            Button {
+                x: 1060px; y: 42px; width: 36px; height: 18px;
+                text: "X-";
                 clicked => {
                     let old_z = Math.max(0.25, Math.min(20.0, root.chart_x_zoom));
                     let cx = root.chart_cursor_x;
@@ -920,7 +1100,8 @@ export component AppWindow inherits Window {
                 }
             }
             Button {
-                x: 1100px; y: 26px; text: "X+";
+                x: 1100px; y: 42px; width: 36px; height: 18px;
+                text: "X+";
                 clicked => {
                     let old_z = Math.max(0.25, Math.min(20.0, root.chart_x_zoom));
                     let cx = root.chart_cursor_x;
@@ -935,7 +1116,8 @@ export component AppWindow inherits Window {
                 }
             }
             Button {
-                x: 1140px; y: 26px; text: "Y-";
+                x: 1140px; y: 42px; width: 36px; height: 18px;
+                text: "Y-";
                 clicked => {
                     let old_z = Math.max(0.25, Math.min(20.0, root.chart_y_zoom));
                     let cy = root.chart_cursor_y;
@@ -951,7 +1133,8 @@ export component AppWindow inherits Window {
                 }
             }
             Button {
-                x: 1180px; y: 26px; text: "Y+";
+                x: 1180px; y: 42px; width: 36px; height: 18px;
+                text: "Y+";
                 clicked => {
                     let old_z = Math.max(0.25, Math.min(20.0, root.chart_y_zoom));
                     let cy = root.chart_cursor_y;
@@ -965,23 +1148,6 @@ export component AppWindow inherits Window {
                     let py2 = cy - mid - (yw - mid) * new_z;
                     root.chart_pan_y = Math.max(-2.0, Math.min(2.0, py2));
                 }
-            }
-
-            // ---- NEW: view magnifier + collapse controls ----------------
-            Text { x: 900px; y: 6px; text: "Chart view:"; color: #aaaaaa; font-size: 10px; }
-
-            Button {
-                x: 900px; y: 26px; text: "View-";
-                clicked => { root.chart_view_zoom = Math.max(0.5, root.chart_view_zoom - 0.1); }
-            }
-            Button {
-                x: 950px; y: 26px; text: "View+";
-                clicked => { root.chart_view_zoom = Math.min(2.5, root.chart_view_zoom + 0.1); }
-            }
-            Button {
-                x: 1000px; y: 26px;
-                text: root.chart_collapsed ? "Show" : "Hide";
-                clicked => { root.chart_collapsed = !root.chart_collapsed; }
             }
         }
 
@@ -1067,6 +1233,12 @@ export component AppWindow inherits Window {
             height: parent.height - 320px;
             background: #181b24;
 
+            // layout helpers for dynamic chart height
+            property <length> header_h: 24px;
+            property <length> gap: 6px;
+            property <length> chart_h: root.inline_chart_height;
+            property <length> list_y: header_h + gap + chart_h + gap;
+
             Text {
                 x: 8px;
                 y: 4px;
@@ -1074,47 +1246,36 @@ export component AppWindow inherits Window {
                     "Candles  tf=" + candle_tf_secs
                     + "s  window=" + candle_window_minutes + "m"
                     + "   | X=" + chart_x_zoom + "  Y=" + chart_y_zoom
-                    + "   | View=" + chart_view_zoom;
+                    + "   | H=" + (root.inline_chart_height / 1px) + "px";
                 color: #ffffff;
             }
 
-            // ---- NEW: chart wrapper to support view zoom + collapse -----
-            Rectangle {
+            CandleChart {
                 x: 8px;
-                y: 24px;
+                y: header_h + gap;
                 width: parent.width - 16px;
-                height: root.chart_collapsed ? 0px : 160px;
-                clip: true;
-                background: #00000000;
-                visible: !root.chart_collapsed && root.show_volume;
+                height: chart_h;
 
-                CandleChart {
-                    x: 0px;
-                    y: 0px;
+                points <=> root.candle_points;
+                mid_line_y: root.candle_midline;
 
-                    width: parent.width * root.chart_view_zoom;
-                    height: parent.height * root.chart_view_zoom;
+                x_zoom <=> root.chart_x_zoom;
+                y_zoom <=> root.chart_y_zoom;
 
-                    points <=> root.candle_points;
-                    mid_line_y: root.candle_midline;
+                pan_x <=> root.chart_pan_x;
+                pan_y <=> root.chart_pan_y;
+                cursor_x <=> root.chart_cursor_x;
+                cursor_y <=> root.chart_cursor_y;
 
-                    x_zoom <=> root.chart_x_zoom;
-                    y_zoom <=> root.chart_y_zoom;
-
-                    pan_x <=> root.chart_pan_x;
-                    pan_y <=> root.chart_pan_y;
-                    cursor_x <=> root.chart_cursor_x;
-                    cursor_y <=> root.chart_cursor_y;
-                }
-
+                // IMPORTANT: inline stays visible even when popout is open
+                visible: root.show_volume;
             }
 
-            // When chart is hidden, candle list moves up + expands
             ListView {
                 x: 8px;
-                y: root.chart_collapsed ? 24px : 190px;
+                y: list_y;
                 width: parent.width - 16px;
-                height: root.chart_collapsed ? (parent.height - 32px) : (parent.height - 198px);
+                height: parent.height - (list_y + 8px);
 
                 for c in root.candles : Text {
                     text: c.ts + "  O:" + c.open + " H:" + c.high + " L:" + c.low + " C:" + c.close + " V:" + c.volume;
@@ -1259,6 +1420,27 @@ export component AppWindow inherits Window {
             asks <=> root.asks;
             imbalance: root.imbalance;
             visible: root.show_depth;
+        }
+
+        // --- popout drawn LAST so it sits on top ---
+        ChartPopoutPanel {
+            open <=> root.chart_popout_open;
+            px <=> root.chart_popout_x;
+            py <=> root.chart_popout_y;
+            pw <=> root.chart_popout_w;
+            ph <=> root.chart_popout_h;
+
+            title: "Chart Popout (wheel: zoom, drag: pan)";
+
+            points <=> root.candle_points;
+            mid_line_y: root.candle_midline;
+
+            x_zoom <=> root.chart_x_zoom;
+            y_zoom <=> root.chart_y_zoom;
+            pan_x  <=> root.chart_pan_x;
+            pan_y  <=> root.chart_pan_y;
+            cursor_x <=> root.chart_cursor_x;
+            cursor_y <=> root.chart_cursor_y;
         }
     }
 }
