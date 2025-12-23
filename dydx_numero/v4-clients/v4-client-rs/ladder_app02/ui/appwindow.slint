@@ -668,6 +668,10 @@ export component AppWindow inherits Window {
     in-out property <string> trade_real_arm_status: "NOT ARMED";
     in-out property <string> trade_real_arm_phrase: "";
 
+    // ---- Chart VIEW controls (viewport zoom + collapse) ---------------
+    in-out property <float> chart_view_zoom: 1.0;     // 0.5 .. 2.5
+    in-out property <bool>  chart_collapsed: false;
+
     in-out property <string> bot_signal;
     in-out property <float> bot_size;
     in-out property <string> bot_comment;
@@ -962,6 +966,23 @@ export component AppWindow inherits Window {
                     root.chart_pan_y = Math.max(-2.0, Math.min(2.0, py2));
                 }
             }
+
+            // ---- NEW: view magnifier + collapse controls ----------------
+            Text { x: 900px; y: 6px; text: "Chart view:"; color: #aaaaaa; font-size: 10px; }
+
+            Button {
+                x: 900px; y: 26px; text: "View-";
+                clicked => { root.chart_view_zoom = Math.max(0.5, root.chart_view_zoom - 0.1); }
+            }
+            Button {
+                x: 950px; y: 26px; text: "View+";
+                clicked => { root.chart_view_zoom = Math.min(2.5, root.chart_view_zoom + 0.1); }
+            }
+            Button {
+                x: 1000px; y: 26px;
+                text: root.chart_collapsed ? "Show" : "Hide";
+                clicked => { root.chart_collapsed = !root.chart_collapsed; }
+            }
         }
 
         Rectangle {
@@ -1052,35 +1073,48 @@ export component AppWindow inherits Window {
                 text:
                     "Candles  tf=" + candle_tf_secs
                     + "s  window=" + candle_window_minutes + "m"
-                    + "   | X=" + chart_x_zoom + "  Y=" + chart_y_zoom;
+                    + "   | X=" + chart_x_zoom + "  Y=" + chart_y_zoom
+                    + "   | View=" + chart_view_zoom;
                 color: #ffffff;
             }
 
-            CandleChart {
+            // ---- NEW: chart wrapper to support view zoom + collapse -----
+            Rectangle {
                 x: 8px;
                 y: 24px;
                 width: parent.width - 16px;
-                height: 160px;
+                height: root.chart_collapsed ? 0px : 160px;
+                clip: true;
+                background: #00000000;
+                visible: !root.chart_collapsed && root.show_volume;
 
-                points <=> root.candle_points;
-                mid_line_y: root.candle_midline;
+                CandleChart {
+                    x: 0px;
+                    y: 0px;
 
-                x_zoom <=> root.chart_x_zoom;
-                y_zoom <=> root.chart_y_zoom;
+                    width: parent.width * root.chart_view_zoom;
+                    height: parent.height * root.chart_view_zoom;
 
-                pan_x <=> root.chart_pan_x;
-                pan_y <=> root.chart_pan_y;
-                cursor_x <=> root.chart_cursor_x;
-                cursor_y <=> root.chart_cursor_y;
+                    points <=> root.candle_points;
+                    mid_line_y: root.candle_midline;
 
-                visible: root.show_volume;
+                    x_zoom <=> root.chart_x_zoom;
+                    y_zoom <=> root.chart_y_zoom;
+
+                    pan_x <=> root.chart_pan_x;
+                    pan_y <=> root.chart_pan_y;
+                    cursor_x <=> root.chart_cursor_x;
+                    cursor_y <=> root.chart_cursor_y;
+                }
+
             }
 
+            // When chart is hidden, candle list moves up + expands
             ListView {
                 x: 8px;
-                y: 190px;
+                y: root.chart_collapsed ? 24px : 190px;
                 width: parent.width - 16px;
-                height: parent.height - 198px;
+                height: root.chart_collapsed ? (parent.height - 32px) : (parent.height - 198px);
 
                 for c in root.candles : Text {
                     text: c.ts + "  O:" + c.open + " H:" + c.high + " L:" + c.low + " C:" + c.close + " V:" + c.volume;
