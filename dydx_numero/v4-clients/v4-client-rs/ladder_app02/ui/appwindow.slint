@@ -674,7 +674,6 @@ component ChartPopoutPanel inherits Rectangle {
     border-width: 1px;
     border-color: #31384a;
 
-    // header
     Rectangle {
         x: 0px; y: 0px; width: parent.width; height: 26px;
         background: #303545;
@@ -715,7 +714,6 @@ component ChartPopoutPanel inherits Rectangle {
         }
     }
 
-    // content
     Rectangle {
         x: 6px;
         y: 32px;
@@ -744,7 +742,6 @@ component ChartPopoutPanel inherits Rectangle {
         }
     }
 
-    // resize grip
     Rectangle {
         x: parent.width - 14px;
         y: parent.height - 14px;
@@ -794,6 +791,15 @@ export component AppWindow inherits Window {
     height: 800px;
     title: "Ladder App 02";
 
+    // ---- NEW: app-wide scroll state (NO wheel hook here, so CandleChart keeps zoom) ----
+    in-out property <float> ui_scroll_x_px: 0.0;
+    in-out property <float> ui_scroll_y_px: 0.0;
+
+    // Treat these as "minimum canvas size". If the window is smaller, scrollbars appear.
+    // If the window is larger, content expands to window size and scrollbars disappear.
+    in-out property <float> ui_content_w_px: 1200.0;
+    in-out property <float> ui_content_h_px: 1050.0;
+
     in-out property <string> mode;
     in-out property <string> time_mode;
 
@@ -806,10 +812,8 @@ export component AppWindow inherits Window {
     in-out property <float> trade_size;
     in-out property <float> trade_leverage;
 
-    // 4F: explicit REAL toggle stored in UI state
     in-out property <bool> trade_real_mode: false;
 
-    // 4H: ARM gate for REAL (must be armed before sending REAL orders)
     in-out property <bool> trade_real_armed: false;
     in-out property <string> trade_real_arm_status: "NOT ARMED";
     in-out property <string> trade_real_arm_phrase: "";
@@ -856,10 +860,8 @@ export component AppWindow inherits Window {
     in-out property <float> chart_cursor_x: 0.5;
     in-out property <float> chart_cursor_y: 0.5;
 
-    // --- inline chart gets REAL pixels via height control ---
     in-out property <length> inline_chart_height: 160px;
 
-    // --- popout panel state (both inline + popout) ---
     in-out property <bool> chart_popout_open: false;
     in-out property <length> chart_popout_x: 80px;
     in-out property <length> chart_popout_y: 240px;
@@ -900,529 +902,649 @@ export component AppWindow inherits Window {
     callback settings_create_session(ttl_minutes: string);
     callback settings_revoke_session();
 
-    // 4F: REAL toggle callback (no *-changed usage)
     callback trade_real_mode_toggled(enabled: bool);
 
-    // 4H: ARM / DISARM callbacks
     callback arm_real_request(phrase: string);
     callback disarm_real();
 
-    Rectangle {
+    // --------- VIEWPORT (fixed) + WORKSPACE (scrollable) -------------
+    viewport := Rectangle {
         x: 0px;
         y: 0px;
         width: parent.width;
         height: parent.height;
         background: #151821;
 
+        // compute real content size (at least window, at least your configured canvas)
+        property <float> viewport_w_px: parent.width / 1px;
+        property <float> viewport_h_px: parent.height / 1px;
+
+        property <float> content_w_px: Math.max(root.ui_content_w_px, viewport_w_px);
+        property <float> content_h_px: Math.max(root.ui_content_h_px, viewport_h_px);
+
+        property <float> max_scroll_x: Math.max(0.0, content_w_px - viewport_w_px);
+        property <float> max_scroll_y: Math.max(0.0, content_h_px - viewport_h_px);
+
+        // clamp scroll always
+        property <float> sx: Math.max(0.0, Math.min(max_scroll_x, root.ui_scroll_x_px));
+        property <float> sy: Math.max(0.0, Math.min(max_scroll_y, root.ui_scroll_y_px));
+
+        // ---------------- WORKSPACE (everything scrolls) ----------------
         Rectangle {
-            x: 0px;
-            y: 0px;
-            width: parent.width;
-            height: 40px;
-            background: #1c202b;
+            x: -(viewport.sx * 1px);
+            y: -(viewport.sy * 1px);
+            width: viewport.content_w_px * 1px;
+            height: viewport.content_h_px * 1px;
+            background: #151821;
 
-            Text {
-                x: 8px;
-                y: 6px;
-                width: parent.width - 16px;
-                height: 28px;
-                text:
-                    "Ticker: " + current_ticker
-                    + "  | Mode: " + mode
-                    + "  | Time: " + time_mode
-                    + "  | Range: " + data_range
-                    + "  | Now: " + current_time;
-                color: #e0e0e0;
-            }
-        }
-
-        Rectangle {
-            x: 0px;
-            y: 44px;
-            width: parent.width;
-            height: 60px;
-            background: #1a1e27;
-
-            property <color> mid_text_color: root.last_move == "up"
-                ? #80ff80
-                : (root.last_move == "down" ? #ff8080 : #c0c0c0);
-
-            property <string> mid_move_symbol: root.last_move == "up"
-                ? "▲"
-                : (root.last_move == "down" ? "▼" : "•");
-
-            Text { x: 8px; y: 4px; text: "Balances  USDC: " + balance_usdc + "   PnL: " + balance_pnl; color: #d0e080; }
-
-            Text {
-                x: 8px;
-                y: 26px;
-                text:
-                    "Mid: " + mid_price + " " + mid_move_symbol
-                    + "  Bid: " + best_bid
-                    + "  Ask: " + best_ask
-                    + "  Spread: " + spread
-                    + "  Imb: " + imbalance;
-                color: mid_text_color;
-            }
-
-            PnLSparkline { x: parent.width - 170px; y: 10px; width: 160px; height: 40px; points <=> root.candle_points; }
-        }
-
-        Rectangle {
-            x: 0px;
-            y: 108px;
-            width: parent.width;
-            height: 56px;
-            background: #181b24;
-
-            Text { x: 8px; y: 6px; text: "Ticker:"; color: #cccccc; }
-
-            Button { x: 70px;  y: 4px; text: "ETH-USD"; clicked => { root.ticker_changed("ETH-USD"); } }
-            Button { x: 150px; y: 4px; text: "BTC-USD"; clicked => { root.ticker_changed("BTC-USD"); } }
-            Button { x: 230px; y: 4px; text: "SOL-USD"; clicked => { root.ticker_changed("SOL-USD"); } }
-
-            Text { x: 320px; y: 6px; text: "Mode:"; color: #cccccc; }
-            Button { x: 370px; y: 4px; text: "Live";   clicked => { root.mode_changed("Live"); } }
-            Button { x: 430px; y: 4px; text: "Replay"; clicked => { root.mode_changed("Replay"); } }
-
-            Text { x: 520px; y: 6px; text: "Time:"; color: #cccccc; }
-            Button { x: 570px; y: 4px; text: "Local"; clicked => { root.time_mode_changed("Local"); } }
-            Button { x: 640px; y: 4px; text: "UTC";   clicked => { root.time_mode_changed("UTC"); } }
-
-            Text { x: 8px; y: 32px; text: "TF / Window:"; color: #aaaaaa; }
-            Button { x: 110px; y: 30px; text: "TF 60s";  clicked => { root.candle_tf_changed(60); } }
-            Button { x: 180px; y: 30px; text: "TF 300s"; clicked => { root.candle_tf_changed(300); } }
-            Button { x: 260px; y: 30px; text: "Win 60m"; clicked => { root.candle_window_changed(60); } }
-            Button { x: 340px; y: 30px; text: "Win 240m"; clicked => { root.candle_window_changed(240); } }
-
-            Text { x: 450px; y: 32px; text: "Panels:"; color: #aaaaaa; }
-            CheckBox { x: 510px; y: 30px; text: "Depth";  checked <=> show_depth; }
-            CheckBox { x: 590px; y: 30px; text: "Trades"; checked <=> show_trades; }
-            CheckBox { x: 680px; y: 30px; text: "Volume"; checked <=> show_volume; }
-
-            Text { x: 760px; y: 32px; text: "DOM depth:"; color: #aaaaaa; }
+            // =================== YOUR ORIGINAL UI START ===================
 
             Rectangle {
-                x: 840px; y: 34px; width: 180px; height: 10px;
-                background: #202633; border-radius: 5px;
+                x: 0px;
+                y: 0px;
+                width: parent.width;
+                height: 40px;
+                background: #1c202b;
 
-                property <length> knob_x: (root.dom_depth_levels - 5) * (parent.width - 12px) / 45;
+                Text {
+                    x: 8px;
+                    y: 6px;
+                    width: parent.width - 16px;
+                    height: 28px;
+                    text:
+                        "Ticker: " + current_ticker
+                        + "  | Mode: " + mode
+                        + "  | Time: " + time_mode
+                        + "  | Range: " + data_range
+                        + "  | Now: " + current_time;
+                    color: #e0e0e0;
+                }
+            }
 
-                Rectangle { x: knob_x; y: -2px; width: 12px; height: parent.height + 4px; border-radius: 6px; background: #7070ff; }
+            Rectangle {
+                x: 0px;
+                y: 44px;
+                width: parent.width;
+                height: 60px;
+                background: #1a1e27;
 
-                TouchArea {
-                    x: 0px; y: -4px; width: parent.width; height: parent.height + 8px;
-                    property <bool> dragging;
-                    property <int> last_sent;
+                property <color> mid_text_color: root.last_move == "up"
+                    ? #80ff80
+                    : (root.last_move == "down" ? #ff8080 : #c0c0c0);
 
-                    pointer-event(event) => {
-                        if event.kind == PointerEventKind.down {
-                            dragging = true;
-                            last_sent = root.dom_depth_levels;
-                        } else if event.kind == PointerEventKind.up {
-                            dragging = false;
-                        } else if event.kind == PointerEventKind.move && dragging {
-                            let pos = self.mouse-x;
+                property <string> mid_move_symbol: root.last_move == "up"
+                    ? "▲"
+                    : (root.last_move == "down" ? "▼" : "•");
 
-                            if pos < 0px {
-                                let lvl = 5;
-                                if lvl != last_sent {
-                                    last_sent = lvl;
-                                    root.dom_depth_levels = lvl;
-                                    root.dom_depth_changed(lvl);
-                                }
-                            } else if pos > parent.width {
-                                let lvl = 50;
-                                if lvl != last_sent {
-                                    last_sent = lvl;
-                                    root.dom_depth_levels = lvl;
-                                    root.dom_depth_changed(lvl);
-                                }
-                            } else {
-                                let t = pos / parent.width;
-                                let lvl = 5 + Math.floor(t * 45.0);
-                                if lvl != last_sent {
-                                    last_sent = lvl;
-                                    root.dom_depth_levels = lvl;
-                                    root.dom_depth_changed(lvl);
+                Text { x: 8px; y: 4px; text: "Balances  USDC: " + balance_usdc + "   PnL: " + balance_pnl; color: #d0e080; }
+
+                Text {
+                    x: 8px;
+                    y: 26px;
+                    text:
+                        "Mid: " + mid_price + " " + mid_move_symbol
+                        + "  Bid: " + best_bid
+                        + "  Ask: " + best_ask
+                        + "  Spread: " + spread
+                        + "  Imb: " + imbalance;
+                    color: mid_text_color;
+                }
+
+                PnLSparkline { x: parent.width - 170px; y: 10px; width: 160px; height: 40px; points <=> root.candle_points; }
+            }
+
+            Rectangle {
+                x: 0px;
+                y: 108px;
+                width: parent.width;
+                height: 56px;
+                background: #181b24;
+
+                Text { x: 8px; y: 6px; text: "Ticker:"; color: #cccccc; }
+
+                Button { x: 70px;  y: 4px; text: "ETH-USD"; clicked => { root.ticker_changed("ETH-USD"); } }
+                Button { x: 150px; y: 4px; text: "BTC-USD"; clicked => { root.ticker_changed("BTC-USD"); } }
+                Button { x: 230px; y: 4px; text: "SOL-USD"; clicked => { root.ticker_changed("SOL-USD"); } }
+
+                Text { x: 320px; y: 6px; text: "Mode:"; color: #cccccc; }
+                Button { x: 370px; y: 4px; text: "Live";   clicked => { root.mode_changed("Live"); } }
+                Button { x: 430px; y: 4px; text: "Replay"; clicked => { root.mode_changed("Replay"); } }
+
+                Text { x: 520px; y: 6px; text: "Time:"; color: #cccccc; }
+                Button { x: 570px; y: 4px; text: "Local"; clicked => { root.time_mode_changed("Local"); } }
+                Button { x: 640px; y: 4px; text: "UTC";   clicked => { root.time_mode_changed("UTC"); } }
+
+                Text { x: 8px; y: 32px; text: "TF / Window:"; color: #aaaaaa; }
+                Button { x: 110px; y: 30px; text: "TF 60s";  clicked => { root.candle_tf_changed(60); } }
+                Button { x: 180px; y: 30px; text: "TF 300s"; clicked => { root.candle_tf_changed(300); } }
+                Button { x: 260px; y: 30px; text: "Win 60m"; clicked => { root.candle_window_changed(60); } }
+                Button { x: 340px; y: 30px; text: "Win 240m"; clicked => { root.candle_window_changed(240); } }
+
+                Text { x: 450px; y: 32px; text: "Panels:"; color: #aaaaaa; }
+                CheckBox { x: 510px; y: 30px; text: "Depth";  checked <=> show_depth; }
+                CheckBox { x: 590px; y: 30px; text: "Trades"; checked <=> show_trades; }
+                CheckBox { x: 680px; y: 30px; text: "Volume"; checked <=> show_volume; }
+
+                Text { x: 760px; y: 32px; text: "DOM depth:"; color: #aaaaaa; }
+
+                Rectangle {
+                    x: 840px; y: 34px; width: 180px; height: 10px;
+                    background: #202633; border-radius: 5px;
+
+                    property <length> knob_x: (root.dom_depth_levels - 5) * (parent.width - 12px) / 45;
+
+                    Rectangle { x: knob_x; y: -2px; width: 12px; height: parent.height + 4px; border-radius: 6px; background: #7070ff; }
+
+                    TouchArea {
+                        x: 0px; y: -4px; width: parent.width; height: parent.height + 8px;
+                        property <bool> dragging;
+                        property <int> last_sent;
+
+                        pointer-event(event) => {
+                            if event.kind == PointerEventKind.down {
+                                dragging = true;
+                                last_sent = root.dom_depth_levels;
+                            } else if event.kind == PointerEventKind.up {
+                                dragging = false;
+                            } else if event.kind == PointerEventKind.move && dragging {
+                                let pos = self.mouse-x;
+
+                                if pos < 0px {
+                                    let lvl = 5;
+                                    if lvl != last_sent {
+                                        last_sent = lvl;
+                                        root.dom_depth_levels = lvl;
+                                        root.dom_depth_changed(lvl);
+                                    }
+                                } else if pos > parent.width {
+                                    let lvl = 50;
+                                    if lvl != last_sent {
+                                        last_sent = lvl;
+                                        root.dom_depth_levels = lvl;
+                                        root.dom_depth_changed(lvl);
+                                    }
+                                } else {
+                                    let t = pos / parent.width;
+                                    let lvl = 5 + Math.floor(t * 45.0);
+                                    if lvl != last_sent {
+                                        last_sent = lvl;
+                                        root.dom_depth_levels = lvl;
+                                        root.dom_depth_changed(lvl);
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            }
 
-            Text { x: 1030px; y: 32px; text: dom_depth_levels + " lvls"; color: #cccccc; font-size: 10px; }
+                Text { x: 1030px; y: 32px; text: dom_depth_levels + " lvls"; color: #cccccc; font-size: 10px; }
 
-            // --- NEW: popout + inline height controls (real pixel space) ---
-            Button {
-                x: 1010px; y: 4px; width: 70px; height: 20px;
-                text: root.chart_popout_open ? "Popout ✓" : "Popout";
-                clicked => {
-                    if !root.chart_popout_open {
-                        // make sure it spawns in a sane place if it was dragged off earlier
-                        root.chart_popout_x = 80px;
-                        root.chart_popout_y = 240px;
-                        root.chart_popout_w = 760px;
-                        root.chart_popout_h = 440px;
+                Button {
+                    x: 1010px; y: 4px; width: 70px; height: 20px;
+                    text: root.chart_popout_open ? "Popout ✓" : "Popout";
+                    clicked => {
+                        if !root.chart_popout_open {
+                            root.chart_popout_x = 80px;
+                            root.chart_popout_y = 240px;
+                            root.chart_popout_w = 760px;
+                            root.chart_popout_h = 440px;
+                        }
+                        root.chart_popout_open = !root.chart_popout_open;
                     }
-                    root.chart_popout_open = !root.chart_popout_open;
+                }
+
+                Button {
+                    x: 1090px; y: 4px; width: 48px; height: 20px;
+                    text: "Chart-";
+                    clicked => { root.inline_chart_height = Math.max(80px, root.inline_chart_height - 40px); }
+                }
+                Button {
+                    x: 1144px; y: 4px; width: 48px; height: 20px;
+                    text: "Chart+";
+                    clicked => { root.inline_chart_height = Math.min(420px, root.inline_chart_height + 40px); }
+                }
+
+                Text { x: 1060px; y: 28px; text: "Zoom:"; color: #aaaaaa; font-size: 10px; }
+
+                Button {
+                    x: 1060px; y: 42px; width: 36px; height: 18px;
+                    text: "X-";
+                    clicked => {
+                        let old_z = Math.max(0.25, Math.min(20.0, root.chart_x_zoom));
+                        let cx = root.chart_cursor_x;
+                        let px = root.chart_pan_x;
+
+                        let xw = 0.5 + (cx - 0.5 - px) / old_z;
+                        let new_z = Math.max(0.25, old_z - 0.25);
+                        root.chart_x_zoom = new_z;
+
+                        let px2 = cx - 0.5 - (xw - 0.5) * new_z;
+                        root.chart_pan_x = Math.max(-2.0, Math.min(2.0, px2));
+                    }
+                }
+                Button {
+                    x: 1100px; y: 42px; width: 36px; height: 18px;
+                    text: "X+";
+                    clicked => {
+                        let old_z = Math.max(0.25, Math.min(20.0, root.chart_x_zoom));
+                        let cx = root.chart_cursor_x;
+                        let px = root.chart_pan_x;
+
+                        let xw = 0.5 + (cx - 0.5 - px) / old_z;
+                        let new_z = Math.min(20.0, old_z + 0.25);
+                        root.chart_x_zoom = new_z;
+
+                        let px2 = cx - 0.5 - (xw - 0.5) * new_z;
+                        root.chart_pan_x = Math.max(-2.0, Math.min(2.0, px2));
+                    }
+                }
+                Button {
+                    x: 1140px; y: 42px; width: 36px; height: 18px;
+                    text: "Y-";
+                    clicked => {
+                        let old_z = Math.max(0.25, Math.min(20.0, root.chart_y_zoom));
+                        let cy = root.chart_cursor_y;
+                        let py = root.chart_pan_y;
+                        let mid = root.candle_midline;
+
+                        let yw = mid + (cy - mid - py) / old_z;
+                        let new_z = Math.max(0.25, old_z - 0.25);
+                        root.chart_y_zoom = new_z;
+
+                        let py2 = cy - mid - (yw - mid) * new_z;
+                        root.chart_pan_y = Math.max(-2.0, Math.min(2.0, py2));
+                    }
+                }
+                Button {
+                    x: 1180px; y: 42px; width: 36px; height: 18px;
+                    text: "Y+";
+                    clicked => {
+                        let old_z = Math.max(0.25, Math.min(20.0, root.chart_y_zoom));
+                        let cy = root.chart_cursor_y;
+                        let py = root.chart_pan_y;
+                        let mid = root.candle_midline;
+
+                        let yw = mid + (cy - mid - py) / old_z;
+                        let new_z = Math.min(20.0, old_z + 0.25);
+                        root.chart_y_zoom = new_z;
+
+                        let py2 = cy - mid - (yw - mid) * new_z;
+                        root.chart_pan_y = Math.max(-2.0, Math.min(2.0, py2));
+                    }
                 }
             }
-
-            Button {
-                x: 1090px; y: 4px; width: 48px; height: 20px;
-                text: "Chart-";
-                clicked => { root.inline_chart_height = Math.max(80px, root.inline_chart_height - 40px); }
-            }
-            Button {
-                x: 1144px; y: 4px; width: 48px; height: 20px;
-                text: "Chart+";
-                clicked => { root.inline_chart_height = Math.min(420px, root.inline_chart_height + 40px); }
-            }
-
-            Text { x: 1060px; y: 28px; text: "Zoom:"; color: #aaaaaa; font-size: 10px; }
-
-            Button {
-                x: 1060px; y: 42px; width: 36px; height: 18px;
-                text: "X-";
-                clicked => {
-                    let old_z = Math.max(0.25, Math.min(20.0, root.chart_x_zoom));
-                    let cx = root.chart_cursor_x;
-                    let px = root.chart_pan_x;
-
-                    let xw = 0.5 + (cx - 0.5 - px) / old_z;
-                    let new_z = Math.max(0.25, old_z - 0.25);
-                    root.chart_x_zoom = new_z;
-
-                    let px2 = cx - 0.5 - (xw - 0.5) * new_z;
-                    root.chart_pan_x = Math.max(-2.0, Math.min(2.0, px2));
-                }
-            }
-            Button {
-                x: 1100px; y: 42px; width: 36px; height: 18px;
-                text: "X+";
-                clicked => {
-                    let old_z = Math.max(0.25, Math.min(20.0, root.chart_x_zoom));
-                    let cx = root.chart_cursor_x;
-                    let px = root.chart_pan_x;
-
-                    let xw = 0.5 + (cx - 0.5 - px) / old_z;
-                    let new_z = Math.min(20.0, old_z + 0.25);
-                    root.chart_x_zoom = new_z;
-
-                    let px2 = cx - 0.5 - (xw - 0.5) * new_z;
-                    root.chart_pan_x = Math.max(-2.0, Math.min(2.0, px2));
-                }
-            }
-            Button {
-                x: 1140px; y: 42px; width: 36px; height: 18px;
-                text: "Y-";
-                clicked => {
-                    let old_z = Math.max(0.25, Math.min(20.0, root.chart_y_zoom));
-                    let cy = root.chart_cursor_y;
-                    let py = root.chart_pan_y;
-                    let mid = root.candle_midline;
-
-                    let yw = mid + (cy - mid - py) / old_z;
-                    let new_z = Math.max(0.25, old_z - 0.25);
-                    root.chart_y_zoom = new_z;
-
-                    let py2 = cy - mid - (yw - mid) * new_z;
-                    root.chart_pan_y = Math.max(-2.0, Math.min(2.0, py2));
-                }
-            }
-            Button {
-                x: 1180px; y: 42px; width: 36px; height: 18px;
-                text: "Y+";
-                clicked => {
-                    let old_z = Math.max(0.25, Math.min(20.0, root.chart_y_zoom));
-                    let cy = root.chart_cursor_y;
-                    let py = root.chart_pan_y;
-                    let mid = root.candle_midline;
-
-                    let yw = mid + (cy - mid - py) / old_z;
-                    let new_z = Math.min(20.0, old_z + 0.25);
-                    root.chart_y_zoom = new_z;
-
-                    let py2 = cy - mid - (yw - mid) * new_z;
-                    root.chart_pan_y = Math.max(-2.0, Math.min(2.0, py2));
-                }
-            }
-        }
-
-        Rectangle {
-            x: 0px;
-            y: 168px;
-            width: parent.width;
-            height: 70px;
-            background: #181b24;
-
-            Button { x: 8px; y: 8px; text: "Buy";  clicked => { root.trade_side = "Buy"; } }
-            Button { x: 80px; y: 8px; text: "Sell"; clicked => { root.trade_side = "Sell"; } }
-
-            Button {
-                x: 152px; y: 8px;
-                text: "Send Order";
-                enabled: !root.trade_real_mode || root.trade_real_armed;
-                clicked => { root.send_order(); }
-            }
-
-            // 4F: REAL toggle checkbox with explicit callback to Rust
-            CheckBox {
-                x: 260px; y: 10px;
-                text: "REAL";
-                checked <=> root.trade_real_mode;
-                toggled => { root.trade_real_mode_toggled(self.checked); }
-            }
-
-            // 4H: ARM controls (only show when REAL is enabled)
-            Text {
-                x: 340px; y: 12px;
-                text: "ARM:";
-                color: #cccccc;
-                visible: root.trade_real_mode;
-            }
-
-            LineEdit {
-                x: 380px; y: 8px;
-                width: 60px; height: 22px;
-                text <=> root.trade_real_arm_phrase;
-                visible: root.trade_real_mode;
-            }
-
-            Button {
-                x: 448px; y: 8px;
-                text: "ARM (60s)";
-                visible: root.trade_real_mode;
-                clicked => { root.arm_real_request(root.trade_real_arm_phrase); }
-            }
-
-            Button {
-                x: 540px; y: 8px;
-                text: "Disarm";
-                visible: root.trade_real_mode;
-                clicked => { root.disarm_real(); }
-            }
-
-            Text {
-                x: 620px; y: 12px;
-                text: root.trade_real_arm_status;
-                color: root.trade_real_armed ? #80ff80 : #ff8080;
-                visible: root.trade_real_mode;
-            }
-
-            Text {
-                x: 8px;
-                y: 40px;
-                text: "Side: " + trade_side + "  Size: " + trade_size + "  Lev: " + trade_leverage;
-                color: #aaaaaa;
-            }
-
-            CheckBox { x: 350px; y: 8px; text: "Bot auto trade"; checked <=> bot_auto_trade; }
-
-            Button { x: 520px; y: 8px; text: "Deposit 100";  clicked => { root.deposit(100.0); } }
-            Button { x: 620px; y: 8px; text: "Withdraw 100"; clicked => { root.withdraw(100.0); } }
-            Button { x: 740px; y: 8px; text: "Reload data";  clicked => { root.reload_data(); } }
-        }
-
-        Rectangle {
-            x: 0px;
-            y: 244px;
-            width: parent.width * 0.5;
-            height: parent.height - 320px;
-            background: #181b24;
-
-            // layout helpers for dynamic chart height
-            property <length> header_h: 24px;
-            property <length> gap: 6px;
-            property <length> chart_h: root.inline_chart_height;
-            property <length> list_y: header_h + gap + chart_h + gap;
-
-            Text {
-                x: 8px;
-                y: 4px;
-                text:
-                    "Candles  tf=" + candle_tf_secs
-                    + "s  window=" + candle_window_minutes + "m"
-                    + "   | X=" + chart_x_zoom + "  Y=" + chart_y_zoom
-                    + "   | H=" + (root.inline_chart_height / 1px) + "px";
-                color: #ffffff;
-            }
-
-            CandleChart {
-                x: 8px;
-                y: header_h + gap;
-                width: parent.width - 16px;
-                height: chart_h;
-
-                points <=> root.candle_points;
-                mid_line_y: root.candle_midline;
-
-                x_zoom <=> root.chart_x_zoom;
-                y_zoom <=> root.chart_y_zoom;
-
-                pan_x <=> root.chart_pan_x;
-                pan_y <=> root.chart_pan_y;
-                cursor_x <=> root.chart_cursor_x;
-                cursor_y <=> root.chart_cursor_y;
-
-                // IMPORTANT: inline stays visible even when popout is open
-                visible: root.show_volume;
-            }
-
-            ListView {
-                x: 8px;
-                y: list_y;
-                width: parent.width - 16px;
-                height: parent.height - (list_y + 8px);
-
-                for c in root.candles : Text {
-                    text: c.ts + "  O:" + c.open + " H:" + c.high + " L:" + c.low + " C:" + c.close + " V:" + c.volume;
-                    color: #d0d0d0;
-                }
-            }
-        }
-
-        Rectangle {
-            x: parent.width * 0.5;
-            y: 244px;
-            width: parent.width * 0.5;
-            height: parent.height - 320px;
-            background: #181b24;
 
             Rectangle {
-                x: 4px;
-                y: 4px;
-                width: parent.width - 8px;
-                height: 110px;
-                background: #10131a;
-                visible: root.show_trades;
+                x: 0px;
+                y: 168px;
+                width: parent.width;
+                height: 70px;
+                background: #181b24;
 
-                Text { x: 4px; y: 4px; text: "Recent trades"; color: #ffffff; }
+                Button { x: 8px; y: 8px; text: "Buy";  clicked => { root.trade_side = "Buy"; } }
+                Button { x: 80px; y: 8px; text: "Sell"; clicked => { root.trade_side = "Sell"; } }
+
+                Button {
+                    x: 152px; y: 8px;
+                    text: "Send Order";
+                    enabled: !root.trade_real_mode || root.trade_real_armed;
+                    clicked => { root.send_order(); }
+                }
+
+                CheckBox {
+                    x: 260px; y: 10px;
+                    text: "REAL";
+                    checked <=> root.trade_real_mode;
+                    toggled => { root.trade_real_mode_toggled(self.checked); }
+                }
+
+                Text {
+                    x: 340px; y: 12px;
+                    text: "ARM:";
+                    color: #cccccc;
+                    visible: root.trade_real_mode;
+                }
+
+                LineEdit {
+                    x: 380px; y: 8px;
+                    width: 60px; height: 22px;
+                    text <=> root.trade_real_arm_phrase;
+                    visible: root.trade_real_mode;
+                }
+
+                Button {
+                    x: 448px; y: 8px;
+                    text: "ARM (60s)";
+                    visible: root.trade_real_mode;
+                    clicked => { root.arm_real_request(root.trade_real_arm_phrase); }
+                }
+
+                Button {
+                    x: 540px; y: 8px;
+                    text: "Disarm";
+                    visible: root.trade_real_mode;
+                    clicked => { root.disarm_real(); }
+                }
+
+                Text {
+                    x: 620px; y: 12px;
+                    text: root.trade_real_arm_status;
+                    color: root.trade_real_armed ? #80ff80 : #ff8080;
+                    visible: root.trade_real_mode;
+                }
+
+                Text {
+                    x: 8px;
+                    y: 40px;
+                    text: "Side: " + trade_side + "  Size: " + trade_size + "  Lev: " + trade_leverage;
+                    color: #aaaaaa;
+                }
+
+                CheckBox { x: 350px; y: 8px; text: "Bot auto trade"; checked <=> bot_auto_trade; }
+
+                Button { x: 520px; y: 8px; text: "Deposit 100";  clicked => { root.deposit(100.0); } }
+                Button { x: 620px; y: 8px; text: "Withdraw 100"; clicked => { root.withdraw(100.0); } }
+                Button { x: 740px; y: 8px; text: "Reload data";  clicked => { root.reload_data(); } }
+            }
+
+            Rectangle {
+                x: 0px;
+                y: 244px;
+                width: parent.width * 0.5;
+                height: parent.height - 320px;
+                background: #181b24;
+
+                property <length> header_h: 24px;
+                property <length> gap: 6px;
+                property <length> chart_h: root.inline_chart_height;
+                property <length> list_y: header_h + gap + chart_h + gap;
+
+                Text {
+                    x: 8px;
+                    y: 4px;
+                    text:
+                        "Candles  tf=" + candle_tf_secs
+                        + "s  window=" + candle_window_minutes + "m"
+                        + "   | X=" + chart_x_zoom + "  Y=" + chart_y_zoom
+                        + "   | H=" + (root.inline_chart_height / 1px) + "px";
+                    color: #ffffff;
+                }
+
+                CandleChart {
+                    x: 8px;
+                    y: header_h + gap;
+                    width: parent.width - 16px;
+                    height: chart_h;
+
+                    points <=> root.candle_points;
+                    mid_line_y: root.candle_midline;
+
+                    x_zoom <=> root.chart_x_zoom;
+                    y_zoom <=> root.chart_y_zoom;
+
+                    pan_x <=> root.chart_pan_x;
+                    pan_y <=> root.chart_pan_y;
+                    cursor_x <=> root.chart_cursor_x;
+                    cursor_y <=> root.chart_cursor_y;
+
+                    visible: root.show_volume;
+                }
 
                 ListView {
+                    x: 8px;
+                    y: list_y;
+                    width: parent.width - 16px;
+                    height: parent.height - (list_y + 8px);
+
+                    for c in root.candles : Text {
+                        text: c.ts + "  O:" + c.open + " H:" + c.high + " L:" + c.low + " C:" + c.close + " V:" + c.volume;
+                        color: #d0d0d0;
+                    }
+                }
+            }
+
+            Rectangle {
+                x: parent.width * 0.5;
+                y: 244px;
+                width: parent.width * 0.5;
+                height: parent.height - 320px;
+                background: #181b24;
+
+                Rectangle {
                     x: 4px;
-                    y: 22px;
+                    y: 4px;
                     width: parent.width - 8px;
-                    height: parent.height - 26px;
+                    height: 110px;
+                    background: #10131a;
+                    visible: root.show_trades;
 
-                    for t in root.recent_trades : Rectangle {
-                        width: parent.width;
-                        height: 18px;
-                        background: t.is_buy ? #102b19 : #2b1418;
+                    Text { x: 4px; y: 4px; text: "Recent trades"; color: #ffffff; }
 
-                        Text {
-                            x: 2px;
-                            y: 1px;
-                            text: t.ts + "  " + t.side + "  " + t.size;
-                            color: t.is_buy ? #80ff80 : #ff8080;
+                    ListView {
+                        x: 4px;
+                        y: 22px;
+                        width: parent.width - 8px;
+                        height: parent.height - 26px;
+
+                        for t in root.recent_trades : Rectangle {
+                            width: parent.width;
+                            height: 18px;
+                            background: t.is_buy ? #102b19 : #2b1418;
+
+                            Text {
+                                x: 2px;
+                                y: 1px;
+                                text: t.ts + "  " + t.side + "  " + t.size;
+                                color: t.is_buy ? #80ff80 : #ff8080;
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    x: 4px;
+                    y: 120px;
+                    width: parent.width - 8px;
+                    height: 130px;
+                    background: #10131a;
+
+                    Text { x: 4px; y: 4px; text: "Receipts"; color: #ffffff; }
+
+                    ListView {
+                        x: 4px;
+                        y: 22px;
+                        width: parent.width - 8px;
+                        height: parent.height - 26px;
+
+                        for r in root.receipts : Text {
+                            text: r.ts + "  " + r.ticker + "  " + r.side + " " + r.kind + " " + r.size + " " + r.status;
+                            color: r.status == "ok" ? #80ff80 : (r.status == "fail" ? #ff8080 : #c0c0c0);
+                        }
+                    }
+                }
+
+                Rectangle {
+                    x: 4px;
+                    y: 254px;
+                    width: parent.width - 8px;
+                    height: parent.height - 262px;
+                    background: #10131a;
+
+                    Text { x: 4px; y: 4px; text: "Bot: " + bot_signal + "  size=" + bot_size; color: #ffffff; }
+                    Text { x: 4px; y: 24px; text: "Comment: " + bot_comment; color: #cccccc; }
+
+                    TextEdit {
+                        x: 4px;
+                        y: 44px;
+                        width: parent.width - 8px;
+                        height: parent.height - 120px;
+                        text <=> root.script_text;
+                    }
+
+                    Button { x: 4px; y: parent.height - 68px; text: "Run Script"; clicked => { root.run_script(); } }
+                    Text { x: 4px; y: parent.height - 44px; text: script_error; color: #ff8080; }
+                    Text { x: 4px; y: parent.height - 24px; text: order_message; color: #80ff80; }
+                }
+            }
+
+            OrderbookPanel {
+                x: 16px;
+                y: 80px;
+                width: 360px;
+                height: 260px;
+                title: "Orderbook";
+                bids <=> root.bids;
+                asks <=> root.asks;
+                mid: root.mid_price;
+                spread: root.spread;
+                visible: root.show_depth || root.show_ladders;
+            }
+
+            SettingsPanel {
+                x: 392px;
+                y: 80px;
+                width: 380px;
+                height: 320px;
+
+                wallet_address <=> root.settings_wallet_address;
+                wallet_status  <=> root.settings_wallet_status;
+
+                network      <=> root.settings_network;
+                rpc_endpoint <=> root.settings_rpc_endpoint;
+
+                auto_sign           <=> root.settings_auto_sign;
+                session_ttl_minutes <=> root.settings_session_ttl_minutes;
+                signer_status       <=> root.settings_signer_status;
+
+                last_error <=> root.settings_last_error;
+
+                connect_wallet => { root.settings_connect_wallet(); }
+                disconnect_wallet => { root.settings_disconnect_wallet(); }
+                refresh_status => { root.settings_refresh_status(); }
+
+                select_network(net) => { root.settings_select_network(net); }
+                apply_rpc(endpoint) => { root.settings_apply_rpc(endpoint); }
+
+                toggle_auto_sign(enabled) => { root.settings_toggle_auto_sign(enabled); }
+                create_session(ttl_minutes) => { root.settings_create_session(ttl_minutes); }
+                revoke_session => { root.settings_revoke_session(); }
+            }
+
+            MicroDepthPanel {
+                x: parent.width - 260px;
+                y: 48px;
+                width: 240px;
+                height: 72px;
+                bids <=> root.bids;
+                asks <=> root.asks;
+                imbalance: root.imbalance;
+                visible: root.show_depth;
+            }
+
+            // =================== YOUR ORIGINAL UI END ===================
+        }
+
+        // ---------------- SCROLLBARS (viewport) ----------------
+
+        // Horizontal scrollbar (FIXED: proper id scoping; no root.bar_w etc.)
+        hscroll := Rectangle {
+            x: 2px;
+            y: parent.height - 12px;
+            width: parent.width - 14px;
+            height: 10px;
+            background: #202633;
+            border-radius: 5px;
+            visible: viewport.max_scroll_x > 0.0;
+
+            property <float> bar_w: self.width / 1px;
+            property <float> knob_w: Math.max(30.0, bar_w * (viewport.viewport_w_px / viewport.content_w_px));
+            property <float> t: viewport.max_scroll_x <= 0.0 ? 0.0 : (viewport.sx / viewport.max_scroll_x);
+            property <float> knob_x: t * Math.max(0.0, bar_w - knob_w);
+
+            Rectangle {
+                x: hscroll.knob_x * 1px;
+                y: -1px;
+                width: hscroll.knob_w * 1px;
+                height: parent.height + 2px;
+                background: #7070ff;
+                border-radius: 6px;
+
+                TouchArea {
+                    x: 0px; y: -6px;
+                    width: parent.width; height: parent.height + 12px;
+
+                    property <bool> dragging;
+
+                    pointer-event(event) => {
+                        if event.kind == PointerEventKind.down {
+                            dragging = true;
+                        } else if event.kind == PointerEventKind.up {
+                            dragging = false;
+                        } else if event.kind == PointerEventKind.move && dragging {
+                            let mx = self.mouse-x / 1px;
+                            let bw = hscroll.bar_w;
+                            let kw = hscroll.knob_w;
+
+                            let nx = Math.max(0.0, Math.min(bw - kw, mx - kw * 0.5));
+                            let nt = (bw - kw) <= 0.0 ? 0.0 : (nx / (bw - kw));
+
+                            root.ui_scroll_x_px = nt * viewport.max_scroll_x;
                         }
                     }
                 }
             }
+        }
+
+        // Vertical scrollbar (FIXED: proper id scoping; no root.bar_h etc.)
+        vscroll := Rectangle {
+            x: parent.width - 12px;
+            y: 2px;
+            width: 10px;
+            height: parent.height - 14px;
+            background: #202633;
+            border-radius: 5px;
+            visible: viewport.max_scroll_y > 0.0;
+
+            property <float> bar_h: self.height / 1px;
+            property <float> knob_h: Math.max(30.0, bar_h * (viewport.viewport_h_px / viewport.content_h_px));
+            property <float> t: viewport.max_scroll_y <= 0.0 ? 0.0 : (viewport.sy / viewport.max_scroll_y);
+            property <float> knob_y: t * Math.max(0.0, bar_h - knob_h);
 
             Rectangle {
-                x: 4px;
-                y: 120px;
-                width: parent.width - 8px;
-                height: 130px;
-                background: #10131a;
+                x: -1px;
+                y: vscroll.knob_y * 1px;
+                width: parent.width + 2px;
+                height: vscroll.knob_h * 1px;
+                background: #7070ff;
+                border-radius: 6px;
 
-                Text { x: 4px; y: 4px; text: "Receipts"; color: #ffffff; }
+                TouchArea {
+                    x: -6px; y: 0px;
+                    width: parent.width + 12px; height: parent.height;
 
-                ListView {
-                    x: 4px;
-                    y: 22px;
-                    width: parent.width - 8px;
-                    height: parent.height - 26px;
+                    property <bool> dragging;
 
-                    for r in root.receipts : Text {
-                        text: r.ts + "  " + r.ticker + "  " + r.side + " " + r.kind + " " + r.size + " " + r.status;
-                        color: r.status == "ok" ? #80ff80 : (r.status == "fail" ? #ff8080 : #c0c0c0);
+                    pointer-event(event) => {
+                        if event.kind == PointerEventKind.down {
+                            dragging = true;
+                        } else if event.kind == PointerEventKind.up {
+                            dragging = false;
+                        } else if event.kind == PointerEventKind.move && dragging {
+                            let my = self.mouse-y / 1px;
+                            let bh = vscroll.bar_h;
+                            let kh = vscroll.knob_h;
+
+                            let ny = Math.max(0.0, Math.min(bh - kh, my - kh * 0.5));
+                            let nt = (bh - kh) <= 0.0 ? 0.0 : (ny / (bh - kh));
+
+                            root.ui_scroll_y_px = nt * viewport.max_scroll_y;
+                        }
                     }
                 }
             }
-
-            Rectangle {
-                x: 4px;
-                y: 254px;
-                width: parent.width - 8px;
-                height: parent.height - 262px;
-                background: #10131a;
-
-                Text { x: 4px; y: 4px; text: "Bot: " + bot_signal + "  size=" + bot_size; color: #ffffff; }
-                Text { x: 4px; y: 24px; text: "Comment: " + bot_comment; color: #cccccc; }
-
-                TextEdit {
-                    x: 4px;
-                    y: 44px;
-                    width: parent.width - 8px;
-                    height: parent.height - 120px;
-                    text <=> root.script_text;
-                }
-
-                Button { x: 4px; y: parent.height - 68px; text: "Run Script"; clicked => { root.run_script(); } }
-                Text { x: 4px; y: parent.height - 44px; text: script_error; color: #ff8080; }
-                Text { x: 4px; y: parent.height - 24px; text: order_message; color: #80ff80; }
-            }
         }
 
-        OrderbookPanel {
-            x: 16px;
-            y: 80px;
-            width: 360px;
-            height: 260px;
-            title: "Orderbook";
-            bids <=> root.bids;
-            asks <=> root.asks;
-            mid: root.mid_price;
-            spread: root.spread;
-            visible: root.show_depth || root.show_ladders;
-        }
-
-        SettingsPanel {
-            x: 392px;
-            y: 80px;
-            width: 380px;
-            height: 320px;
-
-            wallet_address <=> root.settings_wallet_address;
-            wallet_status  <=> root.settings_wallet_status;
-
-            network      <=> root.settings_network;
-            rpc_endpoint <=> root.settings_rpc_endpoint;
-
-            auto_sign           <=> root.settings_auto_sign;
-            session_ttl_minutes <=> root.settings_session_ttl_minutes;
-            signer_status       <=> root.settings_signer_status;
-
-            last_error <=> root.settings_last_error;
-
-            connect_wallet => { root.settings_connect_wallet(); }
-            disconnect_wallet => { root.settings_disconnect_wallet(); }
-            refresh_status => { root.settings_refresh_status(); }
-
-            select_network(net) => { root.settings_select_network(net); }
-            apply_rpc(endpoint) => { root.settings_apply_rpc(endpoint); }
-
-            toggle_auto_sign(enabled) => { root.settings_toggle_auto_sign(enabled); }
-            create_session(ttl_minutes) => { root.settings_create_session(ttl_minutes); }
-            revoke_session => { root.settings_revoke_session(); }
-        }
-
-        MicroDepthPanel {
-            x: parent.width - 260px;
-            y: 48px;
-            width: 240px;
-            height: 72px;
-            bids <=> root.bids;
-            asks <=> root.asks;
-            imbalance: root.imbalance;
-            visible: root.show_depth;
-        }
-
-        // --- popout drawn LAST so it sits on top ---
+        // --- popout drawn LAST so it sits on top, and NOT scrolled ---
         ChartPopoutPanel {
             open <=> root.chart_popout_open;
             px <=> root.chart_popout_x;
