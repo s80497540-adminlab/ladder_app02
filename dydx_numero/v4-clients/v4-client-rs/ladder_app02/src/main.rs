@@ -682,10 +682,13 @@ fn apply_snapshot_to_ui(
             }
         };
 
-        let n = slice.len();
+        let n = slice.len().max(1);
+
+        // IMPORTANT: gapless horizontally => w must be 1.0 / n (NOT 0.7/n)
+        let w = 1.0f32 / (n as f32);
+
         for (i, c) in slice.iter().enumerate() {
             let x_center = if n <= 1 { 0.5f32 } else { (i as f32 + 0.5) / n as f32 };
-            let w = (1.0f32 / n.max(1) as f32) * 0.7;
 
             let open_n = norm_price(c.open);
             let high_n = norm_price(c.high);
