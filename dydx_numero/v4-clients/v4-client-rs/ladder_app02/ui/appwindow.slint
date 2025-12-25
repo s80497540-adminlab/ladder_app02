@@ -452,7 +452,7 @@ component MicroDepthPanel inherits Rectangle {
 }
 
 // ---------- Candlestick chart (zoom + pan + cursor + wheel zoom) ----
-
+// FIXED: no range loops + flush candles (pixel-edge snapping + 1px overlap)
 component CandleChart inherits Rectangle {
     in property <[CandlePoint]> points;
     in property <float> mid_line_y;
@@ -482,17 +482,22 @@ component CandleChart inherits Rectangle {
         opacity: 0.7;
     }
 
-    // Volume bars (no gaps: pixel-round x/width + tiny overlap)
+    // Volume bars (gapless via snapped edges)
     for cp in points : Rectangle {
         property <float> zx: Math.max(0.25, Math.min(20.0, root.x_zoom));
+
         property <float> x_n: 0.5 + (cp.x - 0.5) * zx + root.pan_x;
         property <float> w_n: cp.w * zx;
 
-        property <float> x_px_f: (x_n - w_n * 0.5) * (parent.width / 1px);
-        property <float> w_px_f: Math.max(1.0, w_n * (parent.width / 1px));
+        property <float> left_f:  (x_n - w_n * 0.5) * (parent.width / 1px);
+        property <float> right_f: (x_n + w_n * 0.5) * (parent.width / 1px);
 
-        x: Math.round(x_px_f) * 1px;
-        width: (Math.round(w_px_f) + 1.0) * 1px;
+        property <float> left_px:  Math.round(left_f);
+        property <float> right_px: Math.round(right_f);
+
+        x: left_px * 1px;
+        width: (Math.max(1.0, (right_px - left_px)) + 1.0) * 1px; // +1px overlap kills cracks
+
         visible: (x_n + w_n) > -0.2 && (x_n - w_n) < 1.2;
 
         y: parent.height - Math.max(1px, cp.volume * parent.height * 0.25);
@@ -501,7 +506,7 @@ component CandleChart inherits Rectangle {
         opacity: 0.35;
     }
 
-    // Candles (no gaps: pixel-round x/width + tiny overlap)
+    // Candles (gapless via snapped edges)
     for cp in points : Rectangle {
         property <float> zx: Math.max(0.25, Math.min(20.0, root.x_zoom));
         property <float> zy: Math.max(0.25, Math.min(20.0, root.y_zoom));
@@ -509,16 +514,20 @@ component CandleChart inherits Rectangle {
         property <float> x_n: 0.5 + (cp.x - 0.5) * zx + root.pan_x;
         property <float> w_n: cp.w * zx;
 
-        property <float> x_px_f: (x_n - w_n * 0.5) * (parent.width / 1px);
-        property <float> w_px_f: Math.max(2.0, w_n * (parent.width / 1px));
+        property <float> left_f:  (x_n - w_n * 0.5) * (parent.width / 1px);
+        property <float> right_f: (x_n + w_n * 0.5) * (parent.width / 1px);
+
+        property <float> left_px:  Math.round(left_f);
+        property <float> right_px: Math.round(right_f);
 
         property <float> open_z:  Math.max(0.0, Math.min(1.0, root.mid_line_y + (cp.open  - root.mid_line_y) * zy + root.pan_y));
         property <float> high_z:  Math.max(0.0, Math.min(1.0, root.mid_line_y + (cp.high  - root.mid_line_y) * zy + root.pan_y));
         property <float> low_z:   Math.max(0.0, Math.min(1.0, root.mid_line_y + (cp.low   - root.mid_line_y) * zy + root.pan_y));
         property <float> close_z: Math.max(0.0, Math.min(1.0, root.mid_line_y + (cp.close - root.mid_line_y) * zy + root.pan_y));
 
-        x: Math.round(x_px_f) * 1px;
-        width: (Math.round(w_px_f) + 1.0) * 1px;
+        x: left_px * 1px;
+        width: (Math.max(2.0, (right_px - left_px)) + 1.0) * 1px; // +1px overlap
+
         y: 0px;
         height: parent.height;
         visible: (x_n + w_n) > -0.2 && (x_n - w_n) < 1.2;
@@ -629,7 +638,7 @@ component CandleChart inherits Rectangle {
                 root.pan_y = Math.max(-2.0, Math.min(2.0, py2));
             }
 
-            // IMPORTANT: CandleChart consumes wheel events so the app-level scroll doesn't steal zoom.
+            // CandleChart consumes wheel events so the app-level scroll doesn't steal zoom.
             EventResult.accept
         }
     }
@@ -944,6 +953,9 @@ export component AppWindow inherits Window {
             y: 0px;
             width: parent.width;
             height: parent.height;
+
+            // IMPORTANT: do NOT swallow clicks; only handle wheel scrolling here
+            pointer-event(event) => { EventResult.reject }
 
             scroll-event(event) => {
                 let dx0 = event.delta-x / 1px;
