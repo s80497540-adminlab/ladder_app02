@@ -506,7 +506,7 @@ component CandleChart inherits Rectangle {
         opacity: 0.35;
     }
 
-    // Candles (gapless via snapped edges)
+    // Candles (slot is snapped + overlapped; body fills full slot => visually flush)
     for cp in points : Rectangle {
         property <float> zx: Math.max(0.25, Math.min(20.0, root.x_zoom));
         property <float> zy: Math.max(0.25, Math.min(20.0, root.y_zoom));
@@ -527,26 +527,29 @@ component CandleChart inherits Rectangle {
 
         x: left_px * 1px;
         width: (Math.max(2.0, (right_px - left_px)) + 1.0) * 1px; // +1px overlap
-
         y: 0px;
         height: parent.height;
+
         visible: (x_n + w_n) > -0.2 && (x_n - w_n) < 1.2;
 
+        // Wick stays thin and centered
         Rectangle {
             x: parent.width * 0.5 - 0.5px;
             width: 1px;
             y: high_z * parent.height;
             height: Math.max(1px, (low_z - high_z) * parent.height);
             background: cp.is_up ? #66cc88 : #cc6677;
+            opacity: 0.95;
         }
 
+        // BODY FILLS THE WHOLE SLOT (THIS is the change that makes candles look flush)
         Rectangle {
-            x: parent.width * 0.5 - Math.max(1px, parent.width * 0.18);
-            width: Math.max(2px, parent.width * 0.36);
-
+            x: 0px;
+            width: parent.width;
             y: Math.min(open_z, close_z) * parent.height;
             height: Math.max(1px, (Math.max(open_z, close_z) - Math.min(open_z, close_z)) * parent.height);
             background: cp.is_up ? #44aa66 : #aa4455;
+            opacity: 0.95;
         }
     }
 
@@ -638,11 +641,11 @@ component CandleChart inherits Rectangle {
                 root.pan_y = Math.max(-2.0, Math.min(2.0, py2));
             }
 
-            // CandleChart consumes wheel events so the app-level scroll doesn't steal zoom.
             EventResult.accept
         }
     }
 }
+
 
 // ---------- Tiny PnL-style sparkline --------------------------------
 
