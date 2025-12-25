@@ -482,13 +482,17 @@ component CandleChart inherits Rectangle {
         opacity: 0.7;
     }
 
+    // Volume bars (no gaps: pixel-round x/width + tiny overlap)
     for cp in points : Rectangle {
         property <float> zx: Math.max(0.25, Math.min(20.0, root.x_zoom));
         property <float> x_n: 0.5 + (cp.x - 0.5) * zx + root.pan_x;
         property <float> w_n: cp.w * zx;
 
-        x: (x_n - w_n * 0.5) * parent.width;
-        width: w_n * parent.width;
+        property <float> x_px_f: (x_n - w_n * 0.5) * (parent.width / 1px);
+        property <float> w_px_f: Math.max(1.0, w_n * (parent.width / 1px));
+
+        x: Math.round(x_px_f) * 1px;
+        width: (Math.round(w_px_f) + 1.0) * 1px;
         visible: (x_n + w_n) > -0.2 && (x_n - w_n) < 1.2;
 
         y: parent.height - Math.max(1px, cp.volume * parent.height * 0.25);
@@ -497,6 +501,7 @@ component CandleChart inherits Rectangle {
         opacity: 0.35;
     }
 
+    // Candles (no gaps: pixel-round x/width + tiny overlap)
     for cp in points : Rectangle {
         property <float> zx: Math.max(0.25, Math.min(20.0, root.x_zoom));
         property <float> zy: Math.max(0.25, Math.min(20.0, root.y_zoom));
@@ -504,13 +509,16 @@ component CandleChart inherits Rectangle {
         property <float> x_n: 0.5 + (cp.x - 0.5) * zx + root.pan_x;
         property <float> w_n: cp.w * zx;
 
+        property <float> x_px_f: (x_n - w_n * 0.5) * (parent.width / 1px);
+        property <float> w_px_f: Math.max(2.0, w_n * (parent.width / 1px));
+
         property <float> open_z:  Math.max(0.0, Math.min(1.0, root.mid_line_y + (cp.open  - root.mid_line_y) * zy + root.pan_y));
         property <float> high_z:  Math.max(0.0, Math.min(1.0, root.mid_line_y + (cp.high  - root.mid_line_y) * zy + root.pan_y));
         property <float> low_z:   Math.max(0.0, Math.min(1.0, root.mid_line_y + (cp.low   - root.mid_line_y) * zy + root.pan_y));
         property <float> close_z: Math.max(0.0, Math.min(1.0, root.mid_line_y + (cp.close - root.mid_line_y) * zy + root.pan_y));
 
-        x: (x_n - w_n * 0.5) * parent.width;
-        width: w_n * parent.width;
+        x: Math.round(x_px_f) * 1px;
+        width: (Math.round(w_px_f) + 1.0) * 1px;
         y: 0px;
         height: parent.height;
         visible: (x_n + w_n) > -0.2 && (x_n - w_n) < 1.2;
@@ -621,6 +629,7 @@ component CandleChart inherits Rectangle {
                 root.pan_y = Math.max(-2.0, Math.min(2.0, py2));
             }
 
+            // IMPORTANT: CandleChart consumes wheel events so the app-level scroll doesn't steal zoom.
             EventResult.accept
         }
     }
@@ -791,13 +800,13 @@ export component AppWindow inherits Window {
     height: 800px;
     title: "Ladder App 02";
 
-    // ---- NEW: app-wide scroll state (NO wheel hook here, so CandleChart keeps zoom) ----
+    // ---- app-wide scroll state ----
     in-out property <float> ui_scroll_x_px: 0.0;
     in-out property <float> ui_scroll_y_px: 0.0;
 
     // Treat these as "minimum canvas size". If the window is smaller, scrollbars appear.
     // If the window is larger, content expands to window size and scrollbars disappear.
-    in-out property <float> ui_content_w_px: 1200.0;
+    in-out property <float> ui_content_w_px: 1800.0;
     in-out property <float> ui_content_h_px: 1050.0;
 
     in-out property <string> mode;
@@ -929,12 +938,34 @@ export component AppWindow inherits Window {
         property <float> sx: Math.max(0.0, Math.min(max_scroll_x, root.ui_scroll_x_px));
         property <float> sy: Math.max(0.0, Math.min(max_scroll_y, root.ui_scroll_y_px));
 
+        // App-wide wheel scrolling (works everywhere EXCEPT on CandleChart, because CandleChart consumes wheel)
+        TouchArea {
+            x: 0px;
+            y: 0px;
+            width: parent.width;
+            height: parent.height;
+
+            scroll-event(event) => {
+                let dx0 = event.delta-x / 1px;
+                let dy0 = event.delta-y / 1px;
+
+                let use_shift_h = event.modifiers.shift && Math.abs(dx0) < 0.01;
+                let dx = use_shift_h ? dy0 : dx0;
+                let dy = use_shift_h ? 0.0 : dy0;
+
+                root.ui_scroll_x_px = Math.max(0.0, Math.min(viewport.max_scroll_x, root.ui_scroll_x_px + dx));
+                root.ui_scroll_y_px = Math.max(0.0, Math.min(viewport.max_scroll_y, root.ui_scroll_y_px + dy));
+
+                EventResult.accept
+            }
+        }
+
         // ---------------- WORKSPACE (everything scrolls) ----------------
         Rectangle {
-            x: -(viewport.sx * 1px);
-            y: -(viewport.sy * 1px);
-            width: viewport.content_w_px * 1px;
-            height: viewport.content_h_px * 1px;
+            x: -(sx * 1px);
+            y: -(sy * 1px);
+            width: content_w_px * 1px;
+            height: content_h_px * 1px;
             background: #151821;
 
             // =================== YOUR ORIGINAL UI START ===================
@@ -1446,7 +1477,7 @@ export component AppWindow inherits Window {
 
         // ---------------- SCROLLBARS (viewport) ----------------
 
-        // Horizontal scrollbar (FIXED: proper id scoping; no root.bar_w etc.)
+        // Horizontal scrollbar
         hscroll := Rectangle {
             x: 2px;
             y: parent.height - 12px;
@@ -1454,17 +1485,17 @@ export component AppWindow inherits Window {
             height: 10px;
             background: #202633;
             border-radius: 5px;
-            visible: viewport.max_scroll_x > 0.0;
+            visible: max_scroll_x > 0.0;
 
             property <float> bar_w: self.width / 1px;
-            property <float> knob_w: Math.max(30.0, bar_w * (viewport.viewport_w_px / viewport.content_w_px));
-            property <float> t: viewport.max_scroll_x <= 0.0 ? 0.0 : (viewport.sx / viewport.max_scroll_x);
+            property <float> knob_w: Math.max(30.0, bar_w * (viewport_w_px / content_w_px));
+            property <float> t: max_scroll_x <= 0.0 ? 0.0 : (sx / max_scroll_x);
             property <float> knob_x: t * Math.max(0.0, bar_w - knob_w);
 
             Rectangle {
-                x: hscroll.knob_x * 1px;
+                x: knob_x * 1px;
                 y: -1px;
-                width: hscroll.knob_w * 1px;
+                width: knob_w * 1px;
                 height: parent.height + 2px;
                 background: #7070ff;
                 border-radius: 6px;
@@ -1495,7 +1526,7 @@ export component AppWindow inherits Window {
             }
         }
 
-        // Vertical scrollbar (FIXED: proper id scoping; no root.bar_h etc.)
+        // Vertical scrollbar
         vscroll := Rectangle {
             x: parent.width - 12px;
             y: 2px;
@@ -1503,18 +1534,18 @@ export component AppWindow inherits Window {
             height: parent.height - 14px;
             background: #202633;
             border-radius: 5px;
-            visible: viewport.max_scroll_y > 0.0;
+            visible: max_scroll_y > 0.0;
 
             property <float> bar_h: self.height / 1px;
-            property <float> knob_h: Math.max(30.0, bar_h * (viewport.viewport_h_px / viewport.content_h_px));
-            property <float> t: viewport.max_scroll_y <= 0.0 ? 0.0 : (viewport.sy / viewport.max_scroll_y);
+            property <float> knob_h: Math.max(30.0, bar_h * (viewport_h_px / content_h_px));
+            property <float> t: max_scroll_y <= 0.0 ? 0.0 : (sy / max_scroll_y);
             property <float> knob_y: t * Math.max(0.0, bar_h - knob_h);
 
             Rectangle {
                 x: -1px;
-                y: vscroll.knob_y * 1px;
+                y: knob_y * 1px;
                 width: parent.width + 2px;
-                height: vscroll.knob_h * 1px;
+                height: knob_h * 1px;
                 background: #7070ff;
                 border-radius: 6px;
 
