@@ -16,8 +16,9 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::mem;
 
-use chrono::{Local, TimeZone};
+use chrono::{Local, TimeZone, Utc};
 use rhai::{Engine, Scope};
 
 use slint::{ModelRc, SharedString, Timer, TimerMode, VecModel};
@@ -47,6 +48,23 @@ fn format_ts_local(ts: u64) -> String {
         .single()
         .unwrap_or_else(|| Local.timestamp_opt(0, 0).single().unwrap());
     dt.format("%Y-%m-%d %H:%M:%S").to_string()
+}
+
+fn format_ts_utc(ts: u64) -> String {
+    let dt = Utc
+        .timestamp_opt(ts as i64, 0)
+        .single()
+        .unwrap_or_else(|| Utc.timestamp_opt(0, 0).single().unwrap());
+    dt.format("%Y-%m-%d %H:%M:%S").to_string()
+}
+
+fn format_ts_for_ui(app: &AppWindow, ts: u64) -> String {
+    let tm = app.get_time_mode().to_string();
+    if tm.eq_ignore_ascii_case("utc") {
+        format_ts_utc(ts)
+    } else {
+        format_ts_local(ts)
+    }
 }
 
 // ---- CSV data structures ---------------------------------------------------
@@ -246,7 +264,6 @@ fn compute_snapshot_for(data: &TickerData, tf_secs: u64, window_secs: u64) -> Sn
     let window_start = target_ts.saturating_sub(window_secs);
 
     let mut agg = CandleAgg::new(tf_secs);
-    let _tf_for_debug = agg.tf();
 
     for e in &data.book_events {
         if e.ts < window_start {
@@ -446,11 +463,8 @@ struct AppCore {
     #[allow(dead_code)]
     last_reload_ts: u64,
 
-    #[allow(dead_code)]
     engine: Engine,
-    #[allow(dead_code)]
     scope: Scope<'static>,
-    #[allow(dead_code)]
     script_error: String,
 
     receipts: Vec<Receipt>,
@@ -548,6 +562,26 @@ impl AppCore {
         }
         app.set_receipts(ModelRc::new(VecModel::from(self.receipts.clone())));
     }
+
+    fn reload_all(&mut self) {
+        let mut out = HashMap::new();
+        for tk in &self.tickers {
+            if let Some(td) = load_ticker_data(&self.base_dir, tk) {
+                out.insert(tk.clone(), td);
+            }
+        }
+        self.ticker_data = out;
+
+        // if current ticker disappeared, fall back
+        if !self.ticker_data.contains_key(&self.current_ticker) {
+            if let Some(first) = self.tickers.first() {
+                self.current_ticker = first.clone();
+            }
+        }
+
+        self.snapshot_dirty = true;
+        self.last_reload_ts = now_unix();
+    }
 }
 
 // ---- UI wiring (snapshot) --------------------------------------------------
@@ -624,7 +658,7 @@ fn apply_snapshot_to_ui(
             } else {
                 format!("{} ({})", t.side, t.source)
             };
-            let ts_str = format_ts_local(t.ts);
+            let ts_str = format_ts_for_ui(app, t.ts);
 
             Trade {
                 ts: SharedString::from(ts_str),
@@ -642,7 +676,7 @@ fn apply_snapshot_to_ui(
         .rev()
         .take(200)
         .map(|c| CandleRow {
-            ts: SharedString::from(format_ts_local(c.t)),
+            ts: SharedString::from(format_ts_for_ui(app, c.t)),
             open: SharedString::from(format!("{:.2}", c.open)),
             high: SharedString::from(format!("{:.2}", c.high)),
             low: SharedString::from(format!("{:.2}", c.low)),
@@ -683,12 +717,12 @@ fn apply_snapshot_to_ui(
         };
 
         let n = slice.len().max(1);
-
-        // IMPORTANT: gapless horizontally => w must be 1.0 / n (NOT 0.7/n)
-        let w = 1.0f32 / (n as f32);
-
         for (i, c) in slice.iter().enumerate() {
             let x_center = if n <= 1 { 0.5f32 } else { (i as f32 + 0.5) / n as f32 };
+
+            // ✅ IMPORTANT: make candle slots gapless
+            // (your old 0.7 factor guaranteed visible gaps)
+            let w = 1.0f32 / n as f32;
 
             let open_n = norm_price(c.open);
             let high_n = norm_price(c.high);
@@ -756,6 +790,11 @@ fn main() {
     app.set_trade_size(0.01);
     app.set_trade_leverage(5.0);
 
+    // ✅ make sure these UI fields are initialized too
+    app.set_candle_tf_secs(60);
+    app.set_candle_window_minutes(60);
+    app.set_dom_depth_levels(20);
+
     // REAL trading toggle default OFF
     app.set_trade_real_mode(false);
 
@@ -764,6 +803,7 @@ fn main() {
     app.set_candle_midline(0.5);
     app.set_last_move(SharedString::from("flat"));
     app.set_order_message(SharedString::from(""));
+    app.set_script_error(SharedString::from(""));
     app.set_receipts(ModelRc::new(VecModel::from(Vec::<Receipt>::new())));
 
     // Apply persisted settings into UI + init signer view
@@ -786,12 +826,17 @@ fn main() {
         let signer_status = signer_status_for_ui(&core.signer, now);
         apply_settings_to_ui(&app, &st, &signer_status, None);
 
+        // sync core -> UI config
+        app.set_candle_tf_secs(core.tf_secs as i32);
+        app.set_candle_window_minutes((core.window_secs / 60) as i32);
+        app.set_dom_depth_levels(core.dom_depth_levels as i32);
+
         if let Some((snap, metrics)) = core.snapshot_for_ui() {
             if let Some((min_ts, max_ts)) = core.ticker_range(&core.current_ticker) {
                 let range_str = format!(
                     "Range: {} -> {}",
-                    format_ts_local(min_ts),
-                    format_ts_local(max_ts)
+                    format_ts_for_ui(&app, min_ts),
+                    format_ts_for_ui(&app, max_ts)
                 );
                 app.set_data_range(SharedString::from(range_str));
             }
@@ -801,6 +846,278 @@ fn main() {
     }
 
     let app_weak = app.as_weak();
+
+    // -----------------------------------------------------------------------
+    // ✅ TICKER buttons
+    // -----------------------------------------------------------------------
+    {
+        let app_weak_t = app_weak.clone();
+        let core_rc_t = core_rc.clone();
+        app.on_ticker_changed(move |new_ticker| {
+            if let Some(app) = app_weak_t.upgrade() {
+                let mut core = core_rc_t.borrow_mut();
+                let tk = new_ticker.to_string();
+
+                if !core.ticker_data.contains_key(&tk) {
+                    app.set_order_message(SharedString::from(format!(
+                        "No data loaded for {tk} (missing CSVs in ./data)."
+                    )));
+                    return;
+                }
+
+                core.current_ticker = tk.clone();
+                core.snapshot_dirty = true;
+
+                app.set_current_ticker(SharedString::from(&tk));
+
+                if let Some((min_ts, max_ts)) = core.ticker_range(&tk) {
+                    let range_str = format!(
+                        "Range: {} -> {}",
+                        format_ts_for_ui(&app, min_ts),
+                        format_ts_for_ui(&app, max_ts)
+                    );
+                    app.set_data_range(SharedString::from(range_str));
+                }
+
+                if let Some((snap, metrics)) = core.snapshot_for_ui() {
+                    apply_snapshot_to_ui(&app, &snap, &metrics, core.dom_depth_levels);
+                }
+
+                app.set_order_message(SharedString::from(format!("Switched to {tk}")));
+            }
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // ✅ TIME MODE buttons (Local / UTC)
+    // -----------------------------------------------------------------------
+    {
+        let app_weak_tm = app_weak.clone();
+        let core_rc_tm = core_rc.clone();
+        app.on_time_mode_changed(move |new_time_mode| {
+            if let Some(app) = app_weak_tm.upgrade() {
+                app.set_time_mode(SharedString::from(new_time_mode.to_string()));
+
+                // just re-render text (timestamps & range formatting)
+                let mut core = core_rc_tm.borrow_mut();
+                if let Some((min_ts, max_ts)) = core.ticker_range(&core.current_ticker) {
+                    let range_str = format!(
+                        "Range: {} -> {}",
+                        format_ts_for_ui(&app, min_ts),
+                        format_ts_for_ui(&app, max_ts)
+                    );
+                    app.set_data_range(SharedString::from(range_str));
+                }
+                if let Some((snap, metrics)) = core.snapshot_for_ui() {
+                    apply_snapshot_to_ui(&app, &snap, &metrics, core.dom_depth_levels);
+                }
+            }
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // ✅ TF buttons (e.g., 60s / 300s)
+    // -----------------------------------------------------------------------
+    {
+        let app_weak_tf = app_weak.clone();
+        let core_rc_tf = core_rc.clone();
+        app.on_candle_tf_changed(move |new_tf| {
+            if let Some(app) = app_weak_tf.upgrade() {
+                let tf = (new_tf as i64).max(1) as u64;
+
+                let mut core = core_rc_tf.borrow_mut();
+                core.tf_secs = tf;
+                core.snapshot_dirty = true;
+
+                app.set_candle_tf_secs(tf as i32);
+
+                if let Some((snap, metrics)) = core.snapshot_for_ui() {
+                    apply_snapshot_to_ui(&app, &snap, &metrics, core.dom_depth_levels);
+                }
+
+                app.set_order_message(SharedString::from(format!("TF set to {tf}s")));
+            }
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // ✅ Window buttons (minutes)
+    // -----------------------------------------------------------------------
+    {
+        let app_weak_w = app_weak.clone();
+        let core_rc_w = core_rc.clone();
+        app.on_candle_window_changed(move |new_window_min| {
+            if let Some(app) = app_weak_w.upgrade() {
+                let mins = (new_window_min as i64).max(1) as u64;
+
+                let mut core = core_rc_w.borrow_mut();
+                core.window_secs = mins * 60;
+                core.snapshot_dirty = true;
+
+                app.set_candle_window_minutes(mins as i32);
+
+                if let Some((snap, metrics)) = core.snapshot_for_ui() {
+                    apply_snapshot_to_ui(&app, &snap, &metrics, core.dom_depth_levels);
+                }
+
+                app.set_order_message(SharedString::from(format!("Window set to {mins}m")));
+            }
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // ✅ DOM depth slider
+    // -----------------------------------------------------------------------
+    {
+        let app_weak_d = app_weak.clone();
+        let core_rc_d = core_rc.clone();
+        app.on_dom_depth_changed(move |new_depth| {
+            if let Some(app) = app_weak_d.upgrade() {
+                let depth = (new_depth as i64).max(1).min(50) as usize;
+
+                let mut core = core_rc_d.borrow_mut();
+                core.dom_depth_levels = depth;
+                app.set_dom_depth_levels(depth as i32);
+
+                if let Some((snap, metrics)) = core.snapshot_for_ui() {
+                    apply_snapshot_to_ui(&app, &snap, &metrics, core.dom_depth_levels);
+                }
+            }
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // ✅ Reload data button
+    // -----------------------------------------------------------------------
+    {
+        let app_weak_r = app_weak.clone();
+        let core_rc_r = core_rc.clone();
+        app.on_reload_data(move || {
+            if let Some(app) = app_weak_r.upgrade() {
+                let mut core = core_rc_r.borrow_mut();
+                core.reload_all();
+
+                app.set_current_ticker(SharedString::from(&core.current_ticker));
+
+                if let Some((min_ts, max_ts)) = core.ticker_range(&core.current_ticker) {
+                    let range_str = format!(
+                        "Range: {} -> {}",
+                        format_ts_for_ui(&app, min_ts),
+                        format_ts_for_ui(&app, max_ts)
+                    );
+                    app.set_data_range(SharedString::from(range_str));
+                }
+
+                if let Some((snap, metrics)) = core.snapshot_for_ui() {
+                    apply_snapshot_to_ui(&app, &snap, &metrics, core.dom_depth_levels);
+                }
+
+                app.set_order_message(SharedString::from("Reloaded CSV data."));
+            }
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // ✅ Deposit / Withdraw buttons
+    // -----------------------------------------------------------------------
+    {
+        let app_weak_dep = app_weak.clone();
+        app.on_deposit(move |amount| {
+            if let Some(app) = app_weak_dep.upgrade() {
+                let a = amount.max(0.0);
+                let b = app.get_balance_usdc();
+                app.set_balance_usdc(b + a);
+                app.set_order_message(SharedString::from(format!("Deposited {:.2}", a)));
+            }
+        });
+    }
+
+    {
+        let app_weak_wd = app_weak.clone();
+        app.on_withdraw(move |amount| {
+            if let Some(app) = app_weak_wd.upgrade() {
+                let a = amount.max(0.0);
+                let b = app.get_balance_usdc();
+                let nb = (b - a).max(0.0);
+                app.set_balance_usdc(nb);
+                app.set_order_message(SharedString::from(format!("Withdrew {:.2}", a)));
+            }
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // ✅ Run script button (minimal, safe)
+    // - provides a few read-only variables into the script
+    // - script may optionally set: signal (string), size (float), comment (string)
+    // -----------------------------------------------------------------------
+    {
+        let app_weak_sc = app_weak.clone();
+        let core_rc_sc = core_rc.clone();
+        app.on_run_script(move || {
+            if let Some(app) = app_weak_sc.upgrade() {
+                let mut core = core_rc_sc.borrow_mut();
+
+                core.script_error.clear();
+
+                // Build a fresh scope locally (NOT core.scope) to avoid borrow conflicts.
+                let mut scope = Scope::new();
+
+                // expose some read-only vars if we have metrics
+                if let Some((_snap, m)) = core.snapshot_for_ui() {
+                    scope.push("mid", m.mid);
+                    scope.push("spread", m.spread);
+                    scope.push("imbalance", m.imbalance);
+                    scope.push("best_bid", m.best_bid);
+                    scope.push("best_ask", m.best_ask);
+                }
+
+                // defaults user can override
+                scope.push("signal", "".to_string());
+                scope.push("size", 0.0f64);
+                scope.push("comment", "".to_string());
+
+                let script = app.get_script_text().to_string();
+
+                // ✅ This is now safe: engine borrowed immutably, scope is LOCAL.
+                let res = core
+                    .engine
+                    .eval_with_scope::<rhai::Dynamic>(&mut scope, &script);
+
+                match res {
+                    Ok(_v) => {
+                        let signal = scope.get_value::<String>("signal").unwrap_or_default();
+                        let size = scope.get_value::<f64>("size").unwrap_or(0.0);
+                        let comment = scope.get_value::<String>("comment").unwrap_or_default();
+
+                        if !signal.is_empty() {
+                            app.set_bot_signal(SharedString::from(signal));
+                        }
+                        if size.is_finite() {
+                            app.set_bot_size(size as f32);
+                        }
+                        if !comment.is_empty() {
+                            app.set_bot_comment(SharedString::from(comment));
+                        }
+
+                        app.set_script_error(SharedString::from(""));
+                        app.set_order_message(SharedString::from("Script ran."));
+                    }
+                    Err(e) => {
+                        let msg = format!("{e}");
+                        core.script_error = msg.clone();
+                        app.set_script_error(SharedString::from(msg));
+                        app.set_order_message(SharedString::from("Script error."));
+                    }
+                }
+
+                // Optional: keep the last run scope around for debugging / future inspection.
+                core.scope = scope;
+            }
+        });
+    }
+
+
+
 
     // -----------------------------------------------------------------------
     // 4G: REAL toggle requires Mainnet + forces Live + confirmation message
@@ -870,9 +1187,7 @@ fn main() {
     }
 
     // -----------------------------------------------------------------------
-    // SEND ORDER gating:
-    // - REAL requires Mainnet + Live + valid signing session
-    // - SIM orders still write CSV
+    // SEND ORDER gating (unchanged from your code)
     // -----------------------------------------------------------------------
     {
         let app_weak_send = app_weak.clone();
@@ -893,13 +1208,12 @@ fn main() {
                 let st = core.settings.state();
                 let is_mainnet = matches!(st.network, Network::Mainnet);
 
-                // 4G hard safety: REAL cannot operate off-mainnet
                 if real_mode && !is_mainnet {
                     let msg = "Blocked: REAL requires Mainnet (network mismatch).".to_string();
                     app.set_order_message(SharedString::from(&msg));
 
                     let receipt = Receipt {
-                        ts: SharedString::from(format_ts_local(now)),
+                        ts: SharedString::from(format_ts_for_ui(&app, now)),
                         ticker: SharedString::from(&ticker),
                         side: SharedString::from(&side),
                         kind: SharedString::from("ManualReal"),
@@ -939,7 +1253,7 @@ fn main() {
                             app.set_order_message(SharedString::from(&msg));
 
                             let receipt = Receipt {
-                                ts: SharedString::from(format_ts_local(now)),
+                                ts: SharedString::from(format_ts_for_ui(&app, now)),
                                 ticker: SharedString::from(&ticker),
                                 side: SharedString::from(&side),
                                 kind: SharedString::from("ManualReal"),
@@ -1003,7 +1317,7 @@ fn main() {
                 };
 
                 let receipt = Receipt {
-                    ts: SharedString::from(format_ts_local(now)),
+                    ts: SharedString::from(format_ts_for_ui(&app, now)),
                     ticker: SharedString::from(&ticker),
                     side: SharedString::from(&side),
                     kind: SharedString::from(kind),
@@ -1016,7 +1330,7 @@ fn main() {
         });
     }
 
-    // --- Settings callbacks ---
+    // --- Settings callbacks (unchanged from your code) ---
     {
         let app_weak_s = app_weak.clone();
         let core_rc_s = core_rc.clone();
@@ -1085,7 +1399,6 @@ fn main() {
         });
     }
 
-    // ONE select_network handler, with 4G enforcement
     {
         let app_weak_s = app_weak.clone();
         let core_rc_s = core_rc.clone();
@@ -1100,7 +1413,6 @@ fn main() {
                 let st = core.settings.state();
                 let is_mainnet = matches!(st.network, Network::Mainnet);
 
-                // 4G: if leaving Mainnet while REAL on -> auto disable REAL
                 if !is_mainnet && app.get_trade_real_mode() {
                     app.set_trade_real_mode(false);
                     core.last_real_mode = false;
@@ -1109,7 +1421,6 @@ fn main() {
                     ));
                 }
 
-                // If switching to Mainnet while REAL is already on, force Live (just in case)
                 if is_mainnet && app.get_trade_real_mode() {
                     let mode_now = app.get_mode().to_string();
                     if !mode_now.eq_ignore_ascii_case("live") {
@@ -1213,7 +1524,7 @@ fn main() {
                     apply_settings_to_ui(&app, &st, &signer_status, None);
                 }
 
-                app.set_current_time(SharedString::from(format_ts_local(now)));
+                app.set_current_time(SharedString::from(format_ts_for_ui(&app, now)));
             }
         });
     }
