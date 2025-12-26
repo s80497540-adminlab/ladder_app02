@@ -12,11 +12,10 @@ use std::cell::RefCell;
 use std::cmp::{max, min};
 use std::collections::{BTreeMap, HashMap};
 use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use std::mem;
 
 use chrono::{Local, TimeZone, Utc};
 use rhai::{Engine, Scope};
@@ -118,7 +117,115 @@ struct BubbleMetrics {
     imbalance: f64,
 }
 
-// ---- CSV loading -----------------------------------------------------------
+// ---- CSV parsing helpers (single line) ------------------------------------
+
+fn parse_book_line(line: &str, want_ticker: &str) -> Option<BookCsvEvent> {
+    let line = line.trim();
+    if line.is_empty() {
+        return None;
+    }
+    let parts: Vec<&str> = line.split(',').collect();
+    if parts.len() < 6 {
+        return None;
+    }
+
+    let ts = parts[0].parse::<u64>().ok()?;
+    let tk = parts[1].trim_matches('"').to_string();
+    if tk != want_ticker {
+        return None;
+    }
+
+    let kind = parts[2].to_string();
+    let side = parts[3].to_string();
+    let price = parts[4].parse::<f64>().ok()?;
+    let size = parts[5].parse::<f64>().ok()?;
+
+    Some(BookCsvEvent {
+        ts,
+        ticker: tk,
+        kind,
+        side,
+        price,
+        size,
+    })
+}
+
+fn parse_trade_line(line: &str, want_ticker: &str) -> Option<TradeCsvEvent> {
+    let line = line.trim();
+    if line.is_empty() {
+        return None;
+    }
+    let parts: Vec<&str> = line.split(',').collect();
+    if parts.len() < 5 {
+        return None;
+    }
+
+    let ts = parts[0].parse::<u64>().ok()?;
+    let tk = parts[1].trim_matches('"').to_string();
+    if tk != want_ticker {
+        return None;
+    }
+
+    let source = parts[2].to_string();
+    let side = parts[3].to_string();
+    let size_str = parts[4].to_string();
+
+    Some(TradeCsvEvent {
+        ts,
+        ticker: tk,
+        source,
+        side,
+        size_str,
+    })
+}
+
+fn file_len(path: &Path) -> u64 {
+    std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+}
+
+/// Read newly appended lines since `offset`. Returns (lines, new_offset).
+fn tail_new_lines(path: &Path, mut offset: u64) -> (Vec<String>, u64) {
+    let len = file_len(path);
+
+    // file rotated/truncated
+    if len < offset {
+        offset = 0;
+    }
+
+    let f = match File::open(path) {
+        Ok(f) => f,
+        Err(_) => return (Vec::new(), offset),
+    };
+
+    let mut reader = BufReader::new(f);
+
+    if reader.seek(SeekFrom::Start(offset)).is_err() {
+        return (Vec::new(), offset);
+    }
+
+    let mut out = Vec::new();
+    let mut buf = String::new();
+
+    loop {
+        buf.clear();
+        match reader.read_line(&mut buf) {
+            Ok(0) => break, // EOF
+            Ok(_) => {
+                // keep newline-free string
+                let s = buf.trim_end_matches(['\r', '\n']).to_string();
+                if !s.is_empty() {
+                    out.push(s);
+                }
+            }
+            Err(_) => break,
+        }
+    }
+
+    let new_offset = reader.seek(SeekFrom::Current(0)).unwrap_or(offset);
+    (out, new_offset)
+}
+
+// ---- CSV loading (full file at startup) -----------------------------------
 
 fn load_book_csv(path: &Path, ticker: &str) -> Vec<BookCsvEvent> {
     if !path.exists() {
@@ -131,39 +238,9 @@ fn load_book_csv(path: &Path, ticker: &str) -> Vec<BookCsvEvent> {
     let mut out = Vec::new();
 
     for line in reader.lines().flatten() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
+        if let Some(e) = parse_book_line(&line, ticker) {
+            out.push(e);
         }
-        let parts: Vec<&str> = line.split(',').collect();
-        if parts.len() < 6 {
-            continue;
-        }
-
-        let Ok(ts) = parts[0].parse::<u64>() else {
-            continue;
-        };
-        let tk = parts[1].trim_matches('"').to_string();
-        if tk != ticker {
-            continue;
-        }
-        let kind = parts[2].to_string();
-        let side = parts[3].to_string();
-        let Ok(price) = parts[4].parse::<f64>() else {
-            continue;
-        };
-        let Ok(size) = parts[5].parse::<f64>() else {
-            continue;
-        };
-
-        out.push(BookCsvEvent {
-            ts,
-            ticker: tk,
-            kind,
-            side,
-            price,
-            size,
-        });
     }
 
     out.sort_by_key(|e| e.ts);
@@ -181,33 +258,9 @@ fn load_trades_csv(path: &Path, ticker: &str) -> Vec<TradeCsvEvent> {
     let mut out = Vec::new();
 
     for line in reader.lines().flatten() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
+        if let Some(t) = parse_trade_line(&line, ticker) {
+            out.push(t);
         }
-        let parts: Vec<&str> = line.split(',').collect();
-        if parts.len() < 5 {
-            continue;
-        }
-
-        let Ok(ts) = parts[0].parse::<u64>() else {
-            continue;
-        };
-        let tk = parts[1].trim_matches('"').to_string();
-        if tk != ticker {
-            continue;
-        }
-        let source = parts[2].to_string();
-        let side = parts[3].to_string();
-        let size_str = parts[4].to_string();
-
-        out.push(TradeCsvEvent {
-            ts,
-            ticker: tk,
-            source,
-            side,
-            size_str,
-        });
     }
 
     out.sort_by_key(|t| t.ts);
@@ -260,6 +313,7 @@ fn compute_snapshot_for(data: &TickerData, tf_secs: u64, window_secs: u64) -> Sn
         return Snapshot::default();
     }
 
+    // ✅ IMPORTANT: this will now move forward, because max_ts updates as we tail
     let target_ts = data.max_ts;
     let window_start = target_ts.saturating_sub(window_secs);
 
@@ -460,7 +514,6 @@ struct AppCore {
     // 4F/4G latch
     last_real_mode: bool,
 
-    #[allow(dead_code)]
     last_reload_ts: u64,
 
     engine: Engine,
@@ -477,6 +530,10 @@ struct AppCore {
 
     settings: SettingsManager,
     signer: SignerManager,
+
+    // ✅ NEW: incremental file tail offsets per ticker
+    ob_offsets: HashMap<String, u64>,
+    tr_offsets: HashMap<String, u64>,
 }
 
 impl AppCore {
@@ -502,6 +559,16 @@ impl AppCore {
         let settings = SettingsManager::new(base_dir.clone());
         let signer = SignerManager::new();
 
+        // initialize offsets to end-of-file so we only read *new* appended data after startup
+        let mut ob_offsets = HashMap::new();
+        let mut tr_offsets = HashMap::new();
+        for tk in &tickers {
+            let ob_path = base_dir.join(format!("orderbook_{tk}.csv"));
+            let tr_path = base_dir.join(format!("trades_{tk}.csv"));
+            ob_offsets.insert(tk.clone(), file_len(&ob_path));
+            tr_offsets.insert(tk.clone(), file_len(&tr_path));
+        }
+
         Self {
             base_dir,
             tickers,
@@ -521,6 +588,8 @@ impl AppCore {
             dom_depth_levels: 20,
             settings,
             signer,
+            ob_offsets,
+            tr_offsets,
         }
     }
 
@@ -572,7 +641,16 @@ impl AppCore {
         }
         self.ticker_data = out;
 
-        // if current ticker disappeared, fall back
+        // reset offsets to EOF after reload
+        self.ob_offsets.clear();
+        self.tr_offsets.clear();
+        for tk in &self.tickers {
+            let ob_path = self.base_dir.join(format!("orderbook_{tk}.csv"));
+            let tr_path = self.base_dir.join(format!("trades_{tk}.csv"));
+            self.ob_offsets.insert(tk.clone(), file_len(&ob_path));
+            self.tr_offsets.insert(tk.clone(), file_len(&tr_path));
+        }
+
         if !self.ticker_data.contains_key(&self.current_ticker) {
             if let Some(first) = self.tickers.first() {
                 self.current_ticker = first.clone();
@@ -581,6 +659,87 @@ impl AppCore {
 
         self.snapshot_dirty = true;
         self.last_reload_ts = now_unix();
+    }
+
+    /// ✅ Phase 1 live-feed: tail CSVs incrementally and append new events into memory.
+    /// Returns true if *current ticker* got new data.
+    fn poll_csv_updates(&mut self) -> bool {
+        let mut changed_current = false;
+
+        for tk in &self.tickers {
+            let ob_path = self.base_dir.join(format!("orderbook_{tk}.csv"));
+            let tr_path = self.base_dir.join(format!("trades_{tk}.csv"));
+
+            let ob_off = *self.ob_offsets.get(tk).unwrap_or(&0);
+            let tr_off = *self.tr_offsets.get(tk).unwrap_or(&0);
+
+            let (ob_lines, ob_new_off) = tail_new_lines(&ob_path, ob_off);
+            let (tr_lines, tr_new_off) = tail_new_lines(&tr_path, tr_off);
+
+            if ob_new_off != ob_off {
+                self.ob_offsets.insert(tk.clone(), ob_new_off);
+            }
+            if tr_new_off != tr_off {
+                self.tr_offsets.insert(tk.clone(), tr_new_off);
+            }
+
+            if ob_lines.is_empty() && tr_lines.is_empty() {
+                continue;
+            }
+
+            let td = self.ticker_data.entry(tk.clone()).or_insert_with(|| TickerData {
+                ticker: tk.clone(),
+                ..Default::default()
+            });
+
+            let mut any_new_for_this_ticker = false;
+
+            for line in ob_lines {
+                if let Some(e) = parse_book_line(&line, tk) {
+                    td.min_ts = td.min_ts.min(e.ts);
+                    td.max_ts = td.max_ts.max(e.ts);
+                    td.book_events.push(e);
+                    any_new_for_this_ticker = true;
+                }
+            }
+
+            for line in tr_lines {
+                if let Some(e) = parse_trade_line(&line, tk) {
+                    td.min_ts = td.min_ts.min(e.ts);
+                    td.max_ts = td.max_ts.max(e.ts);
+                    td.trade_events.push(e);
+                    any_new_for_this_ticker = true;
+                }
+            }
+
+            // keep vectors bounded so we don’t grow forever during long runs
+            // (simple cap; we’ll optimize harder in Phase 2)
+            const MAX_BOOK_EVENTS: usize = 250_000;
+            const MAX_TRADE_EVENTS: usize = 50_000;
+
+            if td.book_events.len() > MAX_BOOK_EVENTS {
+                let extra = td.book_events.len() - MAX_BOOK_EVENTS;
+                td.book_events.drain(0..extra);
+            }
+            if td.trade_events.len() > MAX_TRADE_EVENTS {
+                let extra = td.trade_events.len() - MAX_TRADE_EVENTS;
+                td.trade_events.drain(0..extra);
+            }
+
+            // keep sorted by ts (the daemon writes in order, so this is usually already true)
+            td.book_events.sort_by_key(|e| e.ts);
+            td.trade_events.sort_by_key(|e| e.ts);
+
+            if any_new_for_this_ticker && *tk == self.current_ticker {
+                changed_current = true;
+            }
+        }
+
+        if changed_current {
+            self.snapshot_dirty = true;
+        }
+
+        changed_current
     }
 }
 
@@ -720,8 +879,7 @@ fn apply_snapshot_to_ui(
         for (i, c) in slice.iter().enumerate() {
             let x_center = if n <= 1 { 0.5f32 } else { (i as f32 + 0.5) / n as f32 };
 
-            // ✅ IMPORTANT: make candle slots gapless
-            // (your old 0.7 factor guaranteed visible gaps)
+            // gapless candle slots
             let w = 1.0f32 / n as f32;
 
             let open_n = norm_price(c.open);
@@ -790,7 +948,7 @@ fn main() {
     app.set_trade_size(0.01);
     app.set_trade_leverage(5.0);
 
-    // ✅ make sure these UI fields are initialized too
+    // init UI config fields
     app.set_candle_tf_secs(60);
     app.set_candle_window_minutes(60);
     app.set_dom_depth_levels(20);
@@ -806,7 +964,7 @@ fn main() {
     app.set_script_error(SharedString::from(""));
     app.set_receipts(ModelRc::new(VecModel::from(Vec::<Receipt>::new())));
 
-    // Apply persisted settings into UI + init signer view
+    // Apply persisted settings into UI + init signer view + initial snapshot
     {
         let mut core = core_rc.borrow_mut();
         let now = now_unix();
@@ -826,7 +984,6 @@ fn main() {
         let signer_status = signer_status_for_ui(&core.signer, now);
         apply_settings_to_ui(&app, &st, &signer_status, None);
 
-        // sync core -> UI config
         app.set_candle_tf_secs(core.tf_secs as i32);
         app.set_candle_window_minutes((core.window_secs / 60) as i32);
         app.set_dom_depth_levels(core.dom_depth_levels as i32);
@@ -848,7 +1005,7 @@ fn main() {
     let app_weak = app.as_weak();
 
     // -----------------------------------------------------------------------
-    // ✅ TICKER buttons
+    // ✅ Ticker change
     // -----------------------------------------------------------------------
     {
         let app_weak_t = app_weak.clone();
@@ -889,7 +1046,7 @@ fn main() {
     }
 
     // -----------------------------------------------------------------------
-    // ✅ TIME MODE buttons (Local / UTC)
+    // ✅ Time mode
     // -----------------------------------------------------------------------
     {
         let app_weak_tm = app_weak.clone();
@@ -898,7 +1055,6 @@ fn main() {
             if let Some(app) = app_weak_tm.upgrade() {
                 app.set_time_mode(SharedString::from(new_time_mode.to_string()));
 
-                // just re-render text (timestamps & range formatting)
                 let mut core = core_rc_tm.borrow_mut();
                 if let Some((min_ts, max_ts)) = core.ticker_range(&core.current_ticker) {
                     let range_str = format!(
@@ -916,7 +1072,7 @@ fn main() {
     }
 
     // -----------------------------------------------------------------------
-    // ✅ TF buttons (e.g., 60s / 300s)
+    // ✅ TF
     // -----------------------------------------------------------------------
     {
         let app_weak_tf = app_weak.clone();
@@ -941,7 +1097,7 @@ fn main() {
     }
 
     // -----------------------------------------------------------------------
-    // ✅ Window buttons (minutes)
+    // ✅ Window minutes
     // -----------------------------------------------------------------------
     {
         let app_weak_w = app_weak.clone();
@@ -966,7 +1122,7 @@ fn main() {
     }
 
     // -----------------------------------------------------------------------
-    // ✅ DOM depth slider
+    // ✅ DOM depth
     // -----------------------------------------------------------------------
     {
         let app_weak_d = app_weak.clone();
@@ -987,7 +1143,7 @@ fn main() {
     }
 
     // -----------------------------------------------------------------------
-    // ✅ Reload data button
+    // ✅ Reload button
     // -----------------------------------------------------------------------
     {
         let app_weak_r = app_weak.clone();
@@ -1018,7 +1174,7 @@ fn main() {
     }
 
     // -----------------------------------------------------------------------
-    // ✅ Deposit / Withdraw buttons
+    // ✅ Deposit / Withdraw
     // -----------------------------------------------------------------------
     {
         let app_weak_dep = app_weak.clone();
@@ -1031,7 +1187,6 @@ fn main() {
             }
         });
     }
-
     {
         let app_weak_wd = app_weak.clone();
         app.on_withdraw(move |amount| {
@@ -1046,9 +1201,7 @@ fn main() {
     }
 
     // -----------------------------------------------------------------------
-    // ✅ Run script button (minimal, safe)
-    // - provides a few read-only variables into the script
-    // - script may optionally set: signal (string), size (float), comment (string)
+    // ✅ Run script (borrow-safe)
     // -----------------------------------------------------------------------
     {
         let app_weak_sc = app_weak.clone();
@@ -1059,10 +1212,8 @@ fn main() {
 
                 core.script_error.clear();
 
-                // Build a fresh scope locally (NOT core.scope) to avoid borrow conflicts.
                 let mut scope = Scope::new();
 
-                // expose some read-only vars if we have metrics
                 if let Some((_snap, m)) = core.snapshot_for_ui() {
                     scope.push("mid", m.mid);
                     scope.push("spread", m.spread);
@@ -1071,17 +1222,12 @@ fn main() {
                     scope.push("best_ask", m.best_ask);
                 }
 
-                // defaults user can override
                 scope.push("signal", "".to_string());
                 scope.push("size", 0.0f64);
                 scope.push("comment", "".to_string());
 
                 let script = app.get_script_text().to_string();
-
-                // ✅ This is now safe: engine borrowed immutably, scope is LOCAL.
-                let res = core
-                    .engine
-                    .eval_with_scope::<rhai::Dynamic>(&mut scope, &script);
+                let res = core.engine.eval_with_scope::<rhai::Dynamic>(&mut scope, &script);
 
                 match res {
                     Ok(_v) => {
@@ -1110,18 +1256,13 @@ fn main() {
                     }
                 }
 
-                // Optional: keep the last run scope around for debugging / future inspection.
                 core.scope = scope;
             }
         });
     }
 
-
-
-
-
     // -----------------------------------------------------------------------
-    // 4G: REAL toggle requires Mainnet + forces Live + confirmation message
+    // 4G REAL toggle + mode gating (unchanged)
     // -----------------------------------------------------------------------
     {
         let app_weak_r = app_weak.clone();
@@ -1133,7 +1274,6 @@ fn main() {
                 let st = core.settings.state();
                 let is_mainnet = matches!(st.network, Network::Mainnet);
 
-                // deny REAL if not mainnet
                 if enabled && !is_mainnet {
                     app.set_trade_real_mode(false);
                     core.last_real_mode = false;
@@ -1147,7 +1287,6 @@ fn main() {
                 core.last_real_mode = enabled;
 
                 if enabled {
-                    // force Live
                     let mode_now = app.get_mode().to_string();
                     if !mode_now.eq_ignore_ascii_case("live") {
                         app.set_mode(SharedString::from("Live"));
@@ -1163,10 +1302,6 @@ fn main() {
             }
         });
     }
-
-    // -----------------------------------------------------------------------
-    // 4F/4G: Block Replay while REAL is enabled
-    // -----------------------------------------------------------------------
     {
         let app_weak_m = app_weak.clone();
         let core_rc_m = core_rc.clone();
@@ -1188,7 +1323,7 @@ fn main() {
     }
 
     // -----------------------------------------------------------------------
-    // SEND ORDER gating (unchanged from your code)
+    // SEND ORDER (unchanged)
     // -----------------------------------------------------------------------
     {
         let app_weak_send = app_weak.clone();
@@ -1331,7 +1466,9 @@ fn main() {
         });
     }
 
-    // --- Settings callbacks (unchanged from your code) ---
+    // -----------------------------------------------------------------------
+    // Settings callbacks (unchanged)
+    // -----------------------------------------------------------------------
     {
         let app_weak_s = app_weak.clone();
         let core_rc_s = core_rc.clone();
@@ -1509,7 +1646,41 @@ fn main() {
         });
     }
 
-    // Timer: keep current time + session expiry refresh
+    // -----------------------------------------------------------------------
+    // ✅ Phase 1 LIVE REFRESH TIMER (200ms): tail CSVs + re-render current ticker
+    // -----------------------------------------------------------------------
+    let timer_live = Timer::default();
+    {
+        let app_weak_live = app_weak.clone();
+        let core_rc_live = core_rc.clone();
+        timer_live.start(TimerMode::Repeated, Duration::from_millis(200), move || {
+            if let Some(app) = app_weak_live.upgrade() {
+                let mut core = core_rc_live.borrow_mut();
+
+                let changed_current = core.poll_csv_updates();
+                if !changed_current {
+                    return;
+                }
+
+                if let Some((min_ts, max_ts)) = core.ticker_range(&core.current_ticker) {
+                    let range_str = format!(
+                        "Range: {} -> {}",
+                        format_ts_for_ui(&app, min_ts),
+                        format_ts_for_ui(&app, max_ts)
+                    );
+                    app.set_data_range(SharedString::from(range_str));
+                }
+
+                if let Some((snap, metrics)) = core.snapshot_for_ui() {
+                    apply_snapshot_to_ui(&app, &snap, &metrics, core.dom_depth_levels);
+                }
+            }
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Timer: clock + signer expiry refresh (1s)
+    // -----------------------------------------------------------------------
     let timer = Timer::default();
     {
         let app_weak_timer = app_weak.clone();
