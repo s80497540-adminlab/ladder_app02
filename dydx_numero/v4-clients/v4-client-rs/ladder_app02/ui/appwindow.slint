@@ -1,4 +1,4 @@
-import { Button, CheckBox, LineEdit, ListView, TextEdit } from "std-widgets.slint";
+import { Button, CheckBox, ComboBox, LineEdit, ListView, TextEdit } from "std-widgets.slint";
 
 // ---------- Data structs exposed to Rust ----------------------------
 
@@ -14,6 +14,11 @@ export struct Trade {
     side: string,
     size: string,
     is_buy: bool,
+}
+
+export struct TfOption {
+    label: string,
+    secs: int,
 }
 
 export struct CandleRow {
@@ -812,12 +817,30 @@ export component AppWindow inherits Window {
     height: 800px;
     title: "Ladder App 02";
 
+    // TF dropdown backing data ---
+    in-out property <[string]> tf_labels: [
+        "1s","5s","15s","30s","60s",
+        "120s","180s","300s",
+        "10m","15m","30m",
+        "1h","2h","4h","8h",
+        "1d","1w"
+    ];
+
+    in-out property <[int]> tf_seconds: [
+        1,5,15,30,60,
+        120,180,300,
+        600,900,1800,
+        3600,7200,14400,28800,
+        86400,604800
+    ];
+
+    in-out property <int> tf_selected: 4; // default "60s"
+
     // ---- app-wide scroll state ----
     in-out property <float> ui_scroll_x_px: 0.0;
     in-out property <float> ui_scroll_y_px: 0.0;
 
-    // Treat these as "minimum canvas size". If the window is smaller, scrollbars appear.
-    // If the window is larger, content expands to window size and scrollbars disappear.
+    // Treat these as "minimum canvas size"
     in-out property <float> ui_content_w_px: 1800.0;
     in-out property <float> ui_content_h_px: 1050.0;
 
@@ -936,7 +959,6 @@ export component AppWindow inherits Window {
         height: parent.height;
         background: #151821;
 
-        // compute real content size (at least window, at least your configured canvas)
         property <float> viewport_w_px: parent.width / 1px;
         property <float> viewport_h_px: parent.height / 1px;
 
@@ -946,7 +968,6 @@ export component AppWindow inherits Window {
         property <float> max_scroll_x: Math.max(0.0, content_w_px - viewport_w_px);
         property <float> max_scroll_y: Math.max(0.0, content_h_px - viewport_h_px);
 
-        // clamp scroll always
         property <float> sx: Math.max(0.0, Math.min(max_scroll_x, root.ui_scroll_x_px));
         property <float> sy: Math.max(0.0, Math.min(max_scroll_y, root.ui_scroll_y_px));
 
@@ -1061,10 +1082,46 @@ export component AppWindow inherits Window {
                 Button { x: 640px; y: 4px; text: "UTC";   clicked => { root.time_mode_changed("UTC"); } }
 
                 Text { x: 8px; y: 32px; text: "TF / Window:"; color: #aaaaaa; }
-                Button { x: 110px; y: 30px; text: "TF 60s";  clicked => { root.candle_tf_changed(60); } }
-                Button { x: 180px; y: 30px; text: "TF 300s"; clicked => { root.candle_tf_changed(300); } }
-                Button { x: 260px; y: 30px; text: "Win 60m"; clicked => { root.candle_window_changed(60); } }
-                Button { x: 340px; y: 30px; text: "Win 240m"; clicked => { root.candle_window_changed(240); } }
+
+                // TF dropdown (string-based in this Slint std-widgets ComboBox)
+                ComboBox {
+                    x: 110px;
+                    y: 30px;
+                    width: 90px;
+                    height: 20px;
+
+                    model: root.tf_labels;
+
+                    // 'selected' passes a STRING in this version (not an index),
+                    // so we map label -> index, then index -> seconds.
+                    selected(value) => {
+                        let idx =
+                            value == "1s"   ? 0  :
+                            value == "5s"   ? 1  :
+                            value == "15s"  ? 2  :
+                            value == "30s"  ? 3  :
+                            value == "60s"  ? 4  :
+                            value == "120s" ? 5  :
+                            value == "180s" ? 6  :
+                            value == "300s" ? 7  :
+                            value == "10m"  ? 8  :
+                            value == "15m"  ? 9  :
+                            value == "30m"  ? 10 :
+                            value == "1h"   ? 11 :
+                            value == "2h"   ? 12 :
+                            value == "4h"   ? 13 :
+                            value == "8h"   ? 14 :
+                            value == "1d"   ? 15 :
+                            value == "1w"   ? 16 :
+                            4; // fallback to 60s
+
+                        root.tf_selected = idx;
+                        root.candle_tf_changed(root.tf_seconds[idx]);
+                    }
+                }
+
+                Button { x: 230px; y: 30px; text: "Win 60m";  clicked => { root.candle_window_changed(60); } }
+                Button { x: 310px; y: 30px; text: "Win 240m"; clicked => { root.candle_window_changed(240); } }
 
                 Text { x: 450px; y: 32px; text: "Panels:"; color: #aaaaaa; }
                 CheckBox { x: 510px; y: 30px; text: "Depth";  checked <=> show_depth; }
