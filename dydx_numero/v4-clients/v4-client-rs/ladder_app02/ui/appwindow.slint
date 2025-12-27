@@ -547,7 +547,7 @@ component CandleChart inherits Rectangle {
             opacity: 0.95;
         }
 
-        // BODY FILLS THE WHOLE SLOT (THIS is the change that makes candles look flush)
+        // BODY FILLS THE WHOLE SLOT
         Rectangle {
             x: 0px;
             width: parent.width;
@@ -836,11 +836,16 @@ export component AppWindow inherits Window {
 
     in-out property <int> tf_selected: 4; // default "60s"
 
+    // Persisted panel positions (for phase-1 persistence)
+    in-out property <length> orderbook_x: 16px;
+    in-out property <length> orderbook_y: 80px;
+    in-out property <length> settings_x: 392px;
+    in-out property <length> settings_y: 80px;
+
     // ---- app-wide scroll state ----
     in-out property <float> ui_scroll_x_px: 0.0;
     in-out property <float> ui_scroll_y_px: 0.0;
 
-    // Treat these as "minimum canvas size"
     in-out property <float> ui_content_w_px: 1800.0;
     in-out property <float> ui_content_h_px: 1050.0;
 
@@ -971,14 +976,12 @@ export component AppWindow inherits Window {
         property <float> sx: Math.max(0.0, Math.min(max_scroll_x, root.ui_scroll_x_px));
         property <float> sy: Math.max(0.0, Math.min(max_scroll_y, root.ui_scroll_y_px));
 
-        // App-wide wheel scrolling (works everywhere EXCEPT on CandleChart, because CandleChart consumes wheel)
         TouchArea {
             x: 0px;
             y: 0px;
             width: parent.width;
             height: parent.height;
 
-            // IMPORTANT: do NOT swallow clicks; only handle wheel scrolling here
             pointer-event(event) => { EventResult.reject }
 
             scroll-event(event) => {
@@ -996,15 +999,12 @@ export component AppWindow inherits Window {
             }
         }
 
-        // ---------------- WORKSPACE (everything scrolls) ----------------
         Rectangle {
             x: -(sx * 1px);
             y: -(sy * 1px);
             width: content_w_px * 1px;
             height: content_h_px * 1px;
             background: #151821;
-
-            // =================== YOUR ORIGINAL UI START ===================
 
             Rectangle {
                 x: 0px;
@@ -1491,8 +1491,8 @@ export component AppWindow inherits Window {
             }
 
             OrderbookPanel {
-                x: 16px;
-                y: 80px;
+                x <=> root.orderbook_x;
+                y <=> root.orderbook_y;
                 width: 360px;
                 height: 260px;
                 title: "Orderbook";
@@ -1504,8 +1504,8 @@ export component AppWindow inherits Window {
             }
 
             SettingsPanel {
-                x: 392px;
-                y: 80px;
+                x <=> root.settings_x;
+                y <=> root.settings_y;
                 width: 380px;
                 height: 320px;
 
@@ -1543,11 +1543,7 @@ export component AppWindow inherits Window {
                 imbalance: root.imbalance;
                 visible: root.show_depth;
             }
-
-            // =================== YOUR ORIGINAL UI END ===================
         }
-
-        // ---------------- SCROLLBARS (viewport) ----------------
 
         // Horizontal scrollbar
         hscroll := Rectangle {
@@ -1647,7 +1643,7 @@ export component AppWindow inherits Window {
             }
         }
 
-        // --- popout drawn LAST so it sits on top, and NOT scrolled ---
+        // Popout drawn LAST so it sits on top, and NOT scrolled
         ChartPopoutPanel {
             open <=> root.chart_popout_open;
             px <=> root.chart_popout_x;
