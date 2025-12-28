@@ -1,10 +1,14 @@
+// ladder_app02/src/persist.rs
+
 use anyhow::{Context, Result};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
+use slint::{ComponentHandle, PhysicalSize, Timer, TimerMode};
 use std::{
     fs,
     io::Write,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -90,7 +94,7 @@ impl Default for AppConfig {
             show_trades: true,
             show_volume: true,
 
-            dom_depth_levels: 15,
+            dom_depth_levels: 20,
 
             ui_scroll_x_px: 0.0,
             ui_scroll_y_px: 0.0,
@@ -127,47 +131,48 @@ impl Default for AppConfig {
     }
 }
 
-pub struct Persistence {
+struct Inner {
     path: PathBuf,
-    last_saved_json: String,
-    dirty: std::sync::atomic::AtomicBool,
+    last_saved_json: Mutex<String>,
+}
+
+#[derive(Clone)]
+pub struct Persistence {
+    inner: Arc<Inner>,
 }
 
 impl Persistence {
     pub fn new() -> Result<Self> {
         let path = default_config_path()?;
         Ok(Self {
-            path,
-            last_saved_json: String::new(),
-            dirty: std::sync::atomic::AtomicBool::new(true),
+            inner: Arc::new(Inner {
+                path,
+                last_saved_json: Mutex::new(String::new()),
+            }),
         })
     }
 
     pub fn config_path(&self) -> &Path {
-        &self.path
-    }
-
-    pub fn mark_dirty(&self) {
-        self.dirty
-            .store(true, std::sync::atomic::Ordering::Relaxed);
+        &self.inner.path
     }
 
     pub fn load(&self) -> AppConfig {
-        match read_json::<AppConfig>(&self.path) {
+        match read_json::<AppConfig>(&self.inner.path) {
             Ok(mut cfg) => {
-                // migrations hook
+                // simple migration hook
                 if cfg.version == 0 {
                     cfg.version = CONFIG_VERSION;
                 }
                 cfg
             }
             Err(err) => {
-                archive_corrupt(&self.path, &err);
+                archive_corrupt(&self.inner.path, &err);
                 AppConfig::default()
             }
         }
     }
 
+    /// Apply loaded config into UI properties + window size.
     pub fn apply_to_ui(cfg: &AppConfig, ui: &AppWindow) {
         ui.set_current_ticker(cfg.current_ticker.clone().into());
         ui.set_mode(cfg.mode.clone().into());
@@ -206,18 +211,21 @@ impl Persistence {
         ui.set_settings_auto_sign(cfg.settings_auto_sign);
         ui.set_settings_session_ttl_minutes(cfg.settings_session_ttl_minutes.clone().into());
 
-        // panel positions (requires new slint props)
         ui.set_orderbook_x((cfg.orderbook_x_px).into());
         ui.set_orderbook_y((cfg.orderbook_y_px).into());
         ui.set_settings_x((cfg.settings_x_px).into());
         ui.set_settings_y((cfg.settings_y_px).into());
 
-        // window geometry
-        ui.set_width((cfg.window_width_px).into());
-        ui.set_height((cfg.window_height_px).into());
+        // Window geometry via Window API (Slint doesn't generate set_width/set_height on your AppWindow)
+        let w: u32 = cfg.window_width_px.max(400.0) as u32;
+        let h: u32 = cfg.window_height_px.max(300.0) as u32;
+        ui.window().set_size(PhysicalSize::new(w, h));
     }
 
+    /// Snapshot UI properties into config. (Runs on UI thread.)
     pub fn snapshot_from_ui(ui: &AppWindow) -> AppConfig {
+        let size = ui.window().size();
+
         AppConfig {
             version: CONFIG_VERSION,
 
@@ -263,101 +271,79 @@ impl Persistence {
             settings_x_px: len_to_px(ui.get_settings_x()),
             settings_y_px: len_to_px(ui.get_settings_y()),
 
-            window_width_px: len_to_px(ui.get_width()),
-            window_height_px: len_to_px(ui.get_height()),
+            window_width_px: size.width as f32,
+            window_height_px: size.height as f32,
         }
     }
 
-    pub fn save_now(&mut self, cfg: &AppConfig) -> Result<()> {
-        fs::create_dir_all(self.path.parent().unwrap())
-            .with_context(|| format!("create config dir {:?}", self.path.parent()))?;
+    /// Save if content changed (prevents hammering disk)
+    pub fn save_now(&self, cfg: &AppConfig) -> Result<()> {
+        let path = &self.inner.path;
+
+        let parent = path.parent().context("config path has no parent")?;
+        fs::create_dir_all(parent).with_context(|| format!("create config dir {:?}", parent))?;
 
         let json = serde_json::to_string_pretty(cfg)?;
-        if json == self.last_saved_json {
-            self.dirty
-                .store(false, std::sync::atomic::Ordering::Relaxed);
-            return Ok(());
+
+        {
+            let mut last = self.inner.last_saved_json.lock().unwrap();
+            if *last == json {
+                return Ok(());
+            }
+            *last = json.clone();
         }
 
         // backup previous
-        if self.path.exists() {
-            let backup = self.path.with_extension("json.bak");
-            let _ = fs::copy(&self.path, backup);
+        if path.exists() {
+            let backup = path.with_extension("json.bak");
+            let _ = fs::copy(path, backup);
         }
 
-        atomic_write(&self.path, json.as_bytes())?;
-        self.last_saved_json = json;
-        self.dirty
-            .store(false, std::sync::atomic::Ordering::Relaxed);
+        atomic_write(path, json.as_bytes())?;
         Ok(())
     }
 
-    /// Autosave loop + close-save + Ctrl+C save
-    pub fn start_autosave(mut self, ui_weak: slint::Weak<AppWindow>) -> Result<()> {
-        let mut this = self;
-
-        // Save on window close request (best-effort)
+    /// Solid persistence:
+    /// - Apply config on startup (you do this in main)
+    /// - Autosave on a UI-thread timer (safe)
+    /// - Save on close request (best effort)
+    pub fn start_autosave(self, ui_weak: slint::Weak<AppWindow>) -> Result<()> {
+        // Save on close request
         if let Some(ui) = ui_weak.upgrade() {
             let ui_weak2 = ui_weak.clone();
-            let path_clone = this.path.clone();
+            let this = self.clone();
             ui.window().on_close_requested(move || {
                 if let Some(ui) = ui_weak2.upgrade() {
                     let cfg = Persistence::snapshot_from_ui(&ui);
-                    let _ = fs::create_dir_all(path_clone.parent().unwrap());
-                    let _ = atomic_write(
-                        &path_clone,
-                        serde_json::to_string_pretty(&cfg).unwrap().as_bytes(),
-                    );
+                    let _ = this.save_now(&cfg);
                 }
-                slint::CloseRequestResponse::Close
+                // Slint 1.14.x uses HideWindow here
+                slint::CloseRequestResponse::HideWindow
             });
         }
 
-        // Ctrl+C save (nice for dev)
+        // Autosave every 500ms on UI thread (safe; no background threads touching UI)
+        let timer = Timer::default();
         {
-            let ui_weak = ui_weak.clone();
-            let path = this.path.clone();
-            let _ = ctrlc::set_handler(move || {
+            let this = self.clone();
+            timer.start(TimerMode::Repeated, Duration::from_millis(500), move || {
                 if let Some(ui) = ui_weak.upgrade() {
                     let cfg = Persistence::snapshot_from_ui(&ui);
-                    let _ = fs::create_dir_all(path.parent().unwrap());
-                    let _ = atomic_write(&path, serde_json::to_string_pretty(&cfg).unwrap().as_bytes());
+                    let _ = this.save_now(&cfg);
                 }
-                std::process::exit(0);
             });
         }
 
-        // Background autosave thread
-        std::thread::spawn(move || {
-            let tick = Duration::from_millis(500);
-            loop {
-                std::thread::sleep(tick);
-
-                if !this
-                    .dirty
-                    .load(std::sync::atomic::Ordering::Relaxed)
-                {
-                    continue;
-                }
-
-                let Some(ui) = ui_weak.upgrade() else {
-                    break;
-                };
-
-                let cfg = Persistence::snapshot_from_ui(&ui);
-                if let Err(e) = this.save_now(&cfg) {
-                    eprintln!("autosave error: {e:?}");
-                }
-            }
-        });
+        // Keep timer alive forever (otherwise it stops when dropped)
+        std::mem::forget(timer);
 
         Ok(())
     }
 }
 
 fn default_config_path() -> Result<PathBuf> {
-    let proj = ProjectDirs::from("com", "ladder", "ladder_app02")
-        .context("ProjectDirs::from returned None")?;
+    let proj =
+        ProjectDirs::from("com", "ladder", "ladder_app02").context("ProjectDirs::from returned None")?;
     Ok(proj.config_dir().join("config.json"))
 }
 
@@ -399,7 +385,7 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
 }
 
 /// Convert Slint length-like values to px f32.
-/// This is intentionally generic because Slint’s generated type differs across versions.
+/// Slint’s generated "length" type implements Into<f32> in your setup, so we keep it generic.
 fn len_to_px<L: Into<f32>>(l: L) -> f32 {
     l.into()
 }
