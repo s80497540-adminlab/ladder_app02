@@ -1,12 +1,16 @@
 mod candle_agg;
 mod settings;
 mod signer;
+mod persist;
+
+use persist::Persistence;
 
 slint::include_modules!();
 
 use crate::candle_agg::{Candle, CandleAgg};
 use crate::settings::{Network, SettingsManager};
 use crate::signer::{SignRequest, SignerError, SignerManager};
+use anyhow::Result;
 
 use std::cell::RefCell;
 use std::cmp::{max, min};
@@ -928,43 +932,94 @@ fn apply_snapshot_to_ui(
     app.set_last_move(SharedString::from(&last_move_str));
 }
 
-fn main() {
+fn tf_index_to_secs(idx: i32) -> u64 {
+    match idx {
+        0 => 1,
+        1 => 5,
+        2 => 15,
+        3 => 30,
+        4 => 60,
+        5 => 120,
+        6 => 180,
+        7 => 300,
+        8 => 600,
+        9 => 900,
+        10 => 1800,
+        11 => 3600,
+        12 => 7200,
+        13 => 14400,
+        14 => 28800,
+        15 => 86400,
+        16 => 604800,
+        _ => 60,
+    }
+}
+
+fn main() -> anyhow::Result<()> {
+    // -----------------------------
+    // 1) Persistence boot (LOAD)
+    // -----------------------------
+    let persistence = Persistence::new()?;
+    println!("CONFIG_PATH = {:?}", persistence.config_path());
+    let cfg = persistence.load();
+
+    // -----------------------------
+    // 2) Core boot (apply persisted values that affect Rust logic)
+    // -----------------------------
     let base_dir = PathBuf::from("data");
     let tickers = vec!["ETH-USD".to_string(), "BTC-USD".to_string(), "SOL-USD".to_string()];
 
-    let core = AppCore::new(base_dir.clone(), tickers.clone());
+    let mut core = AppCore::new(base_dir.clone(), tickers.clone());
+
+    // Apply persisted config into Rust core so charts/range actually use it
+    let saved_ticker = cfg.current_ticker.clone();
+    core.current_ticker = if tickers.iter().any(|t| t == &saved_ticker) {
+        saved_ticker
+    } else {
+        tickers.first().cloned().unwrap_or_else(|| "ETH-USD".to_string())
+    };
+
+    core.tf_secs = tf_index_to_secs(cfg.tf_selected);
+    core.window_secs = (cfg.candle_window_minutes.max(1) as u64) * 60;
+    core.dom_depth_levels = (cfg.dom_depth_levels.max(1) as usize).min(50);
+    core.snapshot_dirty = true;
+
     let core_rc = Rc::new(RefCell::new(core));
 
-    let app = AppWindow::new().unwrap();
+    // -----------------------------
+    // 3) Create ONE window + apply persisted UI state
+    // -----------------------------
+    let app = AppWindow::new()?;
+    Persistence::apply_to_ui(&cfg, &app);
 
-    // UI defaults
-    app.set_mode(SharedString::from("Live"));
-    app.set_time_mode(SharedString::from("Local"));
-    app.set_show_depth(true);
-    app.set_show_ladders(true);
-    app.set_show_trades(true);
-    app.set_show_volume(true);
+    // Non-persisted defaults (safe)
+    app.set_show_ladders(true); // not in config yet
+
     app.set_trade_side(SharedString::from("Buy"));
     app.set_trade_size(0.01);
     app.set_trade_leverage(5.0);
 
-    // init UI config fields
-    app.set_candle_tf_secs(60);
-    app.set_candle_window_minutes(60);
-    app.set_dom_depth_levels(20);
-
-    // REAL trading toggle default OFF
+    // Keep REAL off by default on startup (safer)
     app.set_trade_real_mode(false);
 
+    // Balances not persisted right now
     app.set_balance_usdc(1000.0);
     app.set_balance_pnl(0.0);
+
     app.set_candle_midline(0.5);
     app.set_last_move(SharedString::from("flat"));
     app.set_order_message(SharedString::from(""));
     app.set_script_error(SharedString::from(""));
     app.set_receipts(ModelRc::new(VecModel::from(Vec::<Receipt>::new())));
 
-    // Apply persisted settings into UI + init signer view + initial snapshot
+    // -----------------------------
+    // 4) Start autosave (SAVE)
+    // -----------------------------
+    persistence.start_autosave(app.as_weak())?;
+
+    // -----------------------------
+    // 5) Your existing wiring (unchanged, but uses the ONE `app`)
+    // -----------------------------
     {
         let mut core = core_rc.borrow_mut();
         let now = now_unix();
@@ -984,6 +1039,7 @@ fn main() {
         let signer_status = signer_status_for_ui(&core.signer, now);
         apply_settings_to_ui(&app, &st, &signer_status, None);
 
+        // Keep UI in sync with core values (core values now come from persisted cfg)
         app.set_candle_tf_secs(core.tf_secs as i32);
         app.set_candle_window_minutes((core.window_secs / 60) as i32);
         app.set_dom_depth_levels(core.dom_depth_levels as i32);
@@ -1647,7 +1703,7 @@ fn main() {
     }
 
     // -----------------------------------------------------------------------
-    // ✅ Phase 1 LIVE REFRESH TIMER (200ms): tail CSVs + re-render current ticker
+    // ✅ Phase 1 LIVE REFRESH TIMER (200ms)
     // -----------------------------------------------------------------------
     let timer_live = Timer::default();
     {
@@ -1701,5 +1757,6 @@ fn main() {
         });
     }
 
-    app.run().unwrap();
+    app.run()?;
+    Ok(())
 }
