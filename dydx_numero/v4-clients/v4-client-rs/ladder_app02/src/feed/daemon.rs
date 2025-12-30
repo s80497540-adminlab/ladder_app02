@@ -2,7 +2,7 @@ use crate::app::{AppEvent, FeedEvent};
 use crate::feed_shared::{self, BookTopRecord, SnapshotState, TradeRecord};
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
