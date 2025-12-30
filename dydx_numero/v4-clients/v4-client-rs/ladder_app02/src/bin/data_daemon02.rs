@@ -37,7 +37,7 @@ async fn main() -> Result<()> {
     // This avoids the runtime panic that occurs when no default provider is set.
     ring::default_provider()
         .install_default()
-        .context("install rustls ring crypto provider")?;
+        .map_err(|err| anyhow!("install rustls ring crypto provider: {err:?}"))?;
 
     println!("[data_daemon02] starting, writing to ./data");
     create_dir_all(feed_shared::DATA_DIR)?;
