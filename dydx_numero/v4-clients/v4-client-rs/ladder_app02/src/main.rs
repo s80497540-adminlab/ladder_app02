@@ -6,6 +6,7 @@ mod candle_agg;
 mod persist;
 mod settings;
 mod signer;
+use ladder_app02::feed_shared;
 
 use anyhow::Result;
 use slint::{Timer, TimerMode};
@@ -45,7 +46,11 @@ fn main() -> Result<()> {
     feed::daemon::start_daemon_bridge(tx.clone());
 
     // Dummy feed fallback so the UI stays functional if the daemon is not running yet.
-    feed::dummy::start_dummy_feed(tx.clone());
+    let has_live_cache =
+        feed_shared::snapshot_path().exists() || feed_shared::event_log_path().exists();
+    if !has_live_cache {
+        feed::dummy::start_dummy_feed(tx.clone());
+    }
 
     // --- UI-thread event pump (drain channel, reduce, render) ---
     // This is the key: ALL UI touching happens on UI thread via this timer.
