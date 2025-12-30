@@ -1,4 +1,5 @@
 mod app;
+mod debug_hooks;
 mod exec;
 mod feed;
 
