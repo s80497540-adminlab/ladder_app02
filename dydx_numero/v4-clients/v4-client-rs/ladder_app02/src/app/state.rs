@@ -1,6 +1,8 @@
 use slint::SharedString;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::debug_hooks;
+
 #[derive(Debug, Clone)]
 pub struct ReceiptRow {
     pub ts: String,
@@ -39,7 +41,13 @@ pub struct Metrics {
 
 impl Default for Metrics {
     fn default() -> Self {
-        Self { mid: 0.0, best_bid: 0.0, best_ask: 0.0, spread: 0.0, imbalance: 0.0 }
+        Self {
+            mid: 0.0,
+            best_bid: 0.0,
+            best_ask: 0.0,
+            spread: 0.0,
+            imbalance: 0.0,
+        }
     }
 }
 
@@ -200,6 +208,8 @@ impl AppState {
         self.candle_points.clear();
         self.candle_midline = 0.5;
         self.candle_active_bucket = None;
+
+        debug_hooks::log_candle_reset("explicit reset_candles call");
     }
 
     fn desired_candle_count(&self) -> usize {
@@ -237,13 +247,18 @@ impl AppState {
                     close: mid,
                     volume: 0.0,
                 });
+                debug_hooks::log_mid_bucket(ts_unix, bucket, mid, self.candles.len());
             }
             Some(active) if active == bucket => {
                 // update current candle
                 if let Some(last) = self.candles.last_mut() {
                     last.close = mid;
-                    if mid > last.high { last.high = mid; }
-                    if mid < last.low { last.low = mid; }
+                    if mid > last.high {
+                        last.high = mid;
+                    }
+                    if mid < last.low {
+                        last.low = mid;
+                    }
                 }
             }
             Some(active) if bucket > active => {
@@ -260,6 +275,7 @@ impl AppState {
                         close: prev_close,
                         volume: 0.0,
                     });
+                    debug_hooks::log_candle_gap(active, b);
                     prev_close = prev_close;
                     b += tf;
                 }
@@ -274,6 +290,7 @@ impl AppState {
                     close: mid,
                     volume: 0.0,
                 });
+                debug_hooks::log_mid_bucket(ts_unix, bucket, mid, self.candles.len());
             }
             Some(_) => {
                 // out-of-order tick; ignore for now
@@ -310,6 +327,7 @@ impl AppState {
 
         if let Some(last) = self.candles.last_mut() {
             last.volume += trade_size;
+            debug_hooks::log_candle_volume(ts_unix, trade_size, Some(last.ts.clone()));
         }
 
         let mid_for_line = if self.metrics.mid.is_finite() && self.metrics.mid > 0.0 {
@@ -369,7 +387,11 @@ impl AppState {
                 low: y(c.low),
                 close: y(c.close),
                 is_up: c.close >= c.open,
-                volume: if vmax > 0.0 { (c.volume / vmax).clamp(0.0, 1.0) as f32 } else { 0.0 },
+                volume: if vmax > 0.0 {
+                    (c.volume / vmax).clamp(0.0, 1.0) as f32
+                } else {
+                    0.0
+                },
             })
             .collect();
 
