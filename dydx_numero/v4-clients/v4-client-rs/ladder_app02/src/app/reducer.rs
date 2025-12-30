@@ -194,6 +194,25 @@ fn reduce_feed(state: &mut AppState, ev: FeedEvent) -> bool {
                 return false;
             }
 
+            // Some daemon messages intermittently report one side as zero. Preserve the
+            // last known good price instead of letting the UI fall back to 0.0 (which
+            // produced fake ladders starting at 0 and prevented candles from updating).
+            let best_bid = if best_bid > 0.0 {
+                best_bid
+            } else {
+                state.metrics.best_bid
+            };
+            let best_ask = if best_ask > 0.0 {
+                best_ask
+            } else {
+                state.metrics.best_ask
+            };
+
+            // Still nothing reliable? Skip this tick.
+            if best_bid <= 0.0 || best_ask <= 0.0 {
+                return false;
+            }
+
             state.metrics.best_bid = best_bid;
             state.metrics.best_ask = best_ask;
 
