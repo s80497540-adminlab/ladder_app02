@@ -7,6 +7,7 @@
 use anyhow::{anyhow, Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use ladder_app02::feed_shared::{self, BookTopRecord, SnapshotState, TradeRecord};
+use rustls::crypto::ring;
 use serde_json::{json, Value};
 use std::fs::{create_dir_all, OpenOptions};
 use std::io::Write;
@@ -32,6 +33,12 @@ enum PersistedEvent {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Explicitly install the Ring crypto provider so rustls can build TLS configs.
+    // This avoids the runtime panic that occurs when no default provider is set.
+    ring::default_provider()
+        .install_default()
+        .context("install rustls ring crypto provider")?;
+
     println!("[data_daemon02] starting, writing to ./data");
     create_dir_all(feed_shared::DATA_DIR)?;
 
