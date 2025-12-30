@@ -43,6 +43,32 @@ impl Default for Metrics {
     }
 }
 
+// -------------------- Candles (state-side) --------------------
+
+#[derive(Clone, Debug)]
+pub struct Candle {
+    pub ts: String, // label for the candle start (bucket)
+    pub open: f64,
+    pub high: f64,
+    pub low: f64,
+    pub close: f64,
+    pub volume: f64, // we add trade size into this when available
+}
+
+#[derive(Clone, Debug)]
+pub struct CandlePointState {
+    pub x: f32,
+    pub w: f32,
+    pub open: f32,
+    pub high: f32,
+    pub low: f32,
+    pub close: f32,
+    pub is_up: bool,
+    pub volume: f32, // 0..1
+}
+
+// -------------------- AppState --------------------
+
 #[derive(Debug, Clone)]
 pub struct AppState {
     pub current_ticker: String,
@@ -74,6 +100,14 @@ pub struct AppState {
     pub asks: Vec<BookLevelRow>,
     pub recent_trades: Vec<TradeRow>,
     pub receipts: Vec<ReceiptRow>,
+
+    // Candles for chart + rows
+    pub candles: Vec<Candle>,
+    pub candle_points: Vec<CandlePointState>,
+    pub candle_midline: f32,
+
+    // ✅ Candle builder internal state
+    pub candle_active_bucket: Option<u64>,
 
     pub metrics: Metrics,
 }
@@ -110,6 +144,11 @@ impl Default for AppState {
             recent_trades: Vec::new(),
             receipts: Vec::new(),
 
+            candles: Vec::new(),
+            candle_points: Vec::new(),
+            candle_midline: 0.5,
+            candle_active_bucket: None,
+
             metrics: Metrics::default(),
         }
     }
@@ -117,7 +156,6 @@ impl Default for AppState {
 
 impl AppState {
     pub fn from_ui(ui: &crate::AppWindow) -> Self {
-        // Pull current values out of UI (after persistence apply), to avoid hidden desync.
         Self {
             current_ticker: ui.get_current_ticker().to_string(),
             mode: ui.get_mode().to_string(),
@@ -148,8 +186,199 @@ impl AppState {
             recent_trades: Vec::new(),
             receipts: Vec::new(),
 
+            candles: Vec::new(),
+            candle_points: Vec::new(),
+            candle_midline: 0.5,
+            candle_active_bucket: None,
+
             metrics: Metrics::default(),
         }
+    }
+
+    pub fn reset_candles(&mut self) {
+        self.candles.clear();
+        self.candle_points.clear();
+        self.candle_midline = 0.5;
+        self.candle_active_bucket = None;
+    }
+
+    fn desired_candle_count(&self) -> usize {
+        let tf = self.candle_tf_secs.max(1) as usize;
+        let win = self.candle_window_minutes.max(1) as usize;
+        let n = (win * 60) / tf;
+        n.clamp(30, 600)
+    }
+
+    fn tf_secs_u64(&self) -> u64 {
+        self.candle_tf_secs.max(1) as u64
+    }
+
+    fn bucket_start(ts_unix: u64, tf_secs: u64) -> u64 {
+        (ts_unix / tf_secs) * tf_secs
+    }
+
+    /// ✅ Call this whenever you have a reliable mid + timestamp (BookTop).
+    pub fn on_mid_tick(&mut self, ts_unix: u64, mid: f64) {
+        if !mid.is_finite() || mid <= 0.0 {
+            return;
+        }
+
+        let tf = self.tf_secs_u64();
+        let bucket = Self::bucket_start(ts_unix, tf);
+
+        match self.candle_active_bucket {
+            None => {
+                self.candle_active_bucket = Some(bucket);
+                self.candles.push(Candle {
+                    ts: format!("unix:{bucket}"),
+                    open: mid,
+                    high: mid,
+                    low: mid,
+                    close: mid,
+                    volume: 0.0,
+                });
+            }
+            Some(active) if active == bucket => {
+                // update current candle
+                if let Some(last) = self.candles.last_mut() {
+                    last.close = mid;
+                    if mid > last.high { last.high = mid; }
+                    if mid < last.low { last.low = mid; }
+                }
+            }
+            Some(active) if bucket > active => {
+                // roll forward; fill gaps with flat candles using previous close
+                let mut prev_close = self.candles.last().map(|c| c.close).unwrap_or(mid);
+
+                let mut b = active + tf;
+                while b < bucket {
+                    self.candles.push(Candle {
+                        ts: format!("unix:{b}"),
+                        open: prev_close,
+                        high: prev_close,
+                        low: prev_close,
+                        close: prev_close,
+                        volume: 0.0,
+                    });
+                    prev_close = prev_close;
+                    b += tf;
+                }
+
+                // start new active candle
+                self.candle_active_bucket = Some(bucket);
+                self.candles.push(Candle {
+                    ts: format!("unix:{bucket}"),
+                    open: prev_close,
+                    high: mid.max(prev_close),
+                    low: mid.min(prev_close),
+                    close: mid,
+                    volume: 0.0,
+                });
+            }
+            Some(_) => {
+                // out-of-order tick; ignore for now
+                return;
+            }
+        }
+
+        // trim to window
+        let desired = self.desired_candle_count();
+        if self.candles.len() > desired {
+            let extra = self.candles.len() - desired;
+            self.candles.drain(0..extra);
+        }
+
+        self.rebuild_candle_points(mid);
+    }
+
+    /// ✅ Call this on Trade events to add volume into the most recent candle.
+    pub fn on_trade_volume(&mut self, ts_unix: u64, trade_size: f64) {
+        if trade_size <= 0.0 || !trade_size.is_finite() {
+            return;
+        }
+
+        // Ensure candle exists for this time (uses current mid if available)
+        let mid = if self.metrics.mid.is_finite() && self.metrics.mid > 0.0 {
+            self.metrics.mid
+        } else {
+            self.candles.last().map(|c| c.close).unwrap_or(0.0)
+        };
+
+        if mid > 0.0 {
+            self.on_mid_tick(ts_unix, mid);
+        }
+
+        if let Some(last) = self.candles.last_mut() {
+            last.volume += trade_size;
+        }
+
+        let mid_for_line = if self.metrics.mid.is_finite() && self.metrics.mid > 0.0 {
+            self.metrics.mid
+        } else {
+            self.candles.last().map(|c| c.close).unwrap_or(0.0)
+        };
+
+        if mid_for_line > 0.0 {
+            self.rebuild_candle_points(mid_for_line);
+        }
+    }
+
+    fn rebuild_candle_points(&mut self, mid: f64) {
+        if self.candles.is_empty() {
+            self.candle_points.clear();
+            self.candle_midline = 0.5;
+            return;
+        }
+
+        let mut lo = f64::INFINITY;
+        let mut hi = f64::NEG_INFINITY;
+        let mut vmax: f64 = 0.0; // ✅ explicit type
+
+        for c in &self.candles {
+            lo = lo.min(c.low);
+            hi = hi.max(c.high);
+            vmax = vmax.max(c.volume);
+        }
+
+        // pad
+        let mut span = hi - lo;
+        if !span.is_finite() || span <= 0.0 {
+            span = hi.abs().max(1.0);
+            lo = hi - span;
+        }
+        let pad = span * 0.02;
+        lo -= pad;
+        hi += pad;
+        let span = (hi - lo).max(1e-9);
+
+        // 0 = top, 1 = bottom
+        let y = |price: f64| -> f32 { ((hi - price) / span).clamp(0.0, 1.0) as f32 };
+
+        let n = self.candles.len().max(1);
+        let w = (1.0 / n as f32).clamp(0.001, 1.0);
+
+        self.candle_points = self
+            .candles
+            .iter()
+            .enumerate()
+            .map(|(i, c)| CandlePointState {
+                x: (i as f32 + 0.5) / n as f32,
+                w,
+                open: y(c.open),
+                high: y(c.high),
+                low: y(c.low),
+                close: y(c.close),
+                is_up: c.close >= c.open,
+                volume: if vmax > 0.0 { (c.volume / vmax).clamp(0.0, 1.0) as f32 } else { 0.0 },
+            })
+            .collect();
+
+        let mid_for_line = if mid.is_finite() && mid > 0.0 {
+            mid
+        } else {
+            (hi + lo) * 0.5
+        };
+        self.candle_midline = y(mid_for_line);
     }
 }
 
@@ -162,7 +391,6 @@ pub fn now_unix() -> u64 {
 }
 
 pub fn format_time_basic(now: u64) -> String {
-    // Keep it simple for scaffold; you can swap to chrono/local/utc later
     format!("unix:{now}")
 }
 
