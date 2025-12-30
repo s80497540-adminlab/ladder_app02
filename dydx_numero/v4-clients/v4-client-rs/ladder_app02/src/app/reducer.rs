@@ -1,5 +1,6 @@
 use super::event::*;
 use super::state::*;
+use crate::debug_hooks;
 use std::cmp::min;
 
 pub fn reduce(state: &mut AppState, ev: AppEvent) -> bool {
@@ -16,6 +17,8 @@ fn reduce_ui(state: &mut AppState, ev: UiEvent) -> bool {
         UiEvent::TickerChanged { ticker } => {
             state.current_ticker = ticker;
             state.order_message = "Ticker changed.".to_string();
+
+            debug_hooks::log_candle_reset("ticker changed; dropping cached candles");
 
             // Optional: reset candles when ticker changes in scaffold mode
             state.reset_candles();
@@ -37,6 +40,8 @@ fn reduce_ui(state: &mut AppState, ev: UiEvent) -> bool {
             state.candle_tf_secs = tf_secs.max(1);
             state.order_message = format!("TF set to {}s", state.candle_tf_secs);
 
+            debug_hooks::log_candle_reset("TF changed; resetting candles for new bucket size");
+
             // ✅ NEW API: reset and re-seed on next BookTop tick
             state.reset_candles();
 
@@ -52,6 +57,7 @@ fn reduce_ui(state: &mut AppState, ev: UiEvent) -> bool {
             state.order_message = format!("Window set to {}m", state.candle_window_minutes);
 
             // ✅ NEW API
+            debug_hooks::log_candle_reset("window changed; resetting candle cache");
             state.reset_candles();
             if state.metrics.mid.is_finite() && state.metrics.mid > 0.0 {
                 state.on_mid_tick(now_unix(), state.metrics.mid);
@@ -191,8 +197,14 @@ fn reduce_feed(state: &mut AppState, ev: FeedEvent) -> bool {
             ask_liq,
         } => {
             if !ticker.is_empty() && ticker != state.current_ticker {
+                debug_hooks::log_book_skip(
+                    "ticker_mismatch",
+                    format!("state={} feed={}", state.current_ticker, ticker),
+                );
                 return false;
             }
+
+            debug_hooks::log_book_ingest(ts_unix, &ticker, best_bid, best_ask, bid_liq, ask_liq);
 
             // Some daemon messages intermittently report one side as zero. Preserve the
             // last known good price instead of letting the UI fall back to 0.0 (which
@@ -210,6 +222,13 @@ fn reduce_feed(state: &mut AppState, ev: FeedEvent) -> bool {
 
             // Still nothing reliable? Skip this tick.
             if best_bid <= 0.0 || best_ask <= 0.0 {
+                debug_hooks::log_book_skip(
+                    "invalid_prices",
+                    format!(
+                        "best_bid={} best_ask={} state_bid={} state_ask={}",
+                        best_bid, best_ask, state.metrics.best_bid, state.metrics.best_ask
+                    ),
+                );
                 return false;
             }
 
@@ -234,6 +253,13 @@ fn reduce_feed(state: &mut AppState, ev: FeedEvent) -> bool {
             state.on_mid_tick(ts_unix, state.metrics.mid);
 
             // Build placeholder ladder
+            debug_hooks::log_placeholder_ladder(
+                best_bid,
+                best_ask,
+                state.dom_depth_levels as usize,
+                bid_liq,
+                ask_liq,
+            );
             state.bids = build_fake_side(best_bid, bid_liq, true, state.dom_depth_levels as usize);
             state.asks = build_fake_side(best_ask, ask_liq, false, state.dom_depth_levels as usize);
 
@@ -247,8 +273,14 @@ fn reduce_feed(state: &mut AppState, ev: FeedEvent) -> bool {
             source: _,
         } => {
             if !ticker.is_empty() && ticker != state.current_ticker {
+                debug_hooks::log_trade_skip(
+                    "ticker_mismatch",
+                    format!("state={} feed={}", state.current_ticker, ticker),
+                );
                 return false;
             }
+
+            debug_hooks::log_trade_ingest(ts_unix, &ticker, &side, &size);
 
             let ts = format_time_basic(ts_unix);
             let is_buy = side.to_ascii_lowercase().starts_with('b');
