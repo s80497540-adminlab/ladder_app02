@@ -17,6 +17,7 @@ fn read_snapshot(path: &PathBuf) -> Option<SnapshotState> {
 fn send_book(top: &BookTopRecord, tx: &std::sync::mpsc::Sender<AppEvent>) {
     let _ = tx.send(AppEvent::Feed(FeedEvent::BookTop {
         ts_unix: top.ts_unix,
+        ticker: top.ticker.clone(),
         best_bid: top.best_bid,
         best_ask: top.best_ask,
         bid_liq: top.bid_liq,
@@ -27,6 +28,7 @@ fn send_book(top: &BookTopRecord, tx: &std::sync::mpsc::Sender<AppEvent>) {
 fn send_trade(trade: &TradeRecord, tx: &std::sync::mpsc::Sender<AppEvent>) {
     let _ = tx.send(AppEvent::Feed(FeedEvent::Trade {
         ts_unix: trade.ts_unix,
+        ticker: trade.ticker.clone(),
         side: trade.side.clone(),
         size: trade.size.clone(),
         source: trade.source.clone(),
