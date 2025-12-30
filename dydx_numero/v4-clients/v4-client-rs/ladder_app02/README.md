@@ -33,3 +33,13 @@ This branch adds a 24/7 dYdX data ingestion flow so the UI can hydrate immediate
 
 ## What “create PR” means
 A pull request (PR) is a review bundle of commits. The `make_pr` step in this repo prepares the PR title/body describing the changes so they can be reviewed and merged. After committing your changes locally, run `make_pr` with a concise title/summary to draft the PR message.
+
+## If GitHub shows merge conflicts
+GitHub is flagging conflicts in `src/bin/data_daemon02.rs` and `src/feed/daemon.rs`. That means the base branch changed in those files after this branch was created. To resolve:
+
+1. Fetch the latest default branch (usually `main`) and either rebase or merge it into this branch.
+2. Open the reported files and clear any `<<<<<<<`, `=======`, `>>>>>>>` markers by choosing/merging the correct code paths.
+3. Run `cargo check` (or `cargo test`) to ensure the resolved code compiles.
+4. Commit the conflict fixes and push; GitHub will clear the conflict banner once the branch contains the resolved files.
+
+If you share the current `main` contents of those two files, I can integrate them directly into this branch and push the resolved version for you.
