@@ -16,6 +16,10 @@ fn reduce_ui(state: &mut AppState, ev: UiEvent) -> bool {
         UiEvent::TickerChanged { ticker } => {
             state.current_ticker = ticker;
             state.order_message = "Ticker changed.".to_string();
+
+            // Optional: reset candles when ticker changes in scaffold mode
+            state.reset_candles();
+
             true
         }
         UiEvent::ModeChanged { mode } => {
@@ -32,11 +36,27 @@ fn reduce_ui(state: &mut AppState, ev: UiEvent) -> bool {
         UiEvent::CandleTfChanged { tf_secs } => {
             state.candle_tf_secs = tf_secs.max(1);
             state.order_message = format!("TF set to {}s", state.candle_tf_secs);
+
+            // ✅ NEW API: reset and re-seed on next BookTop tick
+            state.reset_candles();
+
+            // If we already have a mid, seed immediately so chart pops instantly:
+            if state.metrics.mid.is_finite() && state.metrics.mid > 0.0 {
+                state.on_mid_tick(now_unix(), state.metrics.mid);
+            }
+
             true
         }
         UiEvent::CandleWindowChanged { window_min } => {
             state.candle_window_minutes = window_min.max(1);
             state.order_message = format!("Window set to {}m", state.candle_window_minutes);
+
+            // ✅ NEW API
+            state.reset_candles();
+            if state.metrics.mid.is_finite() && state.metrics.mid > 0.0 {
+                state.on_mid_tick(now_unix(), state.metrics.mid);
+            }
+
             true
         }
         UiEvent::DomDepthChanged { depth } => {
@@ -78,7 +98,6 @@ fn reduce_ui(state: &mut AppState, ev: UiEvent) -> bool {
                 return true;
             }
 
-            // Simple phase-2 scaffold: require phrase "ARM"
             if phrase.trim().eq_ignore_ascii_case("ARM") {
                 let now = now_unix();
                 state.trade_real_armed = true;
@@ -103,7 +122,6 @@ fn reduce_ui(state: &mut AppState, ev: UiEvent) -> bool {
         }
 
         UiEvent::SendOrder => {
-            // Phase-2 scaffold: create a receipt via ExecEvent path (we just write it into state here).
             let now = now_unix();
             let ts = format_time_basic(now);
 
@@ -145,7 +163,6 @@ fn reduce_ui(state: &mut AppState, ev: UiEvent) -> bool {
         }
 
         UiEvent::ReloadData => {
-            // In Phase 2 this becomes “resubscribe + snapshot refresh”
             state.order_message = "Reload requested (Phase-2: resubscribe TBD).".to_string();
             true
         }
@@ -159,7 +176,13 @@ fn reduce_ui(state: &mut AppState, ev: UiEvent) -> bool {
 
 fn reduce_feed(state: &mut AppState, ev: FeedEvent) -> bool {
     match ev {
-        FeedEvent::BookTop { best_bid, best_ask, bid_liq, ask_liq } => {
+        FeedEvent::BookTop {
+            ts_unix,
+            best_bid,
+            best_ask,
+            bid_liq,
+            ask_liq,
+        } => {
             state.metrics.best_bid = best_bid;
             state.metrics.best_ask = best_ask;
 
@@ -171,24 +194,43 @@ fn reduce_feed(state: &mut AppState, ev: FeedEvent) -> bool {
                 state.metrics.spread = 0.0;
             }
 
-            state.metrics.imbalance = if ask_liq > 0.0 { (bid_liq / ask_liq).max(0.0) } else { 0.0 };
+            state.metrics.imbalance = if ask_liq > 0.0 {
+                (bid_liq / ask_liq).max(0.0)
+            } else {
+                0.0
+            };
 
-            // Build a tiny top-of-book ladder visualization as placeholder
+            // ✅ NEW candle API: build candles off timestamp-bucketed mid ticks
+            state.on_mid_tick(ts_unix, state.metrics.mid);
+
+            // Build placeholder ladder
             state.bids = build_fake_side(best_bid, bid_liq, true, state.dom_depth_levels as usize);
             state.asks = build_fake_side(best_ask, ask_liq, false, state.dom_depth_levels as usize);
 
             true
         }
-        FeedEvent::Trade { ts_unix, side, size, source: _ } => {
+        FeedEvent::Trade {
+            ts_unix,
+            side,
+            size,
+            source: _,
+        } => {
             let ts = format_time_basic(ts_unix);
             let is_buy = side.to_ascii_lowercase().starts_with('b');
-            state.recent_trades.push(TradeRow { ts, side, size, is_buy });
+            state.recent_trades.push(TradeRow { ts, side: side.clone(), size: size.clone(), is_buy });
 
-            // cap
+            // cap trades
             if state.recent_trades.len() > 60 {
                 let extra = state.recent_trades.len() - 60;
                 state.recent_trades.drain(0..extra);
             }
+
+            // ✅ add volume to candles (best-effort parse)
+            let sz = size.parse::<f64>().unwrap_or(0.0);
+            if sz > 0.0 {
+                state.on_trade_volume(ts_unix, sz);
+            }
+
             true
         }
     }
@@ -197,10 +239,7 @@ fn reduce_feed(state: &mut AppState, ev: FeedEvent) -> bool {
 fn reduce_exec(state: &mut AppState, ev: ExecEvent) -> bool {
     match ev {
         ExecEvent::Receipt { ts, ticker, side, kind, size, status, comment } => {
-            push_receipt(
-                state,
-                ReceiptRow { ts, ticker, side, kind, size, status, comment }
-            );
+            push_receipt(state, ReceiptRow { ts, ticker, side, kind, size, status, comment });
             true
         }
     }
@@ -245,11 +284,7 @@ fn build_fake_side(best: f64, liq: f64, is_bid: bool, depth: usize) -> Vec<BookL
 
     let base_size = (liq / depth as f64).max(0.0001);
     for i in 0..depth {
-        let px = if is_bid {
-            best - (i as f64 * 0.5)
-        } else {
-            best + (i as f64 * 0.5)
-        };
+        let px = if is_bid { best - (i as f64 * 0.5) } else { best + (i as f64 * 0.5) };
         let sz = base_size * (1.0 + (depth - i) as f64 / depth as f64);
         let ratio = ((depth - i) as f32 / depth as f32).clamp(0.0, 1.0);
 

@@ -1,5 +1,5 @@
 use super::state::*;
-use crate::{BookLevel, Receipt, Trade};
+use crate::{BookLevel, CandlePoint, CandleRow, Receipt, Trade};
 use slint::{ModelRc, SharedString, VecModel};
 
 pub fn render(state: &AppState, ui: &crate::AppWindow) {
@@ -73,6 +73,42 @@ pub fn render(state: &AppState, ui: &crate::AppWindow) {
         })
         .collect();
     ui.set_recent_trades(ModelRc::new(VecModel::from(trades)));
+
+    // Candles (rows under the chart)
+    let candle_rows: Vec<CandleRow> = state
+        .candles
+        .iter()
+        .rev()
+        .take(500)
+        .map(|c| CandleRow {
+            ts: SharedString::from(c.ts.clone()),
+            open: SharedString::from(format!("{:.2}", c.open)),
+            high: SharedString::from(format!("{:.2}", c.high)),
+            low: SharedString::from(format!("{:.2}", c.low)),
+            close: SharedString::from(format!("{:.2}", c.close)),
+            volume: SharedString::from(format!("{:.2}", c.volume)),
+        })
+        .collect();
+    ui.set_candles(ModelRc::new(VecModel::from(candle_rows)));
+
+    // Candle points (what CandleChart actually draws)
+    let points: Vec<CandlePoint> = state
+        .candle_points
+        .iter()
+        .map(|p| CandlePoint {
+            x: p.x,
+            w: p.w,
+            open: p.open,
+            high: p.high,
+            low: p.low,
+            close: p.close,
+            is_up: p.is_up,
+            volume: p.volume,
+        })
+        .collect();
+    ui.set_candle_points(ModelRc::new(VecModel::from(points)));
+
+    ui.set_candle_midline(state.candle_midline);
 
     // Receipts
     let receipts: Vec<Receipt> = state

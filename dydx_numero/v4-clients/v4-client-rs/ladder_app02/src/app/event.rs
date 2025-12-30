@@ -29,8 +29,15 @@ pub enum UiEvent {
 
 #[derive(Debug, Clone)]
 pub enum FeedEvent {
-    // Minimal normalized feed events for Phase-2 scaffold:
-    BookTop { best_bid: f64, best_ask: f64, bid_liq: f64, ask_liq: f64 },
+    // ✅ ADD ts_unix here
+    BookTop {
+        ts_unix: u64,
+        best_bid: f64,
+        best_ask: f64,
+        bid_liq: f64,
+        ask_liq: f64,
+    },
+
     Trade { ts_unix: u64, side: String, size: String, source: String },
 }
 
