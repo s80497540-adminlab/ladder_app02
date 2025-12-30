@@ -17,7 +17,7 @@ use tokio::time::sleep;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
-const WS_MAINNET: &str = "wss://api.dydx.exchange/v4/ws";
+const WS_MAINNET: &str = "wss://indexer.dydx.trade/v4/ws";
 const TICKERS: &[&str] = &["ETH-USD", "BTC-USD", "SOL-USD"];
 const MAX_TRADES: usize = 2000;
 const SNAPSHOT_INTERVAL_SECS: u64 = 5;
