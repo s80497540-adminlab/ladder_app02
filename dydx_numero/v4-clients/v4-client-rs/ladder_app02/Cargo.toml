@@ -20,6 +20,8 @@ rhai = "1.19"
 tokio = { version = "1", features = ["full"] }
 rustls = { version = "0.23", features = ["ring"] }
 rand = "0.8"
+futures-util = "0.3"
+tokio-tungstenite = { version = "0.23", features = ["rustls-tls-webpki-roots"] }
 
 # Your existing dYdX client crate (we're not using it yet in this version,
 # but it's fine to leave it here).
