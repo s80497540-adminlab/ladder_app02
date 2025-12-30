@@ -84,7 +84,12 @@ fn reduce_ui(state: &mut AppState, ev: UiEvent) -> bool {
                 state.trade_real_arm_expires_at = None;
                 state.trade_real_arm_status = "NOT ARMED".to_string();
             }
-            state.order_message = if enabled { "REAL enabled (needs ARM)." } else { "REAL disabled." }.to_string();
+            state.order_message = if enabled {
+                "REAL enabled (needs ARM)."
+            } else {
+                "REAL disabled."
+            }
+            .to_string();
             true
         }
 
@@ -168,7 +173,8 @@ fn reduce_ui(state: &mut AppState, ev: UiEvent) -> bool {
         }
 
         UiEvent::RunScript => {
-            state.order_message = "RunScript requested (Phase-2: move to AppEvent flow).".to_string();
+            state.order_message =
+                "RunScript requested (Phase-2: move to AppEvent flow).".to_string();
             true
         }
     }
@@ -178,11 +184,16 @@ fn reduce_feed(state: &mut AppState, ev: FeedEvent) -> bool {
     match ev {
         FeedEvent::BookTop {
             ts_unix,
+            ticker,
             best_bid,
             best_ask,
             bid_liq,
             ask_liq,
         } => {
+            if !ticker.is_empty() && ticker != state.current_ticker {
+                return false;
+            }
+
             state.metrics.best_bid = best_bid;
             state.metrics.best_ask = best_ask;
 
@@ -211,13 +222,23 @@ fn reduce_feed(state: &mut AppState, ev: FeedEvent) -> bool {
         }
         FeedEvent::Trade {
             ts_unix,
+            ticker,
             side,
             size,
             source: _,
         } => {
+            if !ticker.is_empty() && ticker != state.current_ticker {
+                return false;
+            }
+
             let ts = format_time_basic(ts_unix);
             let is_buy = side.to_ascii_lowercase().starts_with('b');
-            state.recent_trades.push(TradeRow { ts, side: side.clone(), size: size.clone(), is_buy });
+            state.recent_trades.push(TradeRow {
+                ts,
+                side: side.clone(),
+                size: size.clone(),
+                is_buy,
+            });
 
             // cap trades
             if state.recent_trades.len() > 60 {
@@ -238,8 +259,27 @@ fn reduce_feed(state: &mut AppState, ev: FeedEvent) -> bool {
 
 fn reduce_exec(state: &mut AppState, ev: ExecEvent) -> bool {
     match ev {
-        ExecEvent::Receipt { ts, ticker, side, kind, size, status, comment } => {
-            push_receipt(state, ReceiptRow { ts, ticker, side, kind, size, status, comment });
+        ExecEvent::Receipt {
+            ts,
+            ticker,
+            side,
+            kind,
+            size,
+            status,
+            comment,
+        } => {
+            push_receipt(
+                state,
+                ReceiptRow {
+                    ts,
+                    ticker,
+                    side,
+                    kind,
+                    size,
+                    status,
+                    comment,
+                },
+            );
             true
         }
     }
@@ -284,7 +324,11 @@ fn build_fake_side(best: f64, liq: f64, is_bid: bool, depth: usize) -> Vec<BookL
 
     let base_size = (liq / depth as f64).max(0.0001);
     for i in 0..depth {
-        let px = if is_bid { best - (i as f64 * 0.5) } else { best + (i as f64 * 0.5) };
+        let px = if is_bid {
+            best - (i as f64 * 0.5)
+        } else {
+            best + (i as f64 * 0.5)
+        };
         let sz = base_size * (1.0 + (depth - i) as f64 / depth as f64);
         let ratio = ((depth - i) as f32 / depth as f32).clamp(0.0, 1.0);
 
