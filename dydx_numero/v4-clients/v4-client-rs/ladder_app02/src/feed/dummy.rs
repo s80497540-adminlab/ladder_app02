@@ -10,6 +10,7 @@ pub fn start_dummy_feed(tx: std::sync::mpsc::Sender<AppEvent>) {
         loop {
             thread::sleep(Duration::from_millis(200));
             n += 1;
+            let ticker = "DUMMY".to_string();
 
             // tiny deterministic “random walk”
             if n % 17 == 0 {
@@ -27,6 +28,7 @@ pub fn start_dummy_feed(tx: std::sync::mpsc::Sender<AppEvent>) {
 
             let _ = tx.send(AppEvent::Feed(FeedEvent::BookTop {
                 ts_unix: ts,
+                ticker: ticker.clone(),
                 best_bid,
                 best_ask,
                 bid_liq,
@@ -40,6 +42,7 @@ pub fn start_dummy_feed(tx: std::sync::mpsc::Sender<AppEvent>) {
 
                 let _ = tx.send(AppEvent::Feed(FeedEvent::Trade {
                     ts_unix: ts,
+                    ticker: ticker.clone(),
                     side,
                     size,
                     source: "dummy".to_string(),
