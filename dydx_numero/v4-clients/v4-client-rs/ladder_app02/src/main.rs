@@ -3,9 +3,9 @@ mod exec;
 mod feed;
 
 mod candle_agg;
+mod persist;
 mod settings;
 mod signer;
-mod persist;
 
 use anyhow::Result;
 use slint::{Timer, TimerMode};
@@ -41,7 +41,10 @@ fn main() -> Result<()> {
         rt.render(); // initial paint
     }
 
-    // Dummy feed so you can verify Phase-2 pipeline instantly
+    // Live feed: tail persisted daemon output so data collected 24/7 is available immediately.
+    feed::daemon::start_daemon_bridge(tx.clone());
+
+    // Dummy feed fallback so the UI stays functional if the daemon is not running yet.
     feed::dummy::start_dummy_feed(tx.clone());
 
     // --- UI-thread event pump (drain channel, reduce, render) ---
