@@ -459,6 +459,7 @@ component MicroDepthPanel inherits Rectangle {
 // ---------- Candlestick chart (zoom + pan + cursor + wheel zoom) ----
 // FIXED: no range loops + flush candles (pixel-edge snapping + 1px overlap)
 component CandleChart inherits Rectangle {
+    in property <bool> show_volume_bars;
     in property <[CandlePoint]> points;
     in property <float> mid_line_y;
     in-out property <float> x_zoom;
@@ -489,6 +490,7 @@ component CandleChart inherits Rectangle {
 
     // Volume bars (gapless via snapped edges)
     for cp in points : Rectangle {
+        visible: root.show_volume_bars && ((x_n + w_n) > -0.2) && ((x_n - w_n) < 1.2);
         property <float> zx: Math.max(0.25, Math.min(20.0, root.x_zoom));
 
         property <float> x_n: 0.5 + (cp.x - 0.5) * zx + root.pan_x;
@@ -503,7 +505,7 @@ component CandleChart inherits Rectangle {
         x: left_px * 1px;
         width: (Math.max(1.0, (right_px - left_px)) + 1.0) * 1px; // +1px overlap kills cracks
 
-        visible: (x_n + w_n) > -0.2 && (x_n - w_n) < 1.2;
+        //visible: (x_n + w_n) > -0.2 && (x_n - w_n) < 1.2;
 
         y: parent.height - Math.max(1px, cp.volume * parent.height * 0.25);
         height: Math.max(1px, cp.volume * parent.height * 0.25);
@@ -1390,7 +1392,7 @@ export component AppWindow inherits Window {
                     cursor_x <=> root.chart_cursor_x;
                     cursor_y <=> root.chart_cursor_y;
 
-                    visible: root.show_volume;
+                    show_volume_bars: root.show_volume;
                 }
 
                 ListView {
