@@ -33,11 +33,7 @@ enum PersistedEvent {
 #[tokio::main]
 async fn main() -> Result<()> {
     println!("[data_daemon02] starting, writing to ./data");
-    // Rustls 0.23 requires a process-wide crypto provider. Opt into the ring
-    // backend explicitly so the websocket handshake can succeed.
-    rustls::crypto::ring::default_provider()
-        .install_default()
-        .map_err(|err| anyhow!("failed to install rustls ring provider: {err:?}"))?;
+    install_rustls_provider()?;
 
     create_dir_all(feed_shared::DATA_DIR)?;
 
@@ -297,4 +293,14 @@ fn now_unix() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_else(|_| Duration::from_secs(0))
         .as_secs()
+}
+
+fn install_rustls_provider() -> Result<()> {
+    // Rustls 0.23 requires a process-wide crypto provider. Opt into the ring
+    // backend explicitly so the websocket handshake can succeed. If another
+    // part of the process already installed a provider, keep running.
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .or_else(|_| Ok(()))
+        .map_err(|err| anyhow!("failed to install rustls ring provider: {err:?}"))
 }
