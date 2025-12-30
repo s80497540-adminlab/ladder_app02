@@ -1,14 +1,14 @@
 use crate::app::{AppEvent, FeedEvent};
-use ladder_app02::feed_shared::{self, BookTopRecord, SnapshotState, TradeRecord};
+use crate::feed_shared::{self, BookTopRecord, SnapshotState, TradeRecord};
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 
 const MAX_BOOTSTRAP_TRADES: usize = 500;
 
-fn read_snapshot(path: &PathBuf) -> Option<SnapshotState> {
+fn read_snapshot(path: &Path) -> Option<SnapshotState> {
     std::fs::read_to_string(path)
         .ok()
         .and_then(|s| serde_json::from_str::<SnapshotState>(&s).ok())
