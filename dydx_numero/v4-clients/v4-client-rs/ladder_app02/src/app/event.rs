@@ -32,18 +32,33 @@ pub enum FeedEvent {
     // ✅ ADD ts_unix here
     BookTop {
         ts_unix: u64,
+        ticker: String,
         best_bid: f64,
         best_ask: f64,
         bid_liq: f64,
         ask_liq: f64,
     },
 
-    Trade { ts_unix: u64, side: String, size: String, source: String },
+    Trade {
+        ts_unix: u64,
+        ticker: String,
+        side: String,
+        size: String,
+        source: String,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub enum ExecEvent {
-    Receipt { ts: String, ticker: String, side: String, kind: String, size: String, status: String, comment: String },
+    Receipt {
+        ts: String,
+        ticker: String,
+        side: String,
+        kind: String,
+        size: String,
+        status: String,
+        comment: String,
+    },
 }
 
 #[derive(Debug, Clone)]
