@@ -12,7 +12,7 @@ fn logging_enabled() -> bool {
     *ENABLED.get_or_init(|| {
         std::env::var("LADDER_DEBUG_HOOKS")
             .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
-            .unwrap_or(true)
+            .unwrap_or(false)
     })
 }
 

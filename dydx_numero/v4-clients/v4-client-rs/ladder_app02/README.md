@@ -31,5 +31,9 @@ This branch adds a 24/7 dYdX data ingestion flow so the UI can hydrate immediate
 2. Launch the app normally (e.g., `cargo run -p ladder_app02`). On startup it loads cached snapshots/logs so the ladder and charts populate immediately, then continues streaming fresh updates.
 3. If the daemon is not available, the UI automatically falls back to the built-in dummy feed so the app still renders.
 
+## Debug logging
+- The UI's internal feed bridge writes verbose diagnostics only when `LADDER_DEBUG_HOOKS` is set (e.g., `LADDER_DEBUG_HOOKS=1 cargo run -p ladder_app02`).
+- By default the variable is unset, so production runs stay quiet and only log to `data/debug_hooks.log` when explicitly enabled.
+
 ## What “create PR” means
 A pull request (PR) is a review bundle of commits. The `make_pr` step in this repo prepares the PR title/body describing the changes so they can be reviewed and merged. After committing your changes locally, run `make_pr` with a concise title/summary to draft the PR message.
