@@ -43,3 +43,6 @@ GitHub is flagging conflicts in `src/bin/data_daemon02.rs` and `src/feed/daemon.
 4. Commit the conflict fixes and push; GitHub will clear the conflict banner once the branch contains the resolved files.
 
 If you share the current `main` contents of those two files, I can integrate them directly into this branch and push the resolved version for you.
+
+## Testing status
+- `cargo check` fails in the container because crates.io index downloads are blocked (HTTP 403). Run `cargo check` locally where network access is available to validate the build.
