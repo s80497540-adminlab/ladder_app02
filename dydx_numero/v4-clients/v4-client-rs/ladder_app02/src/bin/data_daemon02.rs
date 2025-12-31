@@ -249,26 +249,42 @@ fn parse_side(levels: &[Value]) -> (f64, f64) {
     let mut total = 0.0;
 
     for level in levels.iter() {
-        if let Some(arr) = level.as_array() {
+        // Handle both array format ([price, size]) and object format ({"price": "...", "size": "..."}).
+        let (price_opt, size_opt) = if let Some(arr) = level.as_array() {
             if arr.len() >= 2 {
-                let price = arr[0]
-                    .as_str()
-                    .and_then(|s| s.parse::<f64>().ok())
-                    .unwrap_or(0.0);
-                let size = arr[1]
-                    .as_str()
-                    .and_then(|s| s.parse::<f64>().ok())
-                    .unwrap_or(0.0);
-
-                if best == 0.0 {
-                    best = price;
-                }
-                total += size;
+                (parse_num(&arr[0]), parse_num(&arr[1]))
+            } else {
+                (None, None)
             }
+        } else if let Some(obj) = level.as_object() {
+            (
+                obj.get("price").and_then(parse_num),
+                obj.get("size").and_then(parse_num),
+            )
+        } else {
+            (None, None)
+        };
+
+        let price = price_opt.unwrap_or(0.0);
+        let size = size_opt.unwrap_or(0.0);
+
+        if price > 0.0 && best == 0.0 {
+            best = price;
+        }
+        if size > 0.0 {
+            total += size;
         }
     }
 
     (best, total)
+}
+
+fn parse_num(v: &Value) -> Option<f64> {
+    match v {
+        Value::Number(num) => num.as_f64(),
+        Value::String(s) => s.parse::<f64>().ok(),
+        _ => None,
+    }
 }
 
 fn persist_event(log_file: &mut std::fs::File, evt: &PersistedEvent) -> Result<()> {
