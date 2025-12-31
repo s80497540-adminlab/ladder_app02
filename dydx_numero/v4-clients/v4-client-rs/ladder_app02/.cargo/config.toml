@@ -1,0 +1,11 @@
+[net]
+# Force Cargo to use the Git-based registry instead of the newer HTTP sparse protocol
+git-fetch-with-cli = true
+retry = 3
+
+[registries.crates-io]
+protocol = "git"
+
+[http]
+# Disabling revoke check helps if the proxy intercepts SSL certificates
+check-revoke = false
