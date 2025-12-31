@@ -4,8 +4,13 @@ git-fetch-with-cli = true
 retry = 3
 
 [registries.crates-io]
-protocol = "git"
+protocol = "sparse"
 
 [http]
 # Disabling revoke check helps if the proxy intercepts SSL certificates
+proxy = ""
 check-revoke = false
+
+[https]
+proxy = ""
+
