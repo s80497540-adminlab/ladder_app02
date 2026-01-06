@@ -1,9 +1,16 @@
+use super::state::MidTick;
+
 #[derive(Debug, Clone)]
 pub enum AppEvent {
     Ui(UiEvent),
     Feed(FeedEvent),
     Exec(ExecEvent),
     Timer(TimerEvent),
+    HistoryLoaded {
+        ticker: String,
+        ticks: Vec<MidTick>,
+        full: bool,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -15,6 +22,8 @@ pub enum UiEvent {
     CandleTfChanged { tf_secs: i32 },
     CandleWindowChanged { window_min: i32 },
     DomDepthChanged { depth: i32 },
+    RenderModeChanged { full: bool },
+    HistoryValveChanged { open: bool },
 
     SendOrder,
     ReloadData,

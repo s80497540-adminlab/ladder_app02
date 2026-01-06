@@ -58,17 +58,41 @@ fn main() -> Result<()> {
     let pump = Timer::default();
     {
         let runtime = runtime.clone();
+        let history_tx = tx.clone();
         pump.start(TimerMode::Repeated, Duration::from_millis(16), move || {
             // Drain events quickly
             let mut any = false;
             while let Ok(ev) = rx.try_recv() {
                 any = true;
+                if let app::AppEvent::Ui(app::UiEvent::TickerChanged { ticker }) = &ev {
+                    let rt = runtime.borrow();
+                    if rt.state.history_valve_open {
+                        let full = rt.state.render_all_candles;
+                        spawn_history_load(history_tx.clone(), ticker.clone(), full);
+                    }
+                }
+                if let app::AppEvent::Ui(app::UiEvent::RenderModeChanged { full }) = &ev {
+                    let rt = runtime.borrow();
+                    if rt.state.history_valve_open {
+                        let ticker = rt.state.current_ticker.clone();
+                        spawn_history_load(history_tx.clone(), ticker, *full);
+                    }
+                }
+                if let app::AppEvent::Ui(app::UiEvent::HistoryValveChanged { open }) = &ev {
+                    if *open {
+                        let rt = runtime.borrow();
+                        let ticker = rt.state.current_ticker.clone();
+                        let full = rt.state.render_all_candles;
+                        spawn_history_load(history_tx.clone(), ticker, full);
+                    }
+                }
                 runtime.borrow_mut().handle_event(ev);
             }
 
             // If no external events arrived, still tick once per second for clock/arming TTL, etc.
             // We do this inside the runtime; it rate-limits itself.
             runtime.borrow_mut().tick_if_needed();
+            runtime.borrow_mut().process_pending_history();
 
             if any {
                 runtime.borrow_mut().render_if_dirty();
@@ -80,4 +104,11 @@ fn main() -> Result<()> {
 
     ui.run()?;
     Ok(())
+}
+
+fn spawn_history_load(tx: std::sync::mpsc::Sender<app::AppEvent>, ticker: String, full: bool) {
+    std::thread::spawn(move || {
+        let ticks = app::AppState::read_mid_ticks_for_ticker(&ticker, full);
+        let _ = tx.send(app::AppEvent::HistoryLoaded { ticker, ticks, full });
+    });
 }

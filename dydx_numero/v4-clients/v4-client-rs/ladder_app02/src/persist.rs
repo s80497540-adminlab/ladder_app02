@@ -15,7 +15,7 @@ use std::{
 use crate::AppWindow;
 
 /// Bump when you change config schema.
-const CONFIG_VERSION: u32 = 1;
+const CONFIG_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -98,8 +98,8 @@ impl Default for AppConfig {
 
             ui_scroll_x_px: 0.0,
             ui_scroll_y_px: 0.0,
-            ui_content_w_px: 1800.0,
-            ui_content_h_px: 1050.0,
+            ui_content_w_px: 2200.0,
+            ui_content_h_px: 1400.0,
 
             chart_x_zoom: 1.0,
             chart_y_zoom: 1.0,
@@ -107,7 +107,7 @@ impl Default for AppConfig {
             chart_pan_y: 0.0,
             chart_cursor_x: 0.5,
             chart_cursor_y: 0.5,
-            inline_chart_height_px: 160.0,
+            inline_chart_height_px: 260.0,
 
             chart_popout_open: false,
             chart_popout_x_px: 80.0,
@@ -125,8 +125,8 @@ impl Default for AppConfig {
             settings_x_px: 392.0,
             settings_y_px: 80.0,
 
-            window_width_px: 1200.0,
-            window_height_px: 800.0,
+            window_width_px: 1600.0,
+            window_height_px: 1000.0,
         }
     }
 }
@@ -160,8 +160,12 @@ impl Persistence {
         match read_json::<AppConfig>(&self.inner.path) {
             Ok(mut cfg) => {
                 // simple migration hook
-                if cfg.version == 0 {
+                if cfg.version < CONFIG_VERSION {
                     cfg.version = CONFIG_VERSION;
+                    cfg.window_width_px = cfg.window_width_px.max(1600.0);
+                    cfg.window_height_px = cfg.window_height_px.max(1000.0);
+                    cfg.ui_content_w_px = cfg.ui_content_w_px.max(2200.0);
+                    cfg.ui_content_h_px = cfg.ui_content_h_px.max(1400.0);
                 }
                 cfg
             }
@@ -189,8 +193,9 @@ impl Persistence {
 
         ui.set_ui_scroll_x_px(cfg.ui_scroll_x_px);
         ui.set_ui_scroll_y_px(cfg.ui_scroll_y_px);
-        ui.set_ui_content_w_px(cfg.ui_content_w_px);
-        ui.set_ui_content_h_px(cfg.ui_content_h_px);
+        // Enforce a larger minimum workspace so the main panels don't feel cramped.
+        ui.set_ui_content_w_px(cfg.ui_content_w_px.max(2200.0));
+        ui.set_ui_content_h_px(cfg.ui_content_h_px.max(1400.0));
 
         ui.set_chart_x_zoom(cfg.chart_x_zoom);
         ui.set_chart_y_zoom(cfg.chart_y_zoom);
@@ -198,7 +203,9 @@ impl Persistence {
         ui.set_chart_pan_y(cfg.chart_pan_y);
         ui.set_chart_cursor_x(cfg.chart_cursor_x);
         ui.set_chart_cursor_y(cfg.chart_cursor_y);
-        ui.set_inline_chart_height((cfg.inline_chart_height_px).into());
+        // enforce a taller default for readability
+        let chart_h = cfg.inline_chart_height_px.max(260.0);
+        ui.set_inline_chart_height((chart_h).into());
 
         ui.set_chart_popout_open(cfg.chart_popout_open);
         ui.set_chart_popout_x((cfg.chart_popout_x_px).into());
@@ -217,8 +224,9 @@ impl Persistence {
         ui.set_settings_y((cfg.settings_y_px).into());
 
         // Window geometry via Window API (Slint doesn't generate set_width/set_height on your AppWindow)
-        let w: u32 = cfg.window_width_px.max(400.0) as u32;
-        let h: u32 = cfg.window_height_px.max(300.0) as u32;
+        // Minimum window size bumped for readability.
+        let w: u32 = cfg.window_width_px.max(1600.0) as u32;
+        let h: u32 = cfg.window_height_px.max(1000.0) as u32;
         ui.window().set_size(PhysicalSize::new(w, h));
     }
 

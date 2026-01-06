@@ -8,12 +8,14 @@ pub use event::*;
 pub use state::*;
 
 use crate::AppWindow;
+use std::time::Instant;
 
 pub struct AppRuntime {
     pub state: AppState,
     ui: slint::Weak<AppWindow>,
     dirty: bool,
     last_tick_unix: u64,
+    last_render_instant: Option<Instant>,
 }
 
 impl AppRuntime {
@@ -23,6 +25,7 @@ impl AppRuntime {
             ui,
             dirty: true,
             last_tick_unix: 0,
+            last_render_instant: None,
         }
     }
 
@@ -53,7 +56,34 @@ impl AppRuntime {
 
     pub fn render_if_dirty(&mut self) {
         if self.dirty {
+            const MIN_FRAME_MS: u64 = 16; // ~60 FPS target for smoother pan/zoom
+            if let Some(last) = self.last_render_instant {
+                let since = last.elapsed().as_millis() as u64;
+                if since < MIN_FRAME_MS {
+                    return;
+                }
+            }
             self.render();
+            self.last_render_instant = Some(Instant::now());
+        }
+    }
+
+    pub fn process_pending_history(&mut self) {
+        const HISTORY_BUDGET_MS: u64 = 3;
+        let start = Instant::now();
+        let mut changed = false;
+        while start.elapsed().as_millis() < HISTORY_BUDGET_MS as u128 {
+            if self.state.pending_mid_ticks.is_empty() && !self.state.history_loading {
+                break;
+            }
+            if self.state.process_pending_history(500) {
+                changed = true;
+            } else {
+                break;
+            }
+        }
+        if changed {
+            self.dirty = true;
         }
     }
 }

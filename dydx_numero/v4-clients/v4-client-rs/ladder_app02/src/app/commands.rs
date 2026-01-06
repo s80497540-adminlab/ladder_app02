@@ -1,4 +1,5 @@
 use super::event::{AppEvent, UiEvent};
+use slint::{ComponentHandle, PhysicalSize};
 
 pub fn wire_ui(ui: &crate::AppWindow, tx: std::sync::mpsc::Sender<AppEvent>) {
     // Simple helper
@@ -43,6 +44,18 @@ pub fn wire_ui(ui: &crate::AppWindow, tx: std::sync::mpsc::Sender<AppEvent>) {
             let _ = tx.send(AppEvent::Ui(UiEvent::DomDepthChanged { depth: d }));
         });
     }
+    {
+        let tx = tx.clone();
+        ui.on_render_mode_changed(move |full| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::RenderModeChanged { full }));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_history_valve_changed(move |open| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::HistoryValveChanged { open }));
+        });
+    }
 
     // --- Actions ---
     {
@@ -73,6 +86,31 @@ pub fn wire_ui(ui: &crate::AppWindow, tx: std::sync::mpsc::Sender<AppEvent>) {
         let tx = tx.clone();
         ui.on_withdraw(move |amt| {
             let _ = tx.send(AppEvent::Ui(UiEvent::Withdraw { amount: amt }));
+        });
+    }
+    {
+        let ui_handle = ui.as_weak();
+        ui.on_stretch_to_viewport(move || {
+            if let Some(ui) = ui_handle.upgrade() {
+                let size = ui.window().size();
+                ui.set_ui_content_w_px(size.width as f32);
+                ui.set_ui_content_h_px(size.height as f32);
+            }
+        });
+    }
+    {
+        let ui_handle = ui.as_weak();
+        ui.on_fullscreen_toggle(move |state| {
+            if let Some(ui) = ui_handle.upgrade() {
+                let target = if state {
+                    PhysicalSize::new(2400, 1600)
+                } else {
+                    PhysicalSize::new(1600, 1000)
+                };
+                ui.window().set_size(target);
+                ui.set_ui_content_w_px(target.width as f32);
+                ui.set_ui_content_h_px(target.height as f32);
+            }
         });
     }
 
