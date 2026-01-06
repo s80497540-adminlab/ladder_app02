@@ -41,6 +41,11 @@ export struct CandlePoint {
     volume: float,   // normalized 0..1 volume
 }
 
+export struct AxisTick {
+    pos: float,   // 0..1 (0=top/left, 1=bottom/right)
+    label: string,
+}
+
 export struct Receipt {
     ts: string,
     ticker: string,
@@ -470,6 +475,7 @@ component CandleChart inherits Rectangle {
     in-out property <float> cursor_y;
 
     background: #10131a;
+    clip: true;
     border-radius: 2px;
     border-width: 1px;
     border-color: #222634;
@@ -491,7 +497,7 @@ component CandleChart inherits Rectangle {
     // Volume bars (gapless via snapped edges)
     for cp in points : Rectangle {
         visible: root.show_volume_bars && ((x_n + w_n) > -0.2) && ((x_n - w_n) < 1.2);
-        property <float> zx: Math.max(0.25, Math.min(20.0, root.x_zoom));
+        property <float> zx: Math.max(0.25, Math.min(8.0, root.x_zoom));
 
         property <float> x_n: 0.5 + (cp.x - 0.5) * zx + root.pan_x;
         property <float> w_n: cp.w * zx;
@@ -515,8 +521,8 @@ component CandleChart inherits Rectangle {
 
     // Candles (slot is snapped + overlapped; body fills full slot => visually flush)
     for cp in points : Rectangle {
-        property <float> zx: Math.max(0.25, Math.min(20.0, root.x_zoom));
-        property <float> zy: Math.max(0.25, Math.min(20.0, root.y_zoom));
+        property <float> zx: Math.max(0.25, Math.min(8.0, root.x_zoom));
+        property <float> zy: Math.max(0.25, Math.min(8.0, root.y_zoom));
 
         property <float> x_n: 0.5 + (cp.x - 0.5) * zx + root.pan_x;
         property <float> w_n: cp.w * zx;
@@ -527,10 +533,10 @@ component CandleChart inherits Rectangle {
         property <float> left_px:  Math.round(left_f);
         property <float> right_px: Math.round(right_f);
 
-        property <float> open_z:  Math.max(0.0, Math.min(1.0, root.mid_line_y + (cp.open  - root.mid_line_y) * zy + root.pan_y));
-        property <float> high_z:  Math.max(0.0, Math.min(1.0, root.mid_line_y + (cp.high  - root.mid_line_y) * zy + root.pan_y));
-        property <float> low_z:   Math.max(0.0, Math.min(1.0, root.mid_line_y + (cp.low   - root.mid_line_y) * zy + root.pan_y));
-        property <float> close_z: Math.max(0.0, Math.min(1.0, root.mid_line_y + (cp.close - root.mid_line_y) * zy + root.pan_y));
+        property <float> open_z:  Math.max(0.0, Math.min(1.0, 0.5 + (cp.open  - 0.5) * zy + root.pan_y));
+        property <float> high_z:  Math.max(0.0, Math.min(1.0, 0.5 + (cp.high  - 0.5) * zy + root.pan_y));
+        property <float> low_z:   Math.max(0.0, Math.min(1.0, 0.5 + (cp.low   - 0.5) * zy + root.pan_y));
+        property <float> close_z: Math.max(0.0, Math.min(1.0, 0.5 + (cp.close - 0.5) * zy + root.pan_y));
 
         x: left_px * 1px;
         width: (Math.max(2.0, (right_px - left_px)) + 1.0) * 1px; // +1px overlap
@@ -603,7 +609,7 @@ component CandleChart inherits Rectangle {
                 let dy = (self.mouse-y - last_y) / parent.height;
 
                 root.pan_x = Math.max(-2.0, Math.min(2.0, root.pan_x + dx));
-                root.pan_y = Math.max(-2.0, Math.min(2.0, root.pan_y + dy));
+                root.pan_y = Math.max(-1.0, Math.min(1.0, root.pan_y + dy));
 
                 last_x = self.mouse-x;
                 last_y = self.mouse-y;
@@ -622,30 +628,30 @@ component CandleChart inherits Rectangle {
             let step = is_ctrl ? 0.05 : 0.25;
 
             if is_shift {
-                let old_z = Math.max(0.25, Math.min(20.0, root.x_zoom));
+                let old_z = Math.max(0.25, Math.min(8.0, root.x_zoom));
                 let cx = root.cursor_x;
                 let px = root.pan_x;
 
                 let xw = 0.5 + (cx - 0.5 - px) / old_z;
 
-                let new_z = Math.max(0.25, Math.min(20.0, old_z + dir * step));
+                let new_z = Math.max(0.25, Math.min(8.0, old_z + dir * step));
                 root.x_zoom = new_z;
 
                 let px2 = cx - 0.5 - (xw - 0.5) * new_z;
                 root.pan_x = Math.max(-2.0, Math.min(2.0, px2));
             } else {
-                let old_z = Math.max(0.25, Math.min(20.0, root.y_zoom));
+                let old_z = Math.max(0.25, Math.min(8.0, root.y_zoom));
                 let cy = root.cursor_y;
                 let py = root.pan_y;
                 let mid = root.mid_line_y;
 
                 let yw = mid + (cy - mid - py) / old_z;
 
-                let new_z = Math.max(0.25, Math.min(20.0, old_z + dir * step));
+                let new_z = Math.max(0.25, Math.min(8.0, old_z + dir * step));
                 root.y_zoom = new_z;
 
                 let py2 = cy - mid - (yw - mid) * new_z;
-                root.pan_y = Math.max(-2.0, Math.min(2.0, py2));
+                root.pan_y = Math.max(-1.0, Math.min(1.0, py2));
             }
 
             EventResult.accept
@@ -815,8 +821,12 @@ component ChartPopoutPanel inherits Rectangle {
 // ---------- Main window component -----------------------------------
 
 export component AppWindow inherits Window {
-    width: 1200px;
-    height: 800px;
+    preferred-width: 1600px;
+    preferred-height: 1000px;
+    min-width: 1200px;
+    min-height: 800px;
+    max-width: 4000px;
+    max-height: 3000px;
     title: "Ladder App 02";
 
     // TF dropdown backing data ---
@@ -897,11 +907,18 @@ export component AppWindow inherits Window {
     in-out property <[Trade]> recent_trades;
     in-out property <[CandleRow]> candles;
     in-out property <[CandlePoint]> candle_points;
+    in-out property <[AxisTick]> price_ticks;
+    in-out property <[AxisTick]> time_ticks;
     in-out property <[Receipt]> receipts;
 
     in-out property <float> candle_midline;
+    in-out property <string> axis_price_unit: "";
     in-out property <string> last_move;
     in-out property <int> dom_depth_levels;
+    in-out property <bool> render_all_candles: false;
+    in-out property <bool> history_valve_open: false;
+    in-out property <string> candle_feed_status: "";
+    in-out property <string> history_status: "";
 
     in-out property <float> chart_x_zoom: 1.0;
     in-out property <float> chart_y_zoom: 1.0;
@@ -911,7 +928,8 @@ export component AppWindow inherits Window {
     in-out property <float> chart_cursor_x: 0.5;
     in-out property <float> chart_cursor_y: 0.5;
 
-    in-out property <length> inline_chart_height: 160px;
+    in-out property <length> inline_chart_height: 260px;
+    in-out property <bool> is_fullscreen: false;
 
     in-out property <bool> chart_popout_open: false;
     in-out property <length> chart_popout_x: 80px;
@@ -937,12 +955,16 @@ export component AppWindow inherits Window {
     callback candle_tf_changed(new_tf: int);
     callback candle_window_changed(new_window: int);
     callback dom_depth_changed(new_depth: int);
+    callback render_mode_changed(full: bool);
+    callback history_valve_changed(open: bool);
 
     callback send_order();
     callback reload_data();
     callback run_script();
     callback deposit(amount: float);
     callback withdraw(amount: float);
+    callback stretch_to_viewport();
+    callback fullscreen_toggle(state: bool);
 
     callback settings_connect_wallet();
     callback settings_disconnect_wallet();
@@ -994,8 +1016,9 @@ export component AppWindow inherits Window {
                 let dx = use_shift_h ? dy0 : dx0;
                 let dy = use_shift_h ? 0.0 : dy0;
 
-                root.ui_scroll_x_px = Math.max(0.0, Math.min(viewport.max_scroll_x, root.ui_scroll_x_px + dx));
-                root.ui_scroll_y_px = Math.max(0.0, Math.min(viewport.max_scroll_y, root.ui_scroll_y_px + dy));
+                let boost = 2.0;
+                root.ui_scroll_x_px = Math.max(0.0, Math.min(viewport.max_scroll_x, root.ui_scroll_x_px + dx * boost));
+                root.ui_scroll_y_px = Math.max(0.0, Math.min(viewport.max_scroll_y, root.ui_scroll_y_px + dy * boost));
 
                 EventResult.accept
             }
@@ -1018,7 +1041,7 @@ export component AppWindow inherits Window {
                 Text {
                     x: 8px;
                     y: 6px;
-                    width: parent.width - 16px;
+                    width: parent.width - 560px;
                     height: 28px;
                     text:
                         "Ticker: " + current_ticker
@@ -1027,6 +1050,38 @@ export component AppWindow inherits Window {
                         + "  | Range: " + data_range
                         + "  | Now: " + current_time;
                     color: #e0e0e0;
+                }
+                Button {
+                    x: parent.width - 520px;
+                    y: 6px;
+                    width: 72px;
+                    height: 20px;
+                    text: root.history_valve_open ? "Hist: On" : "Hist: Off";
+                    clicked => {
+                        root.history_valve_open = !root.history_valve_open;
+                        root.history_valve_changed(root.history_valve_open);
+                    }
+                }
+                Text {
+                    x: parent.width - 440px;
+                    y: 6px;
+                    width: 432px;
+                    height: 28px;
+                    text: candle_feed_status;
+                    color: #a0a0a0;
+                    horizontal-alignment: right;
+                    font-size: 10px;
+                }
+                Text {
+                    x: parent.width - 440px;
+                    y: 20px;
+                    width: 432px;
+                    height: 16px;
+                    text: history_status;
+                    color: #a0c0ff;
+                    horizontal-alignment: right;
+                    font-size: 9px;
+                    visible: history_status != "";
                 }
             }
 
@@ -1082,6 +1137,28 @@ export component AppWindow inherits Window {
                 Text { x: 520px; y: 6px; text: "Time:"; color: #cccccc; }
                 Button { x: 570px; y: 4px; text: "Local"; clicked => { root.time_mode_changed("Local"); } }
                 Button { x: 640px; y: 4px; text: "UTC";   clicked => { root.time_mode_changed("UTC"); } }
+
+                Button {
+                    x: 700px; y: 4px; width: 70px; height: 20px;
+                    text: "Stretch";
+                    clicked => { root.stretch_to_viewport(); }
+                }
+                Button {
+                    x: 774px; y: 4px; width: 98px; height: 20px;
+                    text: root.is_fullscreen ? "Exit Full" : "Fullscreen";
+                    clicked => {
+                        root.is_fullscreen = !root.is_fullscreen;
+                        root.fullscreen_toggle(root.is_fullscreen);
+                    }
+                }
+                Button {
+                    x: 880px; y: 4px; width: 120px; height: 20px;
+                    text: root.render_all_candles ? "Render: Full" : "Render: Cond";
+                    clicked => {
+                        root.render_all_candles = !root.render_all_candles;
+                        root.render_mode_changed(root.render_all_candles);
+                    }
+                }
 
                 Text { x: 8px; y: 32px; text: "TF / Window:"; color: #aaaaaa; }
 
@@ -1201,21 +1278,36 @@ export component AppWindow inherits Window {
                 Button {
                     x: 1090px; y: 4px; width: 48px; height: 20px;
                     text: "Chart-";
-                    clicked => { root.inline_chart_height = Math.max(80px, root.inline_chart_height - 40px); }
+                    clicked => { root.inline_chart_height = Math.max(120px, root.inline_chart_height - 40px); }
                 }
                 Button {
                     x: 1144px; y: 4px; width: 48px; height: 20px;
                     text: "Chart+";
-                    clicked => { root.inline_chart_height = Math.min(420px, root.inline_chart_height + 40px); }
+                    clicked => { root.inline_chart_height = Math.min(600px, root.inline_chart_height + 40px); }
                 }
+                Text { x: 1120px; y: 28px; text: (root.inline_chart_height / 1px) + "px"; color: #c0c0c0; font-size: 10px; }
 
                 Text { x: 1060px; y: 28px; text: "Zoom:"; color: #aaaaaa; font-size: 10px; }
+
+                Button {
+                    x: 720px; y: 4px; width: 72px; height: 20px;
+                    text: "Stretch";
+                    clicked => { root.stretch_to_viewport(); }
+                }
+                Button {
+                    x: 800px; y: 4px; width: 94px; height: 20px;
+                    text: root.is_fullscreen ? "Exit Full" : "Fullscreen";
+                    clicked => {
+                        root.is_fullscreen = !root.is_fullscreen;
+                        root.fullscreen_toggle(root.is_fullscreen);
+                    }
+                }
 
                 Button {
                     x: 1060px; y: 42px; width: 36px; height: 18px;
                     text: "X-";
                     clicked => {
-                        let old_z = Math.max(0.25, Math.min(20.0, root.chart_x_zoom));
+                        let old_z = Math.max(0.25, Math.min(8.0, root.chart_x_zoom));
                         let cx = root.chart_cursor_x;
                         let px = root.chart_pan_x;
 
@@ -1231,12 +1323,12 @@ export component AppWindow inherits Window {
                     x: 1100px; y: 42px; width: 36px; height: 18px;
                     text: "X+";
                     clicked => {
-                        let old_z = Math.max(0.25, Math.min(20.0, root.chart_x_zoom));
+                        let old_z = Math.max(0.25, Math.min(8.0, root.chart_x_zoom));
                         let cx = root.chart_cursor_x;
                         let px = root.chart_pan_x;
 
                         let xw = 0.5 + (cx - 0.5 - px) / old_z;
-                        let new_z = Math.min(20.0, old_z + 0.25);
+                        let new_z = Math.min(8.0, old_z + 0.25);
                         root.chart_x_zoom = new_z;
 
                         let px2 = cx - 0.5 - (xw - 0.5) * new_z;
@@ -1247,7 +1339,7 @@ export component AppWindow inherits Window {
                     x: 1140px; y: 42px; width: 36px; height: 18px;
                     text: "Y-";
                     clicked => {
-                        let old_z = Math.max(0.25, Math.min(20.0, root.chart_y_zoom));
+                        let old_z = Math.max(0.25, Math.min(8.0, root.chart_y_zoom));
                         let cy = root.chart_cursor_y;
                         let py = root.chart_pan_y;
                         let mid = root.candle_midline;
@@ -1257,24 +1349,24 @@ export component AppWindow inherits Window {
                         root.chart_y_zoom = new_z;
 
                         let py2 = cy - mid - (yw - mid) * new_z;
-                        root.chart_pan_y = Math.max(-2.0, Math.min(2.0, py2));
+                        root.chart_pan_y = Math.max(-1.0, Math.min(1.0, py2));
                     }
                 }
                 Button {
                     x: 1180px; y: 42px; width: 36px; height: 18px;
                     text: "Y+";
                     clicked => {
-                        let old_z = Math.max(0.25, Math.min(20.0, root.chart_y_zoom));
+                        let old_z = Math.max(0.25, Math.min(8.0, root.chart_y_zoom));
                         let cy = root.chart_cursor_y;
                         let py = root.chart_pan_y;
                         let mid = root.candle_midline;
 
                         let yw = mid + (cy - mid - py) / old_z;
-                        let new_z = Math.min(20.0, old_z + 0.25);
+                        let new_z = Math.min(8.0, old_z + 0.25);
                         root.chart_y_zoom = new_z;
 
                         let py2 = cy - mid - (yw - mid) * new_z;
-                        root.chart_pan_y = Math.max(-2.0, Math.min(2.0, py2));
+                        root.chart_pan_y = Math.max(-1.0, Math.min(1.0, py2));
                     }
                 }
             }
@@ -1375,6 +1467,20 @@ export component AppWindow inherits Window {
                     color: #ffffff;
                 }
 
+                Button {
+                    x: parent.width - 180px;
+                    y: 2px;
+                    width: 72px;
+                    height: 20px;
+                    text: "Auto: center";
+                    clicked => {
+                        root.chart_pan_x = 0.0;
+                        root.chart_pan_y = 0.0;
+                        root.chart_x_zoom = 1.0;
+                        root.chart_y_zoom = 1.0;
+                    }
+                }
+
                 CandleChart {
                     x: 8px;
                     y: header_h + gap;
@@ -1393,6 +1499,50 @@ export component AppWindow inherits Window {
                     cursor_y <=> root.chart_cursor_y;
 
                     show_volume_bars: root.show_volume;
+                }
+
+                // Price axis ticks (left)
+                for t in root.price_ticks : Rectangle {
+                    x: 8px;
+                    y: header_h + gap + chart_h * t.pos - 8px;
+                    width: parent.width - 16px;
+                    height: 16px;
+                    background: #00000000;
+
+                    Rectangle {
+                        x: 0px;
+                        y: 7px;
+                        width: 6px;
+                        height: 1px;
+                        background: #4a5970;
+                    }
+
+                    Text {
+                        x: 10px;
+                        y: 0px;
+                        text: t.label + (axis_price_unit == "" ? "" : (" " + axis_price_unit));
+                        color: #9fd1ff;
+                        font-size: 10px;
+                    }
+                }
+
+                // Time axis ticks (bottom)
+                for t in root.time_ticks : Rectangle {
+                    x: 8px + (parent.width - 16px) * t.pos;
+                    y: header_h + gap + chart_h + 2px;
+                    width: 1px;
+                    height: 16px;
+                    background: #4a5970;
+
+                    Text {
+                        x: -40px;
+                        y: 4px;
+                        width: 80px;
+                        horizontal-alignment: center;
+                        text: t.label;
+                        color: #9fd1ff;
+                        font-size: 10px;
+                    }
                 }
 
                 ListView {

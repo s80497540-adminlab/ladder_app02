@@ -9,6 +9,27 @@ pub fn reduce(state: &mut AppState, ev: AppEvent) -> bool {
         AppEvent::Feed(f) => reduce_feed(state, f),
         AppEvent::Exec(x) => reduce_exec(state, x),
         AppEvent::Timer(t) => reduce_timer(state, t),
+        AppEvent::HistoryLoaded { ticker, ticks, full } => {
+            if ticker != state.current_ticker {
+                return false;
+            }
+            if state.render_all_candles != full {
+                return false;
+            }
+            state.reset_candles();
+            state.mid_ticks.clear();
+            state.pending_mid_ticks = ticks.into();
+            state.history_total = state.pending_mid_ticks.len();
+            state.history_done = 0;
+            state.history_loading = state.history_total > 0;
+            state.history_load_full = full;
+            state.order_message = if state.history_total > 0 {
+                "History loading...".to_string()
+            } else {
+                "History empty.".to_string()
+            };
+            true
+        }
     }
 }
 
@@ -16,12 +37,26 @@ fn reduce_ui(state: &mut AppState, ev: UiEvent) -> bool {
     match ev {
         UiEvent::TickerChanged { ticker } => {
             state.current_ticker = ticker;
-            state.order_message = "Ticker changed.".to_string();
+            state.order_message = if state.history_valve_open {
+                "Ticker changed; loading history.".to_string()
+            } else {
+                "Ticker changed; history paused.".to_string()
+            };
 
             debug_hooks::log_candle_reset("ticker changed; dropping cached candles");
 
-            // Optional: reset candles when ticker changes in scaffold mode
+            // Reset state for new ticker and reload any cached mids for it
             state.reset_candles();
+            state.mid_ticks.clear();
+            state.pending_mid_ticks.clear();
+            state.history_loading = state.history_valve_open;
+            state.history_load_full = state.render_all_candles;
+            state.history_total = 0;
+            state.history_done = 0;
+            state.metrics = Metrics::default();
+            state.bids.clear();
+            state.asks.clear();
+            state.recent_trades.clear();
 
             true
         }
@@ -40,15 +75,8 @@ fn reduce_ui(state: &mut AppState, ev: UiEvent) -> bool {
             state.candle_tf_secs = tf_secs.max(1);
             state.order_message = format!("TF set to {}s", state.candle_tf_secs);
 
-            debug_hooks::log_candle_reset("TF changed; resetting candles for new bucket size");
-
-            // ✅ NEW API: reset and re-seed on next BookTop tick
-            state.reset_candles();
-
-            // If we already have a mid, seed immediately so chart pops instantly:
-            if state.metrics.mid.is_finite() && state.metrics.mid > 0.0 {
-                state.on_mid_tick(now_unix(), state.metrics.mid);
-            }
+            debug_hooks::log_candle_reset("TF changed; rebuilding candles for new bucket size");
+            state.rebuild_candles_from_history();
 
             true
         }
@@ -56,17 +84,44 @@ fn reduce_ui(state: &mut AppState, ev: UiEvent) -> bool {
             state.candle_window_minutes = window_min.max(1);
             state.order_message = format!("Window set to {}m", state.candle_window_minutes);
 
-            // ✅ NEW API
-            debug_hooks::log_candle_reset("window changed; resetting candle cache");
-            state.reset_candles();
-            if state.metrics.mid.is_finite() && state.metrics.mid > 0.0 {
-                state.on_mid_tick(now_unix(), state.metrics.mid);
-            }
+            // ✅ Rebuild cache under new window
+            debug_hooks::log_candle_reset("window changed; rebuilding candle cache");
+            state.rebuild_candles_from_history();
 
             true
         }
         UiEvent::DomDepthChanged { depth } => {
             state.dom_depth_levels = depth.clamp(5, 50);
+            true
+        }
+        UiEvent::RenderModeChanged { full } => {
+            state.render_all_candles = full;
+            state.order_message = if full {
+                "Render mode: full candles."
+            } else {
+                "Render mode: condensed view."
+            }
+            .to_string();
+
+            state.mid_ticks.clear();
+            state.pending_mid_ticks.clear();
+            state.history_loading = state.history_valve_open;
+            state.history_load_full = full;
+            state.history_total = 0;
+            state.history_done = 0;
+            if !full {
+                state.candle_points.clear();
+                state.candle_midline = 0.5;
+            }
+            true
+        }
+        UiEvent::HistoryValveChanged { open } => {
+            state.history_valve_open = open;
+            state.order_message = if open {
+                "History valve opened.".to_string()
+            } else {
+                "History valve closed.".to_string()
+            };
             true
         }
 
@@ -196,32 +251,47 @@ fn reduce_feed(state: &mut AppState, ev: FeedEvent) -> bool {
             bid_liq,
             ask_liq,
         } => {
-            if !ticker.is_empty() && ticker != state.current_ticker {
-                debug_hooks::log_book_skip(
-                    "ticker_mismatch",
-                    format!("state={} feed={}", state.current_ticker, ticker),
-                );
+            let is_current = ticker.is_empty() || ticker == state.current_ticker;
+            if !is_current {
+                // Persist candle feed in the background for non-view tickers.
+                let mut combined_bid = if best_bid > 0.0 { best_bid } else { best_ask };
+                let mut combined_ask = if best_ask > 0.0 { best_ask } else { best_bid };
+                if combined_bid <= 0.0 && combined_ask > 0.0 {
+                    combined_bid = combined_ask;
+                } else if combined_ask <= 0.0 && combined_bid > 0.0 {
+                    combined_ask = combined_bid;
+                }
+                if combined_bid > 0.0 && combined_ask > 0.0 {
+                    let mid = (combined_bid + combined_ask) * 0.5;
+                    state.persist_mid_tick_for_ticker(&ticker, ts_unix, mid);
+                }
                 return false;
             }
 
             debug_hooks::log_book_ingest(ts_unix, &ticker, best_bid, best_ask, bid_liq, ask_liq);
 
-            // Some daemon messages intermittently report one side as zero. Preserve the
-            // last known good price instead of letting the UI fall back to 0.0 (which
-            // produced fake ladders starting at 0 and prevented candles from updating).
-            let best_bid = if best_bid > 0.0 {
-                best_bid
-            } else {
-                state.metrics.best_bid
-            };
-            let best_ask = if best_ask > 0.0 {
-                best_ask
-            } else {
-                state.metrics.best_ask
-            };
+            // Some daemon messages intermittently report only one side of the book.
+            // Persist partial updates so a later tick with the opposite side can still
+            // produce a valid mid/spread instead of getting stuck at 0.0.
+            if best_bid > 0.0 {
+                state.metrics.best_bid = best_bid;
+            }
+            if best_ask > 0.0 {
+                state.metrics.best_ask = best_ask;
+            }
 
-            // Still nothing reliable? Skip this tick.
-            if best_bid <= 0.0 || best_ask <= 0.0 {
+            let mut combined_bid = state.metrics.best_bid;
+            let mut combined_ask = state.metrics.best_ask;
+
+            // If only one side is seen, synthesize the missing side so candles can advance.
+            if combined_bid <= 0.0 && combined_ask > 0.0 {
+                combined_bid = combined_ask;
+            } else if combined_ask <= 0.0 && combined_bid > 0.0 {
+                combined_ask = combined_bid;
+            }
+
+            // Still nothing reliable? Skip this tick but keep any partials we captured above.
+            if combined_bid <= 0.0 || combined_ask <= 0.0 {
                 debug_hooks::log_book_skip(
                     "invalid_prices",
                     format!(
@@ -232,12 +302,9 @@ fn reduce_feed(state: &mut AppState, ev: FeedEvent) -> bool {
                 return false;
             }
 
-            state.metrics.best_bid = best_bid;
-            state.metrics.best_ask = best_ask;
-
-            if best_bid > 0.0 && best_ask > 0.0 {
-                state.metrics.mid = (best_bid + best_ask) * 0.5;
-                state.metrics.spread = (best_ask - best_bid).max(0.0);
+            if combined_bid > 0.0 && combined_ask > 0.0 {
+                state.metrics.mid = (combined_bid + combined_ask) * 0.5;
+                state.metrics.spread = (combined_ask - combined_bid).max(0.0);
             } else {
                 state.metrics.mid = 0.0;
                 state.metrics.spread = 0.0;
