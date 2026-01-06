@@ -32,6 +32,7 @@ pub enum UiEvent {
     RenderModeChanged { full: bool },
     HistoryValveChanged { open: bool },
     SessionRecordingChanged { enabled: bool },
+    CloseAndSaveRequested,
 
     SendOrder,
     ReloadData,

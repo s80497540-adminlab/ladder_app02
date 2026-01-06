@@ -54,6 +54,7 @@ fn main() -> Result<()> {
     }
 
     let feed_started = Rc::new(Cell::new(false));
+    let close_scheduled = Rc::new(Cell::new(false));
     if ui.get_feed_enabled() {
         start_feeds(tx.clone());
         feed_started.set(true);
@@ -67,6 +68,7 @@ fn main() -> Result<()> {
         let history_tx = tx.clone();
         let feed_tx = tx.clone();
         let feed_started = feed_started.clone();
+        let close_scheduled = close_scheduled.clone();
         pump.start(TimerMode::Repeated, Duration::from_millis(16), move || {
             let frame_start = Instant::now();
             // Drain events quickly
@@ -130,6 +132,13 @@ fn main() -> Result<()> {
             }
             let frame_ms = frame_start.elapsed().as_secs_f32() * 1000.0;
             runtime.borrow_mut().update_perf(frame_ms, events);
+
+            if runtime.borrow().state.close_after_save && !close_scheduled.get() {
+                close_scheduled.set(true);
+                let _ = slint::Timer::single_shot(Duration::from_millis(800), move || {
+                    slint::quit_event_loop();
+                });
+            }
         });
     }
 

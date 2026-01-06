@@ -973,6 +973,7 @@ export component AppWindow inherits Window {
     callback render_mode_changed(full: bool);
     callback history_valve_changed(open: bool);
     callback session_recording_changed(enabled: bool);
+    callback close_and_save_requested();
 
     callback send_order();
     callback reload_data();
@@ -1077,6 +1078,14 @@ export component AppWindow inherits Window {
                         root.session_recording = !root.session_recording;
                         root.session_recording_changed(root.session_recording);
                     }
+                }
+                Button {
+                    x: parent.width - 680px;
+                    y: 6px;
+                    width: 72px;
+                    height: 20px;
+                    text: "Close";
+                    clicked => { root.close_and_save_requested(); }
                 }
                 Button {
                     x: parent.width - 520px;

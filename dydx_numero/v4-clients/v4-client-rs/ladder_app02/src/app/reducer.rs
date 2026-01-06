@@ -219,6 +219,18 @@ fn reduce_ui(state: &mut AppState, ev: UiEvent) -> bool {
             };
             true
         }
+        UiEvent::CloseAndSaveRequested => {
+            match state.save_session_summary() {
+                Ok(path) => {
+                    state.order_message = format!("Session saved: {}", path.display());
+                    state.close_after_save = true;
+                }
+                Err(err) => {
+                    state.order_message = format!("Session save failed: {err}");
+                }
+            }
+            true
+        }
 
         UiEvent::Deposit { amount } => {
             let a = amount.max(0.0);

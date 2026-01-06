@@ -1,3 +1,7 @@
 target/
 .DS_Store
 dydx_numero/v4-clients/v4-client-rs/ladder_app02/vendor/
+dydx_numero/v4-clients/v4-client-rs/data/
+dydx_numero/v4-clients/v4-client-rs/ladder_app02/data/
+dydx_numero/v4-clients/v4-client-rs/ladder_app02/offline_bundle.tar.gz
+dydx_numero/v4-clients/v4-client-rs/ladder_app02/bundle_part_*

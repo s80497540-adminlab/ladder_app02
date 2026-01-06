@@ -100,6 +100,12 @@ pub fn wire_ui(ui: &crate::AppWindow, tx: std::sync::mpsc::Sender<AppEvent>) {
             let _ = tx.send(AppEvent::Ui(UiEvent::SessionRecordingChanged { enabled }));
         });
     }
+    {
+        let tx = tx.clone();
+        ui.on_close_and_save_requested(move || {
+            let _ = tx.send(AppEvent::Ui(UiEvent::CloseAndSaveRequested));
+        });
+    }
 
     // --- Actions ---
     {
