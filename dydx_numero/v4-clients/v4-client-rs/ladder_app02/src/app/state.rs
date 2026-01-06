@@ -102,6 +102,7 @@ pub struct AppState {
     pub session_id: String,
     pub session_start_unix: u64,
     pub session_ticks: HashMap<String, VecDeque<MidTick>>,
+    pub close_after_save: bool,
     pub feed_enabled: bool,
     pub chart_enabled: bool,
     pub depth_enabled: bool,
@@ -179,6 +180,22 @@ struct SessionMeta {
     start_unix: u64,
 }
 
+#[derive(Debug, Serialize)]
+struct SessionTickerSummary {
+    ticker: String,
+    ticks: usize,
+    first_unix: Option<u64>,
+    last_unix: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+struct SessionSummary {
+    id: String,
+    start_unix: u64,
+    end_unix: u64,
+    tickers: Vec<SessionTickerSummary>,
+}
+
 impl Default for AppState {
     fn default() -> Self {
         let session_start_unix = now_unix();
@@ -197,6 +214,7 @@ impl Default for AppState {
             session_id,
             session_start_unix,
             session_ticks: HashMap::new(),
+            close_after_save: false,
             feed_enabled: false,
             chart_enabled: false,
             depth_enabled: true,
@@ -264,7 +282,7 @@ impl AppState {
     pub fn from_ui(ui: &crate::AppWindow) -> Self {
         let session_start_unix = now_unix();
         let session_id = Self::session_id_from_unix(session_start_unix);
-        let mut state = Self {
+        let state = Self {
             current_ticker: ui.get_current_ticker().to_string(),
             mode: ui.get_mode().to_string(),
             time_mode: ui.get_time_mode().to_string(),
@@ -278,6 +296,7 @@ impl AppState {
             session_id,
             session_start_unix,
             session_ticks: HashMap::new(),
+            close_after_save: false,
             feed_enabled: ui.get_feed_enabled(),
             chart_enabled: ui.get_chart_enabled(),
             depth_enabled: ui.get_show_depth(),
@@ -732,6 +751,38 @@ impl AppState {
         }
         self.mid_ticks = ticks.into();
         true
+    }
+
+    pub fn save_session_summary(&mut self) -> Result<PathBuf, String> {
+        self.ensure_session_dir();
+        let dir = self.session_dir();
+        let mut tickers: Vec<String> = self.session_ticks.keys().cloned().collect();
+        tickers.sort();
+        let mut entries = Vec::with_capacity(tickers.len());
+        for ticker in tickers {
+            let ticks = match self.session_ticks.get(&ticker) {
+                Some(t) => t,
+                None => continue,
+            };
+            let first_unix = ticks.front().map(|t| t.ts_unix);
+            let last_unix = ticks.back().map(|t| t.ts_unix);
+            entries.push(SessionTickerSummary {
+                ticker,
+                ticks: ticks.len(),
+                first_unix,
+                last_unix,
+            });
+        }
+        let summary = SessionSummary {
+            id: self.session_id.clone(),
+            start_unix: self.session_start_unix,
+            end_unix: now_unix(),
+            tickers: entries,
+        };
+        let path = dir.join("session_summary.json");
+        let raw = serde_json::to_string_pretty(&summary).map_err(|e| e.to_string())?;
+        fs::write(&path, raw).map_err(|e| e.to_string())?;
+        Ok(path)
     }
 
     pub fn load_mid_cache(&mut self) {
