@@ -889,6 +889,7 @@ export component AppWindow inherits Window {
 
     in-out property <int> candle_tf_secs;
     in-out property <int> candle_window_minutes;
+    in-out property <string> candle_price_mode: "Mid";
 
     in-out property <string> script_text;
     in-out property <string> script_error;
@@ -916,9 +917,17 @@ export component AppWindow inherits Window {
     in-out property <string> last_move;
     in-out property <int> dom_depth_levels;
     in-out property <bool> render_all_candles: false;
+    in-out property <bool> feed_enabled: false;
+    in-out property <bool> chart_enabled: false;
     in-out property <bool> history_valve_open: false;
+    in-out property <bool> session_recording: true;
     in-out property <string> candle_feed_status: "";
     in-out property <string> history_status: "";
+    in-out property <string> perf_status: "";
+    in-out property <float> perf_load: 0.0;
+    in-out property <bool> perf_healthy: true;
+    in-out property <string> daemon_status: "";
+    in-out property <bool> daemon_active: false;
 
     in-out property <float> chart_x_zoom: 1.0;
     in-out property <float> chart_y_zoom: 1.0;
@@ -952,11 +961,18 @@ export component AppWindow inherits Window {
     callback ticker_changed(new_ticker: string);
     callback mode_changed(new_mode: string);
     callback time_mode_changed(new_time_mode: string);
+    callback feed_enabled_changed(enabled: bool);
+    callback chart_enabled_changed(enabled: bool);
+    callback depth_panel_changed(enabled: bool);
+    callback trades_panel_changed(enabled: bool);
+    callback volume_panel_changed(enabled: bool);
     callback candle_tf_changed(new_tf: int);
     callback candle_window_changed(new_window: int);
+    callback candle_price_mode_changed(new_mode: string);
     callback dom_depth_changed(new_depth: int);
     callback render_mode_changed(full: bool);
     callback history_valve_changed(open: bool);
+    callback session_recording_changed(enabled: bool);
 
     callback send_order();
     callback reload_data();
@@ -1041,7 +1057,7 @@ export component AppWindow inherits Window {
                 Text {
                     x: 8px;
                     y: 6px;
-                    width: parent.width - 560px;
+                    width: parent.width - 640px;
                     height: 28px;
                     text:
                         "Ticker: " + current_ticker
@@ -1050,6 +1066,17 @@ export component AppWindow inherits Window {
                         + "  | Range: " + data_range
                         + "  | Now: " + current_time;
                     color: #e0e0e0;
+                }
+                Button {
+                    x: parent.width - 600px;
+                    y: 6px;
+                    width: 76px;
+                    height: 20px;
+                    text: root.session_recording ? "Sess: On" : "Sess: Off";
+                    clicked => {
+                        root.session_recording = !root.session_recording;
+                        root.session_recording_changed(root.session_recording);
+                    }
                 }
                 Button {
                     x: parent.width - 520px;
@@ -1114,6 +1141,46 @@ export component AppWindow inherits Window {
                     color: mid_text_color;
                 }
 
+                Text {
+                    x: parent.width - 520px;
+                    y: 8px;
+                    width: 150px;
+                    height: 18px;
+                    text: daemon_status;
+                    color: daemon_active ? #86ff86 : #ffb0b0;
+                    font-size: 9px;
+                    horizontal-alignment: right;
+                }
+
+                Rectangle {
+                    x: parent.width - 360px;
+                    y: 8px;
+                    width: 180px;
+                    height: 18px;
+                    background: #151821;
+                    border-radius: 3px;
+                    border-width: 1px;
+                    border-color: #2a3040;
+
+                    Text {
+                        x: 6px;
+                        y: 2px;
+                        width: parent.width - 12px;
+                        height: parent.height - 4px;
+                        text: perf_status;
+                        color: perf_healthy ? #86ff86 : #ffb0b0;
+                        font-size: 10px;
+                    }
+
+                    Rectangle {
+                        x: 4px;
+                        y: 14px;
+                        width: (parent.width - 8px) * perf_load;
+                        height: 2px;
+                        background: perf_healthy ? #3aa24b : #c44b4b;
+                    }
+                }
+
                 PnLSparkline { x: parent.width - 170px; y: 10px; width: 160px; height: 40px; points <=> root.candle_points; }
             }
 
@@ -1159,6 +1226,22 @@ export component AppWindow inherits Window {
                         root.render_mode_changed(root.render_all_candles);
                     }
                 }
+                Button {
+                    x: 1008px; y: 4px; width: 78px; height: 20px;
+                    text: root.feed_enabled ? "Feed: On" : "Feed: Off";
+                    clicked => {
+                        root.feed_enabled = !root.feed_enabled;
+                        root.feed_enabled_changed(root.feed_enabled);
+                    }
+                }
+                Button {
+                    x: 1090px; y: 4px; width: 78px; height: 20px;
+                    text: root.chart_enabled ? "Chart: On" : "Chart: Off";
+                    clicked => {
+                        root.chart_enabled = !root.chart_enabled;
+                        root.chart_enabled_changed(root.chart_enabled);
+                    }
+                }
 
                 Text { x: 8px; y: 32px; text: "TF / Window:"; color: #aaaaaa; }
 
@@ -1202,15 +1285,53 @@ export component AppWindow inherits Window {
                 Button { x: 230px; y: 30px; text: "Win 60m";  clicked => { root.candle_window_changed(60); } }
                 Button { x: 310px; y: 30px; text: "Win 240m"; clicked => { root.candle_window_changed(240); } }
 
-                Text { x: 450px; y: 32px; text: "Panels:"; color: #aaaaaa; }
-                CheckBox { x: 510px; y: 30px; text: "Depth";  checked <=> show_depth; }
-                CheckBox { x: 590px; y: 30px; text: "Trades"; checked <=> show_trades; }
-                CheckBox { x: 680px; y: 30px; text: "Volume"; checked <=> show_volume; }
+                Text { x: 400px; y: 32px; text: "Price:"; color: #aaaaaa; }
+                Button {
+                    x: 450px; y: 30px; width: 52px; height: 20px;
+                    text: root.candle_price_mode == "Bid" ? "Bid ✓" : "Bid";
+                    clicked => {
+                        root.candle_price_mode = "Bid";
+                        root.candle_price_mode_changed(root.candle_price_mode);
+                    }
+                }
+                Button {
+                    x: 506px; y: 30px; width: 52px; height: 20px;
+                    text: root.candle_price_mode == "Mid" ? "Mid ✓" : "Mid";
+                    clicked => {
+                        root.candle_price_mode = "Mid";
+                        root.candle_price_mode_changed(root.candle_price_mode);
+                    }
+                }
+                Button {
+                    x: 562px; y: 30px; width: 52px; height: 20px;
+                    text: root.candle_price_mode == "Ask" ? "Ask ✓" : "Ask";
+                    clicked => {
+                        root.candle_price_mode = "Ask";
+                        root.candle_price_mode_changed(root.candle_price_mode);
+                    }
+                }
 
-                Text { x: 760px; y: 32px; text: "DOM depth:"; color: #aaaaaa; }
+                Text { x: 630px; y: 32px; text: "Panels:"; color: #aaaaaa; }
+                CheckBox {
+                    x: 690px; y: 30px; text: "Depth";
+                    checked <=> show_depth;
+                    toggled => { root.depth_panel_changed(self.checked); }
+                }
+                CheckBox {
+                    x: 770px; y: 30px; text: "Trades";
+                    checked <=> show_trades;
+                    toggled => { root.trades_panel_changed(self.checked); }
+                }
+                CheckBox {
+                    x: 860px; y: 30px; text: "Volume";
+                    checked <=> show_volume;
+                    toggled => { root.volume_panel_changed(self.checked); }
+                }
+
+                Text { x: 940px; y: 32px; text: "DOM depth:"; color: #aaaaaa; }
 
                 Rectangle {
-                    x: 840px; y: 34px; width: 180px; height: 10px;
+                    x: 1020px; y: 34px; width: 180px; height: 10px;
                     background: #202633; border-radius: 5px;
 
                     property <length> knob_x: (root.dom_depth_levels - 5) * (parent.width - 12px) / 45;
@@ -1259,10 +1380,10 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                Text { x: 1030px; y: 32px; text: dom_depth_levels + " lvls"; color: #cccccc; font-size: 10px; }
+                Text { x: 1210px; y: 32px; text: dom_depth_levels + " lvls"; color: #cccccc; font-size: 10px; }
 
                 Button {
-                    x: 1010px; y: 4px; width: 70px; height: 20px;
+                    x: 1174px; y: 4px; width: 70px; height: 20px;
                     text: root.chart_popout_open ? "Popout ✓" : "Popout";
                     clicked => {
                         if !root.chart_popout_open {
@@ -1276,32 +1397,18 @@ export component AppWindow inherits Window {
                 }
 
                 Button {
-                    x: 1090px; y: 4px; width: 48px; height: 20px;
+                    x: 1250px; y: 4px; width: 48px; height: 20px;
                     text: "Chart-";
                     clicked => { root.inline_chart_height = Math.max(120px, root.inline_chart_height - 40px); }
                 }
                 Button {
-                    x: 1144px; y: 4px; width: 48px; height: 20px;
+                    x: 1304px; y: 4px; width: 48px; height: 20px;
                     text: "Chart+";
                     clicked => { root.inline_chart_height = Math.min(600px, root.inline_chart_height + 40px); }
                 }
                 Text { x: 1120px; y: 28px; text: (root.inline_chart_height / 1px) + "px"; color: #c0c0c0; font-size: 10px; }
 
                 Text { x: 1060px; y: 28px; text: "Zoom:"; color: #aaaaaa; font-size: 10px; }
-
-                Button {
-                    x: 720px; y: 4px; width: 72px; height: 20px;
-                    text: "Stretch";
-                    clicked => { root.stretch_to_viewport(); }
-                }
-                Button {
-                    x: 800px; y: 4px; width: 94px; height: 20px;
-                    text: root.is_fullscreen ? "Exit Full" : "Fullscreen";
-                    clicked => {
-                        root.is_fullscreen = !root.is_fullscreen;
-                        root.fullscreen_toggle(root.is_fullscreen);
-                    }
-                }
 
                 Button {
                     x: 1060px; y: 42px; width: 36px; height: 18px;

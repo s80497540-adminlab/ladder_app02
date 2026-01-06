@@ -10,6 +10,9 @@ pub fn reduce(state: &mut AppState, ev: AppEvent) -> bool {
         AppEvent::Exec(x) => reduce_exec(state, x),
         AppEvent::Timer(t) => reduce_timer(state, t),
         AppEvent::HistoryLoaded { ticker, ticks, full } => {
+            if !state.chart_enabled || !state.history_valve_open {
+                return false;
+            }
             if ticker != state.current_ticker {
                 return false;
             }
@@ -49,7 +52,7 @@ fn reduce_ui(state: &mut AppState, ev: UiEvent) -> bool {
             state.reset_candles();
             state.mid_ticks.clear();
             state.pending_mid_ticks.clear();
-            state.history_loading = state.history_valve_open;
+            state.history_loading = state.history_valve_open && state.chart_enabled;
             state.history_load_full = state.render_all_candles;
             state.history_total = 0;
             state.history_done = 0;
@@ -57,6 +60,12 @@ fn reduce_ui(state: &mut AppState, ev: UiEvent) -> bool {
             state.bids.clear();
             state.asks.clear();
             state.recent_trades.clear();
+
+            if state.chart_enabled && !state.history_valve_open {
+                if state.load_session_ticks_for_view(state.render_all_candles) {
+                    state.rebuild_candles_from_history();
+                }
+            }
 
             true
         }
@@ -70,13 +79,65 @@ fn reduce_ui(state: &mut AppState, ev: UiEvent) -> bool {
             state.order_message = "Time mode changed.".to_string();
             true
         }
+        UiEvent::FeedEnabledChanged { enabled } => {
+            state.feed_enabled = enabled;
+            state.order_message = if enabled {
+                "Feed enabled.".to_string()
+            } else {
+                "Feed paused.".to_string()
+            };
+            true
+        }
+        UiEvent::ChartEnabledChanged { enabled } => {
+            state.chart_enabled = enabled;
+            if enabled {
+                state.order_message = if state.history_valve_open {
+                    "Chart enabled; loading history.".to_string()
+                } else {
+                    "Chart enabled.".to_string()
+                };
+            } else {
+                state.reset_candles();
+                state.mid_ticks.clear();
+                state.pending_mid_ticks.clear();
+                state.history_loading = false;
+                state.history_total = 0;
+                state.history_done = 0;
+                state.order_message = "Chart paused.".to_string();
+            }
+            true
+        }
+        UiEvent::DepthPanelToggled { enabled } => {
+            state.depth_enabled = enabled;
+            if !enabled {
+                state.bids.clear();
+                state.asks.clear();
+            }
+            true
+        }
+        UiEvent::TradesPanelToggled { enabled } => {
+            state.trades_enabled = enabled;
+            if !enabled {
+                state.recent_trades.clear();
+            }
+            true
+        }
+        UiEvent::VolumePanelToggled { enabled } => {
+            state.volume_enabled = enabled;
+            true
+        }
 
         UiEvent::CandleTfChanged { tf_secs } => {
             state.candle_tf_secs = tf_secs.max(1);
             state.order_message = format!("TF set to {}s", state.candle_tf_secs);
 
             debug_hooks::log_candle_reset("TF changed; rebuilding candles for new bucket size");
-            state.rebuild_candles_from_history();
+            if state.chart_enabled {
+                if !state.history_valve_open {
+                    state.load_session_ticks_for_view(state.render_all_candles);
+                }
+                state.rebuild_candles_from_history();
+            }
 
             true
         }
@@ -86,7 +147,26 @@ fn reduce_ui(state: &mut AppState, ev: UiEvent) -> bool {
 
             // ✅ Rebuild cache under new window
             debug_hooks::log_candle_reset("window changed; rebuilding candle cache");
-            state.rebuild_candles_from_history();
+            if state.chart_enabled {
+                if !state.history_valve_open {
+                    state.load_session_ticks_for_view(state.render_all_candles);
+                }
+                state.rebuild_candles_from_history();
+            }
+
+            true
+        }
+        UiEvent::CandlePriceModeChanged { mode } => {
+            state.candle_price_mode = mode;
+            state.order_message = format!("Price mode: {}", state.candle_price_mode);
+
+            debug_hooks::log_candle_reset("price mode changed; rebuilding candles");
+            if state.chart_enabled {
+                if !state.history_valve_open {
+                    state.load_session_ticks_for_view(state.render_all_candles);
+                }
+                state.rebuild_candles_from_history();
+            }
 
             true
         }
@@ -105,13 +185,18 @@ fn reduce_ui(state: &mut AppState, ev: UiEvent) -> bool {
 
             state.mid_ticks.clear();
             state.pending_mid_ticks.clear();
-            state.history_loading = state.history_valve_open;
+            state.history_loading = state.history_valve_open && state.chart_enabled;
             state.history_load_full = full;
             state.history_total = 0;
             state.history_done = 0;
             if !full {
                 state.candle_points.clear();
                 state.candle_midline = 0.5;
+            }
+            if state.chart_enabled && !state.history_valve_open {
+                if state.load_session_ticks_for_view(state.render_all_candles) {
+                    state.rebuild_candles_from_history();
+                }
             }
             true
         }
@@ -121,6 +206,16 @@ fn reduce_ui(state: &mut AppState, ev: UiEvent) -> bool {
                 "History valve opened.".to_string()
             } else {
                 "History valve closed.".to_string()
+            };
+            true
+        }
+        UiEvent::SessionRecordingChanged { enabled } => {
+            state.session_recording = enabled;
+            state.order_message = if enabled {
+                state.ensure_session_dir();
+                "Session recording enabled.".to_string()
+            } else {
+                "Session recording paused.".to_string()
             };
             true
         }
@@ -242,6 +337,9 @@ fn reduce_ui(state: &mut AppState, ev: UiEvent) -> bool {
 }
 
 fn reduce_feed(state: &mut AppState, ev: FeedEvent) -> bool {
+    if !state.feed_enabled {
+        return false;
+    }
     match ev {
         FeedEvent::BookTop {
             ts_unix,
@@ -263,7 +361,7 @@ fn reduce_feed(state: &mut AppState, ev: FeedEvent) -> bool {
                 }
                 if combined_bid > 0.0 && combined_ask > 0.0 {
                     let mid = (combined_bid + combined_ask) * 0.5;
-                    state.persist_mid_tick_for_ticker(&ticker, ts_unix, mid);
+                    state.persist_mid_tick_for_ticker(&ticker, ts_unix, mid, combined_bid, combined_ask);
                 }
                 return false;
             }
@@ -317,18 +415,31 @@ fn reduce_feed(state: &mut AppState, ev: FeedEvent) -> bool {
             };
 
             // ✅ NEW candle API: build candles off timestamp-bucketed mid ticks
-            state.on_mid_tick(ts_unix, state.metrics.mid);
+            if state.chart_enabled {
+                state.on_mid_tick(ts_unix, state.metrics.mid, state.metrics.best_bid, state.metrics.best_ask);
+            } else {
+                let ticker = state.current_ticker.clone();
+                state.persist_mid_tick_for_ticker(
+                    &ticker,
+                    ts_unix,
+                    state.metrics.mid,
+                    state.metrics.best_bid,
+                    state.metrics.best_ask,
+                );
+            }
 
             // Build placeholder ladder
-            debug_hooks::log_placeholder_ladder(
-                best_bid,
-                best_ask,
-                state.dom_depth_levels as usize,
-                bid_liq,
-                ask_liq,
-            );
-            state.bids = build_fake_side(best_bid, bid_liq, true, state.dom_depth_levels as usize);
-            state.asks = build_fake_side(best_ask, ask_liq, false, state.dom_depth_levels as usize);
+            if state.depth_enabled {
+                debug_hooks::log_placeholder_ladder(
+                    best_bid,
+                    best_ask,
+                    state.dom_depth_levels as usize,
+                    bid_liq,
+                    ask_liq,
+                );
+                state.bids = build_fake_side(best_bid, bid_liq, true, state.dom_depth_levels as usize);
+                state.asks = build_fake_side(best_ask, ask_liq, false, state.dom_depth_levels as usize);
+            }
 
             true
         }
@@ -351,22 +462,24 @@ fn reduce_feed(state: &mut AppState, ev: FeedEvent) -> bool {
 
             let ts = format_time_basic(ts_unix);
             let is_buy = side.to_ascii_lowercase().starts_with('b');
-            state.recent_trades.push(TradeRow {
-                ts,
-                side: side.clone(),
-                size: size.clone(),
-                is_buy,
-            });
+            if state.trades_enabled {
+                state.recent_trades.push(TradeRow {
+                    ts,
+                    side: side.clone(),
+                    size: size.clone(),
+                    is_buy,
+                });
 
-            // cap trades
-            if state.recent_trades.len() > 60 {
-                let extra = state.recent_trades.len() - 60;
-                state.recent_trades.drain(0..extra);
+                // cap trades
+                if state.recent_trades.len() > 60 {
+                    let extra = state.recent_trades.len() - 60;
+                    state.recent_trades.drain(0..extra);
+                }
             }
 
             // ✅ add volume to candles (best-effort parse)
             let sz = size.parse::<f64>().unwrap_or(0.0);
-            if sz > 0.0 {
+            if sz > 0.0 && state.volume_enabled && state.chart_enabled {
                 state.on_trade_volume(ts_unix, sz);
             }
 
@@ -406,7 +519,15 @@ fn reduce_exec(state: &mut AppState, ev: ExecEvent) -> bool {
 fn reduce_timer(state: &mut AppState, ev: TimerEvent) -> bool {
     match ev {
         TimerEvent::Tick1s { now_unix } => {
-            state.current_time = format_time_basic(now_unix);
+            let mut changed = false;
+            let new_time = format_time_basic(now_unix);
+            if state.current_time != new_time {
+                state.current_time = new_time;
+                changed = true;
+            }
+            if state.update_daemon_status(now_unix) {
+                changed = true;
+            }
 
             // Arm expiry
             if let Some(exp) = state.trade_real_arm_expires_at {
@@ -423,7 +544,7 @@ fn reduce_timer(state: &mut AppState, ev: TimerEvent) -> bool {
                 }
             }
 
-            true
+            changed
         }
     }
 }

@@ -11,7 +11,11 @@ use ladder_app02::feed_shared;
 
 use anyhow::Result;
 use slint::{Timer, TimerMode};
-use std::{cell::RefCell, rc::Rc, time::Duration};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
 slint::include_modules!();
 
@@ -43,14 +47,16 @@ fn main() -> Result<()> {
         rt.render(); // initial paint
     }
 
-    // Live feed: tail persisted daemon output so data collected 24/7 is available immediately.
-    feed::daemon::start_daemon_bridge(tx.clone());
+    if ui.get_chart_enabled() && ui.get_history_valve_open() {
+        let ticker = ui.get_current_ticker().to_string();
+        let full = ui.get_render_all_candles();
+        spawn_history_load(tx.clone(), ticker, full);
+    }
 
-    // Dummy feed fallback so the UI stays functional if the daemon is not running yet.
-    let has_live_cache =
-        feed_shared::snapshot_path().exists() || feed_shared::event_log_path().exists();
-    if !has_live_cache {
-        feed::dummy::start_dummy_feed(tx.clone());
+    let feed_started = Rc::new(Cell::new(false));
+    if ui.get_feed_enabled() {
+        start_feeds(tx.clone());
+        feed_started.set(true);
     }
 
     // --- UI-thread event pump (drain channel, reduce, render) ---
@@ -59,31 +65,54 @@ fn main() -> Result<()> {
     {
         let runtime = runtime.clone();
         let history_tx = tx.clone();
+        let feed_tx = tx.clone();
+        let feed_started = feed_started.clone();
         pump.start(TimerMode::Repeated, Duration::from_millis(16), move || {
+            let frame_start = Instant::now();
             // Drain events quickly
             let mut any = false;
+            let mut events = 0usize;
             while let Ok(ev) = rx.try_recv() {
                 any = true;
+                events += 1;
                 if let app::AppEvent::Ui(app::UiEvent::TickerChanged { ticker }) = &ev {
                     let rt = runtime.borrow();
-                    if rt.state.history_valve_open {
+                    if rt.state.history_valve_open && rt.state.chart_enabled {
                         let full = rt.state.render_all_candles;
                         spawn_history_load(history_tx.clone(), ticker.clone(), full);
                     }
                 }
                 if let app::AppEvent::Ui(app::UiEvent::RenderModeChanged { full }) = &ev {
                     let rt = runtime.borrow();
-                    if rt.state.history_valve_open {
+                    if rt.state.history_valve_open && rt.state.chart_enabled {
                         let ticker = rt.state.current_ticker.clone();
                         spawn_history_load(history_tx.clone(), ticker, *full);
+                    }
+                }
+                if let app::AppEvent::Ui(app::UiEvent::ChartEnabledChanged { enabled }) = &ev {
+                    if *enabled {
+                        let rt = runtime.borrow();
+                        if rt.state.history_valve_open {
+                            let ticker = rt.state.current_ticker.clone();
+                            let full = rt.state.render_all_candles;
+                            spawn_history_load(history_tx.clone(), ticker, full);
+                        }
                     }
                 }
                 if let app::AppEvent::Ui(app::UiEvent::HistoryValveChanged { open }) = &ev {
                     if *open {
                         let rt = runtime.borrow();
-                        let ticker = rt.state.current_ticker.clone();
-                        let full = rt.state.render_all_candles;
-                        spawn_history_load(history_tx.clone(), ticker, full);
+                        if rt.state.chart_enabled {
+                            let ticker = rt.state.current_ticker.clone();
+                            let full = rt.state.render_all_candles;
+                            spawn_history_load(history_tx.clone(), ticker, full);
+                        }
+                    }
+                }
+                if let app::AppEvent::Ui(app::UiEvent::FeedEnabledChanged { enabled }) = &ev {
+                    if *enabled && !feed_started.get() {
+                        start_feeds(feed_tx.clone());
+                        feed_started.set(true);
                     }
                 }
                 runtime.borrow_mut().handle_event(ev);
@@ -99,6 +128,8 @@ fn main() -> Result<()> {
             } else {
                 runtime.borrow_mut().render_if_dirty();
             }
+            let frame_ms = frame_start.elapsed().as_secs_f32() * 1000.0;
+            runtime.borrow_mut().update_perf(frame_ms, events);
         });
     }
 
@@ -111,4 +142,16 @@ fn spawn_history_load(tx: std::sync::mpsc::Sender<app::AppEvent>, ticker: String
         let ticks = app::AppState::read_mid_ticks_for_ticker(&ticker, full);
         let _ = tx.send(app::AppEvent::HistoryLoaded { ticker, ticks, full });
     });
+}
+
+fn start_feeds(tx: std::sync::mpsc::Sender<app::AppEvent>) {
+    // Live feed: tail persisted daemon output so data collected 24/7 is available immediately.
+    feed::daemon::start_daemon_bridge(tx.clone(), true);
+
+    // Dummy feed fallback so the UI stays functional if the daemon is not running yet.
+    let has_live_cache =
+        feed_shared::snapshot_path().exists() || feed_shared::event_log_path().exists();
+    if !has_live_cache {
+        feed::dummy::start_dummy_feed(tx);
+    }
 }

@@ -69,6 +69,9 @@ impl AppRuntime {
     }
 
     pub fn process_pending_history(&mut self) {
+        if !self.state.chart_enabled || !self.state.history_valve_open {
+            return;
+        }
         const HISTORY_BUDGET_MS: u64 = 3;
         let start = Instant::now();
         let mut changed = false;
@@ -83,6 +86,12 @@ impl AppRuntime {
             }
         }
         if changed {
+            self.dirty = true;
+        }
+    }
+
+    pub fn update_perf(&mut self, frame_ms: f32, events: usize) {
+        if self.state.update_perf(frame_ms, events) {
             self.dirty = true;
         }
     }

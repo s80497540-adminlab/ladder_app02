@@ -19,11 +19,19 @@ pub enum UiEvent {
     ModeChanged { mode: String },
     TimeModeChanged { time_mode: String },
 
+    FeedEnabledChanged { enabled: bool },
+    ChartEnabledChanged { enabled: bool },
+    DepthPanelToggled { enabled: bool },
+    TradesPanelToggled { enabled: bool },
+    VolumePanelToggled { enabled: bool },
+
     CandleTfChanged { tf_secs: i32 },
     CandleWindowChanged { window_min: i32 },
+    CandlePriceModeChanged { mode: String },
     DomDepthChanged { depth: i32 },
     RenderModeChanged { full: bool },
     HistoryValveChanged { open: bool },
+    SessionRecordingChanged { enabled: bool },
 
     SendOrder,
     ReloadData,

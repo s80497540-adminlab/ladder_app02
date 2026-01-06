@@ -95,8 +95,18 @@ pub struct AppState {
 
     pub candle_tf_secs: i32,
     pub candle_window_minutes: i32,
+    pub candle_price_mode: String,
     pub dom_depth_levels: i32,
     pub render_all_candles: bool,
+    pub session_recording: bool,
+    pub session_id: String,
+    pub session_start_unix: u64,
+    pub session_ticks: HashMap<String, VecDeque<MidTick>>,
+    pub feed_enabled: bool,
+    pub chart_enabled: bool,
+    pub depth_enabled: bool,
+    pub trades_enabled: bool,
+    pub volume_enabled: bool,
 
     pub trade_side: String,
     pub trade_size: f32,
@@ -137,12 +147,24 @@ pub struct AppState {
     pub history_valve_open: bool,
 
     pub metrics: Metrics,
+
+    pub daemon_active: bool,
+    pub daemon_status: String,
+
+    pub perf_frame_ms_ema: f32,
+    pub perf_events_ema: f32,
+    pub perf_load: f32,
+    pub perf_healthy: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MidTick {
     pub ts_unix: u64,
     pub mid: f64,
+    #[serde(default)]
+    pub bid: f64,
+    #[serde(default)]
+    pub ask: f64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -151,8 +173,16 @@ struct MidTickCache {
     ticks: Vec<MidTick>,
 }
 
+#[derive(Debug, Serialize)]
+struct SessionMeta {
+    id: String,
+    start_unix: u64,
+}
+
 impl Default for AppState {
     fn default() -> Self {
+        let session_start_unix = now_unix();
+        let session_id = Self::session_id_from_unix(session_start_unix);
         Self {
             current_ticker: "ETH-USD".to_string(),
             mode: "Live".to_string(),
@@ -160,8 +190,18 @@ impl Default for AppState {
 
             candle_tf_secs: 60,
             candle_window_minutes: 60,
+            candle_price_mode: "Mid".to_string(),
             dom_depth_levels: 20,
             render_all_candles: false,
+            session_recording: true,
+            session_id,
+            session_start_unix,
+            session_ticks: HashMap::new(),
+            feed_enabled: false,
+            chart_enabled: false,
+            depth_enabled: true,
+            trades_enabled: true,
+            volume_enabled: true,
 
             trade_side: "Buy".to_string(),
             trade_size: 0.01,
@@ -198,21 +238,51 @@ impl Default for AppState {
             history_valve_open: false,
 
             metrics: Metrics::default(),
+
+            daemon_active: false,
+            daemon_status: "Daemon: idle".to_string(),
+
+            perf_frame_ms_ema: 0.0,
+            perf_events_ema: 0.0,
+            perf_load: 0.0,
+            perf_healthy: true,
         }
     }
 }
 
 impl AppState {
+    fn price_for_mode(&self, mid: f64, bid: f64, ask: f64) -> f64 {
+        let bid_ok = bid.is_finite() && bid > 0.0;
+        let ask_ok = ask.is_finite() && ask > 0.0;
+        match self.candle_price_mode.as_str() {
+            "Bid" if bid_ok => bid,
+            "Ask" if ask_ok => ask,
+            _ => mid,
+        }
+    }
+
     pub fn from_ui(ui: &crate::AppWindow) -> Self {
-        Self {
+        let session_start_unix = now_unix();
+        let session_id = Self::session_id_from_unix(session_start_unix);
+        let mut state = Self {
             current_ticker: ui.get_current_ticker().to_string(),
             mode: ui.get_mode().to_string(),
             time_mode: ui.get_time_mode().to_string(),
 
             candle_tf_secs: ui.get_candle_tf_secs(),
             candle_window_minutes: ui.get_candle_window_minutes(),
+            candle_price_mode: ui.get_candle_price_mode().to_string(),
             dom_depth_levels: ui.get_dom_depth_levels(),
             render_all_candles: ui.get_render_all_candles(),
+            session_recording: ui.get_session_recording(),
+            session_id,
+            session_start_unix,
+            session_ticks: HashMap::new(),
+            feed_enabled: ui.get_feed_enabled(),
+            chart_enabled: ui.get_chart_enabled(),
+            depth_enabled: ui.get_show_depth(),
+            trades_enabled: ui.get_show_trades(),
+            volume_enabled: ui.get_show_volume(),
 
             trade_side: ui.get_trade_side().to_string(),
             trade_size: ui.get_trade_size(),
@@ -249,7 +319,17 @@ impl AppState {
             history_valve_open: ui.get_history_valve_open(),
 
             metrics: Metrics::default(),
-        }
+
+            daemon_active: false,
+            daemon_status: "Daemon: idle".to_string(),
+
+            perf_frame_ms_ema: 0.0,
+            perf_events_ema: 0.0,
+            perf_load: 0.0,
+            perf_healthy: true,
+        };
+        state.ensure_session_dir();
+        state
     }
 
     pub fn reset_candles(&mut self) {
@@ -270,19 +350,32 @@ impl AppState {
     }
 
     /// ✅ Call this whenever you have a reliable mid + timestamp (BookTop).
-    pub fn on_mid_tick(&mut self, ts_unix: u64, mid: f64) {
+    pub fn on_mid_tick(&mut self, ts_unix: u64, mid: f64, bid: f64, ask: f64) {
         if !mid.is_finite() || mid <= 0.0 {
             return;
         }
 
-        self.record_mid_tick(ts_unix, mid);
-        self.apply_mid_tick(ts_unix, mid);
+        let mut bid = bid;
+        let mut ask = ask;
+        if !bid.is_finite() || bid <= 0.0 {
+            bid = mid;
+        }
+        if !ask.is_finite() || ask <= 0.0 {
+            ask = mid;
+        }
+        if bid > ask {
+            std::mem::swap(&mut bid, &mut ask);
+        }
+
+        self.record_mid_tick(ts_unix, mid, bid, ask);
+        let price = self.price_for_mode(mid, bid, ask);
+        self.apply_mid_tick(ts_unix, price);
         let ticker = self.current_ticker.clone();
-        self.persist_mid_tick_for_ticker(&ticker, ts_unix, mid);
+        self.persist_mid_tick_for_ticker(&ticker, ts_unix, mid, bid, ask);
     }
 
-    fn record_mid_tick(&mut self, ts_unix: u64, mid: f64) {
-        self.mid_ticks.push_back(MidTick { ts_unix, mid });
+    fn record_mid_tick(&mut self, ts_unix: u64, mid: f64, bid: f64, ask: f64) {
+        self.mid_ticks.push_back(MidTick { ts_unix, mid, bid, ask });
         if !self.render_all_candles {
             let cutoff = ts_unix.saturating_sub(CONDENSED_HISTORY_WINDOW_SECS);
             while self.mid_ticks.front().map(|t| t.ts_unix < cutoff).unwrap_or(false) {
@@ -379,6 +472,8 @@ impl AppState {
                     ticks.push(MidTick {
                         ts_unix: ts,
                         mid: c.close,
+                        bid: c.close,
+                        ask: c.close,
                     });
                 }
             }
@@ -398,7 +493,8 @@ impl AppState {
 
         for tick in ticks {
             if tick.mid > 0.0 && tick.mid.is_finite() {
-                self.apply_mid_tick(tick.ts_unix, tick.mid);
+                let price = self.price_for_mode(tick.mid, tick.bid, tick.ask);
+                self.apply_mid_tick(tick.ts_unix, price);
             }
         }
 
@@ -443,8 +539,9 @@ impl AppState {
                 break;
             };
             if tick.mid > 0.0 && tick.mid.is_finite() {
-                self.record_mid_tick(tick.ts_unix, tick.mid);
-                self.apply_mid_tick(tick.ts_unix, tick.mid);
+                self.record_mid_tick(tick.ts_unix, tick.mid, tick.bid, tick.ask);
+                let price = self.price_for_mode(tick.mid, tick.bid, tick.ask);
+                self.apply_mid_tick(tick.ts_unix, price);
                 changed = true;
             }
             processed += 1;
@@ -490,19 +587,31 @@ impl AppState {
         }
     }
 
-    pub fn persist_mid_tick_for_ticker(&mut self, ticker: &str, ts_unix: u64, mid: f64) {
+    pub fn persist_mid_tick_for_ticker(&mut self, ticker: &str, ts_unix: u64, mid: f64, bid: f64, ask: f64) {
         if ticker.is_empty() || !mid.is_finite() || mid <= 0.0 {
             return;
         }
         let Some(path) = Self::mid_log_path(ticker) else {
             return;
         };
-        let tick = MidTick { ts_unix, mid };
+        let mut bid = bid;
+        let mut ask = ask;
+        if !bid.is_finite() || bid <= 0.0 {
+            bid = mid;
+        }
+        if !ask.is_finite() || ask <= 0.0 {
+            ask = mid;
+        }
+        if bid > ask {
+            std::mem::swap(&mut bid, &mut ask);
+        }
+        let tick = MidTick { ts_unix, mid, bid, ask };
         if let Ok(line) = serde_json::to_string(&tick) {
             if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
                 let _ = writeln!(f, "{line}");
             }
         }
+        self.record_session_tick(ticker, &tick);
         let entry = self.candle_last_ts.entry(ticker.to_string()).or_insert(0);
         if ts_unix > *entry {
             *entry = ts_unix;
@@ -527,6 +636,102 @@ impl AppState {
             .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
             .collect();
         Some(dir.join(format!("candle_history_{safe}.json")))
+    }
+
+    fn session_id_from_unix(ts_unix: u64) -> String {
+        use chrono::{TimeZone, Utc};
+        let ts = ts_unix.min(i64::MAX as u64) as i64;
+        if let Some(dt) = Utc.timestamp_opt(ts, 0).single() {
+            format!("session_{}", dt.format("%Y%m%d_%H%M%S"))
+        } else {
+            format!("session_{ts_unix}")
+        }
+    }
+
+    fn session_root_dir() -> PathBuf {
+        PathBuf::from(feed_shared::DATA_DIR).join("sessions")
+    }
+
+    fn session_dir(&self) -> PathBuf {
+        Self::session_root_dir().join(&self.session_id)
+    }
+
+    pub(crate) fn ensure_session_dir(&self) {
+        let dir = self.session_dir();
+        if fs::create_dir_all(&dir).is_ok() {
+            let meta_path = dir.join("session_meta.json");
+            if !meta_path.exists() {
+                let meta = SessionMeta {
+                    id: self.session_id.clone(),
+                    start_unix: self.session_start_unix,
+                };
+                if let Ok(raw) = serde_json::to_string_pretty(&meta) {
+                    let _ = fs::write(meta_path, raw);
+                }
+            }
+        }
+    }
+
+    fn session_log_path(&self, ticker: &str) -> Option<PathBuf> {
+        if ticker.is_empty() {
+            return None;
+        }
+        let mut safe = ticker.to_string();
+        safe = safe
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect();
+        Some(self.session_dir().join(format!("ticks_{safe}.jsonl")))
+    }
+
+    fn record_session_tick(&mut self, ticker: &str, tick: &MidTick) {
+        if !self.session_recording {
+            return;
+        }
+        self.ensure_session_dir();
+        if let Some(path) = self.session_log_path(ticker) {
+            if let Ok(line) = serde_json::to_string(tick) {
+                if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
+                    let _ = writeln!(f, "{line}");
+                }
+            }
+        }
+        let entry = self
+            .session_ticks
+            .entry(ticker.to_string())
+            .or_insert_with(VecDeque::new);
+        entry.push_back(tick.clone());
+    }
+
+    pub fn session_ticks_for_view(&self, ticker: &str, full: bool) -> Vec<MidTick> {
+        let Some(ticks) = self.session_ticks.get(ticker) else {
+            return Vec::new();
+        };
+        if full {
+            return ticks.iter().cloned().collect();
+        }
+        let cutoff = now_unix().saturating_sub(CONDENSED_HISTORY_WINDOW_SECS);
+        let mut out: Vec<MidTick> = Vec::new();
+        for tick in ticks.iter().rev() {
+            if tick.ts_unix < cutoff {
+                break;
+            }
+            out.push(tick.clone());
+            if out.len() >= MAX_CONDENSED_MID_TICKS {
+                break;
+            }
+        }
+        out.reverse();
+        out
+    }
+
+    pub fn load_session_ticks_for_view(&mut self, full: bool) -> bool {
+        let ticks = self.session_ticks_for_view(&self.current_ticker, full);
+        if ticks.is_empty() {
+            return false;
+        }
+        self.mid_ticks = ticks.into();
+        true
     }
 
     pub fn load_mid_cache(&mut self) {
@@ -708,6 +913,9 @@ impl AppState {
     }
 
     pub fn candle_feed_status(&self) -> String {
+        if !self.feed_enabled {
+            return "Feed: OFF".to_string();
+        }
         let now = now_unix();
         let mut order: Vec<String> = Vec::new();
         let preferred = ["ETH-USD", "BTC-USD", "SOL-USD"];
@@ -745,6 +953,87 @@ impl AppState {
             }
         }
         format!("Feed: {}", parts.join(" | "))
+    }
+
+    pub fn update_perf(&mut self, frame_ms: f32, events: usize) -> bool {
+        let alpha = 0.15;
+        let mut changed = false;
+        if self.perf_frame_ms_ema <= 0.0 {
+            self.perf_frame_ms_ema = frame_ms.max(0.0);
+            self.perf_events_ema = events as f32;
+            changed = true;
+        } else {
+            let next_frame = self.perf_frame_ms_ema * (1.0 - alpha) + frame_ms * alpha;
+            let next_events = self.perf_events_ema * (1.0 - alpha) + events as f32 * alpha;
+            if (next_frame - self.perf_frame_ms_ema).abs() > 0.2
+                || (next_events - self.perf_events_ema).abs() > 0.5
+            {
+                changed = true;
+            }
+            self.perf_frame_ms_ema = next_frame;
+            self.perf_events_ema = next_events;
+        }
+
+        let load = (self.perf_frame_ms_ema / 33.0).min(1.0);
+        if (load - self.perf_load).abs() > 0.02 {
+            changed = true;
+        }
+        self.perf_load = load;
+
+        let healthy = self.perf_frame_ms_ema <= 33.0 && self.perf_events_ema <= 200.0;
+        if healthy != self.perf_healthy {
+            changed = true;
+        }
+        self.perf_healthy = healthy;
+
+        changed
+    }
+
+    pub fn perf_status(&self) -> String {
+        if self.perf_frame_ms_ema <= 0.0 {
+            return "Perf: idle".to_string();
+        }
+        format!(
+            "Perf: {:.0}ms | {:.0} ev",
+            self.perf_frame_ms_ema, self.perf_events_ema
+        )
+    }
+
+    pub fn update_daemon_status(&mut self, now_unix: u64) -> bool {
+        let path = feed_shared::event_log_path();
+        let (active, status) = if !path.exists() {
+            (false, "Daemon: no log".to_string())
+        } else {
+            let mtime = fs::metadata(&path)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map(|d| d.as_secs());
+            match mtime {
+                Some(ts) => {
+                    let age = now_unix.saturating_sub(ts);
+                    let active = age <= 5;
+                    let status = if active {
+                        format!("Daemon: writing ({age}s)")
+                    } else {
+                        format!("Daemon: idle ({age}s)")
+                    };
+                    (active, status)
+                }
+                None => (false, "Daemon: unknown".to_string()),
+            }
+        };
+
+        let mut changed = false;
+        if active != self.daemon_active {
+            self.daemon_active = active;
+            changed = true;
+        }
+        if status != self.daemon_status {
+            self.daemon_status = status;
+            changed = true;
+        }
+        changed
     }
 
     pub fn history_status(&self) -> String {

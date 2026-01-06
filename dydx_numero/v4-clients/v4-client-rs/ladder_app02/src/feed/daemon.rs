@@ -65,7 +65,7 @@ enum PersistedLine {
     Trade { data: TradeRecord },
 }
 
-pub fn start_daemon_bridge(tx: std::sync::mpsc::Sender<AppEvent>) {
+pub fn start_daemon_bridge(tx: std::sync::mpsc::Sender<AppEvent>, start_at_end: bool) {
     thread::spawn(move || {
         let snapshot_path = feed_shared::snapshot_path();
         let log_path = feed_shared::event_log_path();
@@ -103,11 +103,16 @@ pub fn start_daemon_bridge(tx: std::sync::mpsc::Sender<AppEvent>) {
         }
 
         let mut offset: u64 = 0;
+        let mut start_at_end_once = start_at_end;
         let mut idle_loops: u64 = 0;
         loop {
             if let Ok(file) = OpenOptions::new().read(true).open(&log_path) {
                 let mut reader = BufReader::new(file);
                 if let Ok(file_len) = reader.get_ref().metadata().map(|m| m.len()) {
+                    if start_at_end_once {
+                        offset = file_len;
+                        start_at_end_once = false;
+                    }
                     if file_len < offset {
                         debug_hooks::log_event_log_issue("file shrunk; resetting offset to 0");
                         offset = 0; // file rotated or truncated

@@ -28,6 +28,36 @@ pub fn wire_ui(ui: &crate::AppWindow, tx: std::sync::mpsc::Sender<AppEvent>) {
     }
     {
         let tx = tx.clone();
+        ui.on_feed_enabled_changed(move |enabled| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::FeedEnabledChanged { enabled }));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_chart_enabled_changed(move |enabled| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::ChartEnabledChanged { enabled }));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_depth_panel_changed(move |enabled| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::DepthPanelToggled { enabled }));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_trades_panel_changed(move |enabled| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::TradesPanelToggled { enabled }));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_volume_panel_changed(move |enabled| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::VolumePanelToggled { enabled }));
+        });
+    }
+    {
+        let tx = tx.clone();
         ui.on_candle_tf_changed(move |tf| {
             let _ = tx.send(AppEvent::Ui(UiEvent::CandleTfChanged { tf_secs: tf }));
         });
@@ -36,6 +66,14 @@ pub fn wire_ui(ui: &crate::AppWindow, tx: std::sync::mpsc::Sender<AppEvent>) {
         let tx = tx.clone();
         ui.on_candle_window_changed(move |w| {
             let _ = tx.send(AppEvent::Ui(UiEvent::CandleWindowChanged { window_min: w }));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_candle_price_mode_changed(move |mode| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::CandlePriceModeChanged {
+                mode: mode.to_string(),
+            }));
         });
     }
     {
@@ -54,6 +92,12 @@ pub fn wire_ui(ui: &crate::AppWindow, tx: std::sync::mpsc::Sender<AppEvent>) {
         let tx = tx.clone();
         ui.on_history_valve_changed(move |open| {
             let _ = tx.send(AppEvent::Ui(UiEvent::HistoryValveChanged { open }));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_session_recording_changed(move |enabled| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::SessionRecordingChanged { enabled }));
         });
     }
 
