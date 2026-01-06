@@ -15,7 +15,7 @@ use std::{
 use crate::AppWindow;
 
 /// Bump when you change config schema.
-const CONFIG_VERSION: u32 = 2;
+const CONFIG_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -30,11 +30,13 @@ pub struct AppConfig {
     // TF selection + candle window
     pub tf_selected: i32,
     pub candle_window_minutes: i32,
+    pub candle_price_mode: String,
 
     // toggles
     pub show_depth: bool,
     pub show_trades: bool,
     pub show_volume: bool,
+    pub session_recording: bool,
 
     // dom depth
     pub dom_depth_levels: i32,
@@ -89,10 +91,12 @@ impl Default for AppConfig {
 
             tf_selected: 4,
             candle_window_minutes: 60,
+            candle_price_mode: "Mid".to_string(),
 
             show_depth: true,
             show_trades: true,
             show_volume: true,
+            session_recording: true,
 
             dom_depth_levels: 20,
 
@@ -184,10 +188,12 @@ impl Persistence {
 
         ui.set_tf_selected(cfg.tf_selected);
         ui.set_candle_window_minutes(cfg.candle_window_minutes);
+        ui.set_candle_price_mode(cfg.candle_price_mode.clone().into());
 
         ui.set_show_depth(cfg.show_depth);
         ui.set_show_trades(cfg.show_trades);
         ui.set_show_volume(cfg.show_volume);
+        ui.set_session_recording(cfg.session_recording);
 
         ui.set_dom_depth_levels(cfg.dom_depth_levels);
 
@@ -243,10 +249,12 @@ impl Persistence {
 
             tf_selected: ui.get_tf_selected(),
             candle_window_minutes: ui.get_candle_window_minutes(),
+            candle_price_mode: ui.get_candle_price_mode().to_string(),
 
             show_depth: ui.get_show_depth(),
             show_trades: ui.get_show_trades(),
             show_volume: ui.get_show_volume(),
+            session_recording: ui.get_session_recording(),
 
             dom_depth_levels: ui.get_dom_depth_levels(),
 

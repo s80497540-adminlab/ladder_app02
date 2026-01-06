@@ -13,8 +13,12 @@ pub fn render(state: &AppState, ui: &crate::AppWindow) {
 
     ui.set_candle_tf_secs(state.candle_tf_secs);
     ui.set_candle_window_minutes(state.candle_window_minutes);
+    ui.set_candle_price_mode(SharedString::from(state.candle_price_mode.clone()));
     ui.set_dom_depth_levels(state.dom_depth_levels);
     ui.set_render_all_candles(state.render_all_candles);
+    ui.set_feed_enabled(state.feed_enabled);
+    ui.set_chart_enabled(state.chart_enabled);
+    ui.set_session_recording(state.session_recording);
 
     ui.set_trade_side(SharedString::from(state.trade_side.clone()));
     ui.set_trade_size(state.trade_size);
@@ -33,6 +37,11 @@ pub fn render(state: &AppState, ui: &crate::AppWindow) {
     ui.set_axis_price_unit(SharedString::from(state.current_ticker.clone()));
     ui.set_candle_feed_status(SharedString::from(state.candle_feed_status()));
     ui.set_history_status(SharedString::from(state.history_status()));
+    ui.set_perf_status(SharedString::from(state.perf_status()));
+    ui.set_perf_load(state.perf_load);
+    ui.set_perf_healthy(state.perf_healthy);
+    ui.set_daemon_status(SharedString::from(state.daemon_status.clone()));
+    ui.set_daemon_active(state.daemon_active);
 
     // Metrics
     ui.set_mid_price(state.metrics.mid as f32);
