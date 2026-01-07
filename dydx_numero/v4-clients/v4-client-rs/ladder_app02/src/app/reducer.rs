@@ -231,6 +231,51 @@ fn reduce_ui(state: &mut AppState, ev: UiEvent) -> bool {
             }
             true
         }
+        UiEvent::DrawToolChanged { tool } => {
+            state.draw_tool = tool;
+            state.draw_active = None;
+            true
+        }
+        UiEvent::DrawBegin { x, y } => {
+            if state.draw_tool == "Pan" {
+                return false;
+            }
+            let x = x.clamp(0.0, 1.0);
+            let y = y.clamp(0.0, 1.0);
+            state.draw_active = Some(DrawShapeState {
+                kind: state.draw_tool.clone(),
+                x1: x,
+                y1: y,
+                x2: x,
+                y2: y,
+            });
+            true
+        }
+        UiEvent::DrawUpdate { x, y } => {
+            let Some(active) = state.draw_active.as_mut() else {
+                return false;
+            };
+            active.x2 = x.clamp(0.0, 1.0);
+            active.y2 = y.clamp(0.0, 1.0);
+            true
+        }
+        UiEvent::DrawEnd { x, y } => {
+            let Some(mut active) = state.draw_active.take() else {
+                return false;
+            };
+            active.x2 = x.clamp(0.0, 1.0);
+            active.y2 = y.clamp(0.0, 1.0);
+
+            let dx = (active.x2 - active.x1).abs();
+            let dy = (active.y2 - active.y1).abs();
+            if dx >= 0.002 || dy >= 0.002 {
+                state.drawings.push(active);
+                if let Err(err) = state.save_session_drawings() {
+                    state.order_message = format!("Drawings save failed: {err}");
+                }
+            }
+            true
+        }
 
         UiEvent::Deposit { amount } => {
             let a = amount.max(0.0);

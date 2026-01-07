@@ -85,6 +85,15 @@ pub struct CandlePointState {
     pub volume: f32, // 0..1
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DrawShapeState {
+    pub kind: String,
+    pub x1: f32,
+    pub y1: f32,
+    pub x2: f32,
+    pub y2: f32,
+}
+
 // -------------------- AppState --------------------
 
 #[derive(Debug, Clone)]
@@ -146,6 +155,10 @@ pub struct AppState {
     pub history_total: usize,
     pub history_done: usize,
     pub history_valve_open: bool,
+
+    pub draw_tool: String,
+    pub drawings: Vec<DrawShapeState>,
+    pub draw_active: Option<DrawShapeState>,
 
     pub metrics: Metrics,
 
@@ -255,6 +268,10 @@ impl Default for AppState {
             history_done: 0,
             history_valve_open: false,
 
+            draw_tool: "Pan".to_string(),
+            drawings: Vec::new(),
+            draw_active: None,
+
             metrics: Metrics::default(),
 
             daemon_active: false,
@@ -282,7 +299,7 @@ impl AppState {
     pub fn from_ui(ui: &crate::AppWindow) -> Self {
         let session_start_unix = now_unix();
         let session_id = Self::session_id_from_unix(session_start_unix);
-        let state = Self {
+        let mut state = Self {
             current_ticker: ui.get_current_ticker().to_string(),
             mode: ui.get_mode().to_string(),
             time_mode: ui.get_time_mode().to_string(),
@@ -337,6 +354,10 @@ impl AppState {
             history_done: 0,
             history_valve_open: ui.get_history_valve_open(),
 
+            draw_tool: ui.get_draw_tool().to_string(),
+            drawings: Vec::new(),
+            draw_active: None,
+
             metrics: Metrics::default(),
 
             daemon_active: false,
@@ -348,6 +369,7 @@ impl AppState {
             perf_healthy: true,
         };
         state.ensure_session_dir();
+        state.load_session_drawings();
         state
     }
 
@@ -701,6 +723,35 @@ impl AppState {
             .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
             .collect();
         Some(self.session_dir().join(format!("ticks_{safe}.jsonl")))
+    }
+
+    fn session_drawings_path(&self) -> PathBuf {
+        self.session_dir().join("drawings.json")
+    }
+
+    pub fn load_session_drawings(&mut self) -> bool {
+        let path = self.session_drawings_path();
+        if !path.exists() {
+            return false;
+        }
+        match fs::read_to_string(&path) {
+            Ok(raw) => {
+                if let Ok(drawings) = serde_json::from_str::<Vec<DrawShapeState>>(&raw) {
+                    self.drawings = drawings;
+                    return true;
+                }
+            }
+            Err(_) => {}
+        }
+        false
+    }
+
+    pub fn save_session_drawings(&self) -> Result<PathBuf, String> {
+        self.ensure_session_dir();
+        let path = self.session_drawings_path();
+        let raw = serde_json::to_string_pretty(&self.drawings).map_err(|e| e.to_string())?;
+        fs::write(&path, raw).map_err(|e| e.to_string())?;
+        Ok(path)
     }
 
     fn record_session_tick(&mut self, ticker: &str, tick: &MidTick) {

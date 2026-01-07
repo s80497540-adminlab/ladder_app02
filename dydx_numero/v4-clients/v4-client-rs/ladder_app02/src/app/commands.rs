@@ -106,6 +106,32 @@ pub fn wire_ui(ui: &crate::AppWindow, tx: std::sync::mpsc::Sender<AppEvent>) {
             let _ = tx.send(AppEvent::Ui(UiEvent::CloseAndSaveRequested));
         });
     }
+    {
+        let tx = tx.clone();
+        ui.on_draw_tool_changed(move |tool| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::DrawToolChanged {
+                tool: tool.to_string(),
+            }));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_draw_begin(move |x, y| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::DrawBegin { x, y }));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_draw_update(move |x, y| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::DrawUpdate { x, y }));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_draw_end(move |x, y| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::DrawEnd { x, y }));
+        });
+    }
 
     // --- Actions ---
     {
