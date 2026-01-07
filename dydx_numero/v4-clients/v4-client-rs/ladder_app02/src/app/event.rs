@@ -33,6 +33,10 @@ pub enum UiEvent {
     HistoryValveChanged { open: bool },
     SessionRecordingChanged { enabled: bool },
     CloseAndSaveRequested,
+    DrawToolChanged { tool: String },
+    DrawBegin { x: f32, y: f32 },
+    DrawUpdate { x: f32, y: f32 },
+    DrawEnd { x: f32, y: f32 },
 
     SendOrder,
     ReloadData,

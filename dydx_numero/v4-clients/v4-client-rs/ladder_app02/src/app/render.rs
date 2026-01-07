@@ -1,5 +1,5 @@
 use super::state::*;
-use crate::{AxisTick, BookLevel, CandlePoint, CandleRow, Receipt, Trade};
+use crate::{AxisTick, BookLevel, CandlePoint, CandleRow, DrawShape, Receipt, Trade};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use slint::{ModelRc, SharedString, VecModel};
 
@@ -42,6 +42,7 @@ pub fn render(state: &AppState, ui: &crate::AppWindow) {
     ui.set_perf_healthy(state.perf_healthy);
     ui.set_daemon_status(SharedString::from(state.daemon_status.clone()));
     ui.set_daemon_active(state.daemon_active);
+    ui.set_draw_tool(SharedString::from(state.draw_tool.clone()));
 
     // Metrics
     ui.set_mid_price(state.metrics.mid as f32);
@@ -142,21 +143,44 @@ pub fn render(state: &AppState, ui: &crate::AppWindow) {
     };
     ui.set_candle_midline(candle_midline);
 
+    let chart_x_zoom = ui.get_chart_x_zoom() as f64;
+    let chart_y_zoom = ui.get_chart_y_zoom() as f64;
+    let chart_pan_x = ui.get_chart_pan_x() as f64;
+    let chart_pan_y = ui.get_chart_pan_y() as f64;
+
     // Axis ticks derived from visible window (pan/zoom aware)
-    let price_ticks = build_price_ticks_visible(
-        candles_for_view,
-        ui.get_chart_y_zoom() as f64,
-        ui.get_chart_pan_y() as f64,
-        &state.current_ticker,
-    );
+    let price_ctx = price_axis_context(candles_for_view);
+    let price_ticks = price_ctx
+        .as_ref()
+        .map(|ctx| build_price_ticks_visible(ctx, chart_y_zoom, chart_pan_y, &state.current_ticker))
+        .unwrap_or_default();
     ui.set_price_ticks(ModelRc::new(VecModel::from(price_ticks)));
 
-    let time_ticks = build_time_ticks_visible(
-        candles_for_view,
-        ui.get_chart_x_zoom() as f64,
-        ui.get_chart_pan_x() as f64,
-    );
+    let time_ctx = time_axis_context(candles_for_view);
+    let time_ticks = time_ctx
+        .as_ref()
+        .map(|ctx| build_time_ticks_visible(ctx, chart_x_zoom, chart_pan_x))
+        .unwrap_or_default();
     ui.set_time_ticks(ModelRc::new(VecModel::from(time_ticks)));
+
+    let mut drawings: Vec<DrawShape> = state
+        .drawings
+        .iter()
+        .map(|d| build_draw_shape(d, false, price_ctx.as_ref(), time_ctx.as_ref(), chart_x_zoom, chart_pan_x, chart_y_zoom, chart_pan_y))
+        .collect();
+    if let Some(active) = &state.draw_active {
+        drawings.push(build_draw_shape(
+            active,
+            true,
+            price_ctx.as_ref(),
+            time_ctx.as_ref(),
+            chart_x_zoom,
+            chart_pan_x,
+            chart_y_zoom,
+            chart_pan_y,
+        ));
+    }
+    ui.set_drawings(ModelRc::new(VecModel::from(drawings)));
 
     // Receipts
     let receipts: Vec<Receipt> = state
@@ -270,17 +294,23 @@ fn format_utc(ts_unix: u64) -> Option<String> {
     Some(dt.format("%H:%M:%S UTC").to_string())
 }
 
-fn build_price_ticks_visible(
-    candles: &[Candle],
-    y_zoom: f64,
-    pan_y: f64,
-    unit: &str,
-) -> Vec<AxisTick> {
-    let mut out = Vec::new();
-    if candles.is_empty() {
-        return out;
-    }
+#[derive(Clone, Debug)]
+struct PriceAxisContext {
+    lo: f64,
+    hi: f64,
+    span: f64,
+    decimals: usize,
+}
 
+#[derive(Clone, Debug)]
+struct TimeAxisContext {
+    ts: Vec<u64>,
+}
+
+fn price_axis_context(candles: &[Candle]) -> Option<PriceAxisContext> {
+    if candles.is_empty() {
+        return None;
+    }
     let mut lo = f64::INFINITY;
     let mut hi = f64::NEG_INFINITY;
     for c in candles {
@@ -288,83 +318,98 @@ fn build_price_ticks_visible(
         hi = hi.max(c.high);
     }
     if !lo.is_finite() || !hi.is_finite() || hi <= lo {
-        return out;
+        return None;
     }
     let span = hi - lo;
+    let decimals = price_decimals(span);
+    Some(PriceAxisContext {
+        lo,
+        hi,
+        span,
+        decimals,
+    })
+}
 
-    // invert screen y (0..1) to price using current pan/zoom
-    let y_to_price = |y_screen: f64| {
-        let y_norm = 0.5 + (y_screen - 0.5 - pan_y) / y_zoom;
-        hi - y_norm * span
-    };
+fn price_decimals(span: f64) -> usize {
+    if span >= 1000.0 {
+        0
+    } else if span >= 100.0 {
+        1
+    } else if span >= 10.0 {
+        2
+    } else if span >= 1.0 {
+        3
+    } else if span >= 0.1 {
+        4
+    } else {
+        5
+    }
+}
 
+fn price_from_screen(ctx: &PriceAxisContext, y_screen: f64, y_zoom: f64, pan_y: f64) -> f64 {
+    let y_norm = 0.5 + (y_screen - 0.5 - pan_y) / y_zoom;
+    ctx.hi - y_norm * ctx.span
+}
+
+fn time_axis_context(candles: &[Candle]) -> Option<TimeAxisContext> {
+    let ts: Vec<u64> = candles
+        .iter()
+        .filter_map(|c| parse_unix_ts(&c.ts))
+        .collect();
+    if ts.len() != candles.len() || ts.is_empty() {
+        return None;
+    }
+    Some(TimeAxisContext { ts })
+}
+
+fn ts_from_screen(ctx: &TimeAxisContext, x_screen: f64, x_zoom: f64, pan_x: f64) -> u64 {
+    let n = ctx.ts.len();
+    if n == 1 {
+        return ctx.ts[0];
+    }
+    let x_to_idx = 0.5 + (x_screen - 0.5 - pan_x) / x_zoom;
+    let idx = x_to_idx * n as f64 - 0.5;
+    let i = idx.clamp(0.0, (n - 1) as f64);
+    let lo_i = i.floor() as usize;
+    let hi_i = i.ceil() as usize;
+    if lo_i == hi_i {
+        return ctx.ts[lo_i];
+    }
+    let t_lo = ctx.ts[lo_i] as f64;
+    let t_hi = ctx.ts[hi_i] as f64;
+    let frac = i - lo_i as f64;
+    (t_lo + (t_hi - t_lo) * frac) as u64
+}
+
+fn build_price_ticks_visible(
+    ctx: &PriceAxisContext,
+    y_zoom: f64,
+    pan_y: f64,
+    unit: &str,
+) -> Vec<AxisTick> {
+    let mut out = Vec::new();
     let steps = 9;
     for i in 0..steps {
         let frac = i as f64 / (steps - 1) as f64;
-        let price = y_to_price(frac);
-        let decimals = if span >= 1000.0 {
-            0
-        } else if span >= 100.0 {
-            1
-        } else if span >= 10.0 {
-            2
-        } else if span >= 1.0 {
-            3
-        } else if span >= 0.1 {
-            4
-        } else {
-            5
-        };
+        let price = price_from_screen(ctx, frac, y_zoom, pan_y);
         out.push(AxisTick {
             pos: frac as f32,
-            label: format!("{price:.decimals$} {unit}").into(),
+            label: format!("{price:.decimals$} {unit}", decimals = ctx.decimals).into(),
         });
     }
     out
 }
 
 fn build_time_ticks_visible(
-    candles: &[Candle],
+    ctx: &TimeAxisContext,
     x_zoom: f64,
     pan_x: f64,
 ) -> Vec<AxisTick> {
     let mut out = Vec::new();
-    let n = candles.len();
-    if n == 0 {
-        return out;
-    }
-
-    let ts: Vec<u64> = candles
-        .iter()
-        .filter_map(|c| parse_unix_ts(&c.ts))
-        .collect();
-    if ts.len() != n {
-        return out;
-    }
-
-    let idx_to_ts = |idx: f64| -> u64 {
-        let i = idx.clamp(0.0, (n - 1) as f64);
-        let lo_i = i.floor() as usize;
-        let hi_i = i.ceil() as usize;
-        if lo_i == hi_i {
-            return ts[lo_i];
-        }
-        let t_lo = ts[lo_i] as f64;
-        let t_hi = ts[hi_i] as f64;
-        let frac = i - lo_i as f64;
-        (t_lo + (t_hi - t_lo) * frac) as u64
-    };
-
-    // invert screen x (0..1) to candle index using pan/zoom
-    let x_to_idx = |x_screen: f64| -> f64 {
-        0.5 + (x_screen - 0.5 - pan_x) / x_zoom
-    };
-
     let steps = 7;
     for i in 0..steps {
         let frac = i as f64 / (steps - 1) as f64;
-        let idx = x_to_idx(frac) * n as f64 - 0.5;
-        let ts_val = idx_to_ts(idx);
+        let ts_val = ts_from_screen(ctx, frac, x_zoom, pan_x);
         let label = format_utc(ts_val).unwrap_or_default();
         out.push(AxisTick {
             pos: frac as f32,
@@ -372,4 +417,58 @@ fn build_time_ticks_visible(
         });
     }
     out
+}
+
+fn build_draw_shape(
+    shape: &super::state::DrawShapeState,
+    is_preview: bool,
+    price_ctx: Option<&PriceAxisContext>,
+    time_ctx: Option<&TimeAxisContext>,
+    x_zoom: f64,
+    pan_x: f64,
+    y_zoom: f64,
+    pan_y: f64,
+) -> DrawShape {
+    let label = if shape.kind == "Ruler" {
+        build_ruler_label(shape, price_ctx, time_ctx, x_zoom, pan_x, y_zoom, pan_y)
+    } else {
+        String::new()
+    };
+    DrawShape {
+        kind: SharedString::from(shape.kind.clone()),
+        x1: shape.x1,
+        y1: shape.y1,
+        x2: shape.x2,
+        y2: shape.y2,
+        label: SharedString::from(label),
+        is_preview,
+    }
+}
+
+fn build_ruler_label(
+    shape: &super::state::DrawShapeState,
+    price_ctx: Option<&PriceAxisContext>,
+    _time_ctx: Option<&TimeAxisContext>,
+    _x_zoom: f64,
+    _pan_x: f64,
+    y_zoom: f64,
+    pan_y: f64,
+) -> String {
+    let Some(ctx) = price_ctx else {
+        return String::new();
+    };
+    let p1 = price_from_screen(ctx, shape.y1 as f64, y_zoom, pan_y);
+    let p2 = price_from_screen(ctx, shape.y2 as f64, y_zoom, pan_y);
+    if !p1.is_finite() || !p2.is_finite() || p1 <= 0.0 {
+        return String::new();
+    }
+    let delta = p2 - p1;
+    let pct = (delta / p1) * 100.0;
+    format!(
+        "Delta {:+.*}  Long {:+.2}%  Short {:+.2}%",
+        ctx.decimals,
+        delta,
+        pct,
+        -pct
+    )
 }

@@ -46,6 +46,16 @@ export struct AxisTick {
     label: string,
 }
 
+export struct DrawShape {
+    kind: string,
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+    label: string,
+    is_preview: bool,
+}
+
 export struct Receipt {
     ts: string,
     ticker: string,
@@ -467,12 +477,18 @@ component CandleChart inherits Rectangle {
     in property <bool> show_volume_bars;
     in property <[CandlePoint]> points;
     in property <float> mid_line_y;
+    in property <[DrawShape]> drawings;
+    in property <string> draw_tool;
     in-out property <float> x_zoom;
     in-out property <float> y_zoom;
     in-out property <float> pan_x;
     in-out property <float> pan_y;
     in-out property <float> cursor_x;
     in-out property <float> cursor_y;
+
+    callback draw_begin(x: float, y: float);
+    callback draw_update(x: float, y: float);
+    callback draw_end(x: float, y: float);
 
     background: #10131a;
     clip: true;
@@ -566,6 +582,56 @@ component CandleChart inherits Rectangle {
         }
     }
 
+    // Drawn rectangles (zones)
+    for d in drawings : Rectangle {
+        visible: d.kind == "Rect";
+        property <float> x0: Math.min(d.x1, d.x2);
+        property <float> x1: Math.max(d.x1, d.x2);
+        property <float> y0: Math.min(d.y1, d.y2);
+        property <float> y1: Math.max(d.y1, d.y2);
+
+        x: x0 * parent.width;
+        y: y0 * parent.height;
+        width: Math.max(2px, (x1 - x0) * parent.width);
+        height: Math.max(2px, (y1 - y0) * parent.height);
+        background: d.is_preview ? #1e2d4666 : #1e2d4633;
+        border-width: 1px;
+        border-color: #6ab0ff;
+        border-radius: 2px;
+    }
+
+    // Drawn lines + rulers
+    for d in drawings : Path {
+        visible: d.kind == "Line" || d.kind == "Ruler";
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        stroke: d.kind == "Ruler" ? #6ab0ff : #ffaa66;
+        stroke-width: 1px;
+        fill: #00000000;
+        opacity: d.is_preview ? 0.6 : 0.9;
+
+        MoveTo { x: (d.x1 * parent.width) / 1px; y: (d.y1 * parent.height) / 1px; }
+        LineTo { x: (d.x2 * parent.width) / 1px; y: (d.y2 * parent.height) / 1px; }
+    }
+
+    // Ruler labels
+    for d in drawings : Rectangle {
+        visible: d.label != "";
+        property <length> label_w: 190px;
+        x: Math.max(4px, Math.min(parent.width - label_w - 4px, (d.x2 * parent.width) + 6px));
+        y: Math.max(4px, Math.min(parent.height - 18px, (d.y2 * parent.height) - 18px));
+        width: label_w;
+        height: 16px;
+        background: #0f1420cc;
+        border-width: 1px;
+        border-color: #38435a;
+        border-radius: 3px;
+
+        Text { x: 4px; y: 1px; text: d.label; color: #d7e8ff; font-size: 9px; }
+    }
+
     Rectangle {
         x: Math.max(0px, Math.min(parent.width - 1px, root.cursor_x * parent.width));
         y: 0px;
@@ -597,22 +663,38 @@ component CandleChart inherits Rectangle {
         pointer-event(event) => {
             root.cursor_x = Math.max(0.0, Math.min(1.0, self.mouse-x / parent.width));
             root.cursor_y = Math.max(0.0, Math.min(1.0, self.mouse-y / parent.height));
+            let x_n = root.cursor_x;
+            let y_n = root.cursor_y;
 
-            if event.kind == PointerEventKind.down {
-                dragging = true;
-                last_x = self.mouse-x;
-                last_y = self.mouse-y;
-            } else if event.kind == PointerEventKind.up {
-                dragging = false;
-            } else if event.kind == PointerEventKind.move && dragging {
-                let dx = (self.mouse-x - last_x) / parent.width;
-                let dy = (self.mouse-y - last_y) / parent.height;
+            if root.draw_tool == "Pan" {
+                if event.kind == PointerEventKind.down {
+                    dragging = true;
+                    last_x = self.mouse-x;
+                    last_y = self.mouse-y;
+                } else if event.kind == PointerEventKind.up {
+                    dragging = false;
+                } else if event.kind == PointerEventKind.move && dragging {
+                    let dx = (self.mouse-x - last_x) / parent.width;
+                    let dy = (self.mouse-y - last_y) / parent.height;
 
-                root.pan_x = Math.max(-2.0, Math.min(2.0, root.pan_x + dx));
-                root.pan_y = Math.max(-1.0, Math.min(1.0, root.pan_y + dy));
+                    root.pan_x = Math.max(-2.0, Math.min(2.0, root.pan_x + dx));
+                    root.pan_y = Math.max(-1.0, Math.min(1.0, root.pan_y + dy));
 
-                last_x = self.mouse-x;
-                last_y = self.mouse-y;
+                    last_x = self.mouse-x;
+                    last_y = self.mouse-y;
+                }
+            } else {
+                if event.kind == PointerEventKind.down {
+                    dragging = true;
+                    root.draw_begin(x_n, y_n);
+                } else if event.kind == PointerEventKind.up {
+                    if dragging {
+                        root.draw_end(x_n, y_n);
+                    }
+                    dragging = false;
+                } else if event.kind == PointerEventKind.move && dragging {
+                    root.draw_update(x_n, y_n);
+                }
             }
         }
 
@@ -686,6 +768,8 @@ component ChartPopoutPanel inherits Rectangle {
 
     in property <[CandlePoint]> points;
     in property <float> mid_line_y;
+    in property <[DrawShape]> drawings;
+    in property <string> draw_tool;
 
     in-out property <float> x_zoom;
     in-out property <float> y_zoom;
@@ -695,6 +779,10 @@ component ChartPopoutPanel inherits Rectangle {
     in-out property <float> cursor_y;
 
     in property <string> title;
+
+    callback draw_begin(x: float, y: float);
+    callback draw_update(x: float, y: float);
+    callback draw_end(x: float, y: float);
 
     x: px;
     y: py;
@@ -766,6 +854,8 @@ component ChartPopoutPanel inherits Rectangle {
 
             points: root.points;
             mid_line_y: root.mid_line_y;
+            drawings: root.drawings;
+            draw_tool: root.draw_tool;
 
             x_zoom <=> root.x_zoom;
             y_zoom <=> root.y_zoom;
@@ -773,6 +863,10 @@ component ChartPopoutPanel inherits Rectangle {
             pan_y <=> root.pan_y;
             cursor_x <=> root.cursor_x;
             cursor_y <=> root.cursor_y;
+
+            draw_begin(x, y) => { root.draw_begin(x, y); }
+            draw_update(x, y) => { root.draw_update(x, y); }
+            draw_end(x, y) => { root.draw_end(x, y); }
         }
     }
 
@@ -910,6 +1004,7 @@ export component AppWindow inherits Window {
     in-out property <[CandlePoint]> candle_points;
     in-out property <[AxisTick]> price_ticks;
     in-out property <[AxisTick]> time_ticks;
+    in-out property <[DrawShape]> drawings;
     in-out property <[Receipt]> receipts;
 
     in-out property <float> candle_midline;
@@ -939,6 +1034,9 @@ export component AppWindow inherits Window {
 
     in-out property <length> inline_chart_height: 260px;
     in-out property <bool> is_fullscreen: false;
+
+    in-out property <[string]> draw_tools: ["Pan", "Line", "Rect", "Ruler"];
+    in-out property <string> draw_tool: "Pan";
 
     in-out property <bool> chart_popout_open: false;
     in-out property <length> chart_popout_x: 80px;
@@ -974,6 +1072,10 @@ export component AppWindow inherits Window {
     callback history_valve_changed(open: bool);
     callback session_recording_changed(enabled: bool);
     callback close_and_save_requested();
+    callback draw_tool_changed(tool: string);
+    callback draw_begin(x: float, y: float);
+    callback draw_update(x: float, y: float);
+    callback draw_end(x: float, y: float);
 
     callback send_order();
     callback reload_data();
@@ -1575,12 +1677,26 @@ export component AppWindow inherits Window {
                 Text {
                     x: 8px;
                     y: 4px;
+                    width: parent.width - 520px;
                     text:
                         "Candles  tf=" + candle_tf_secs
                         + "s  window=" + candle_window_minutes + "m"
                         + "   | X=" + chart_x_zoom + "  Y=" + chart_y_zoom
                         + "   | H=" + (root.inline_chart_height / 1px) + "px";
                     color: #ffffff;
+                }
+
+                Text { x: parent.width - 500px; y: 4px; text: "Tool:"; color: #cccccc; font-size: 10px; }
+                for tool[idx] in root.draw_tools : Button {
+                    x: parent.width - 460px + (idx * 54px);
+                    y: 2px;
+                    width: 50px;
+                    height: 20px;
+                    text: tool == root.draw_tool ? tool + "✓" : tool;
+                    clicked => {
+                        root.draw_tool = tool;
+                        root.draw_tool_changed(tool);
+                    }
                 }
 
                 Button {
@@ -1605,6 +1721,8 @@ export component AppWindow inherits Window {
 
                     points <=> root.candle_points;
                     mid_line_y: root.candle_midline;
+                    drawings: root.drawings;
+                    draw_tool: root.draw_tool;
 
                     x_zoom <=> root.chart_x_zoom;
                     y_zoom <=> root.chart_y_zoom;
@@ -1615,6 +1733,10 @@ export component AppWindow inherits Window {
                     cursor_y <=> root.chart_cursor_y;
 
                     show_volume_bars: root.show_volume;
+
+                    draw_begin(x, y) => { root.draw_begin(x, y); }
+                    draw_update(x, y) => { root.draw_update(x, y); }
+                    draw_end(x, y) => { root.draw_end(x, y); }
                 }
 
                 // Price axis ticks (left)
@@ -1923,6 +2045,8 @@ export component AppWindow inherits Window {
 
             points <=> root.candle_points;
             mid_line_y: root.candle_midline;
+            drawings <=> root.drawings;
+            draw_tool: root.draw_tool;
 
             x_zoom <=> root.chart_x_zoom;
             y_zoom <=> root.chart_y_zoom;
@@ -1930,6 +2054,10 @@ export component AppWindow inherits Window {
             pan_y  <=> root.chart_pan_y;
             cursor_x <=> root.chart_cursor_x;
             cursor_y <=> root.chart_cursor_y;
+
+            draw_begin(x, y) => { root.draw_begin(x, y); }
+            draw_update(x, y) => { root.draw_update(x, y); }
+            draw_end(x, y) => { root.draw_end(x, y); }
         }
     }
 }
