@@ -102,6 +102,20 @@ pub fn wire_ui(ui: &crate::AppWindow, tx: std::sync::mpsc::Sender<AppEvent>) {
     }
     {
         let tx = tx.clone();
+        ui.on_chart_view_mode_changed(move |mode| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::ChartViewModeChanged {
+                mode: mode.to_string(),
+            }));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_heatmap_enabled_changed(move |enabled| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::HeatmapEnabledChanged { enabled }));
+        });
+    }
+    {
+        let tx = tx.clone();
         ui.on_close_and_save_requested(move || {
             let _ = tx.send(AppEvent::Ui(UiEvent::CloseAndSaveRequested));
         });
@@ -130,6 +144,47 @@ pub fn wire_ui(ui: &crate::AppWindow, tx: std::sync::mpsc::Sender<AppEvent>) {
         let tx = tx.clone();
         ui.on_draw_end(move |x, y| {
             let _ = tx.send(AppEvent::Ui(UiEvent::DrawEnd { x, y }));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_draw_poly_sides_delta(move |delta| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::DrawPolySidesDelta {
+                delta: delta as i32,
+            }));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_drawing_selected(move |id| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::DrawingSelected { id: id as u64 }));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_drawing_delete(move |id| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::DrawingDelete { id: id as u64 }));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_drawing_clear_all(move || {
+            let _ = tx.send(AppEvent::Ui(UiEvent::DrawingClearAll));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_market_poll_adjust(move |delta| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::MarketPollAdjust { delta }));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_ticker_feed_toggled(move |ticker, enabled| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::TickerFeedToggled {
+                ticker: ticker.to_string(),
+                enabled,
+            }));
         });
     }
 

@@ -31,6 +31,8 @@ pub fn start_dummy_feed(tx: std::sync::mpsc::Sender<AppEvent>) {
                 ticker: ticker.clone(),
                 best_bid,
                 best_ask,
+                best_bid_raw: format!("{:.4}", best_bid),
+                best_ask_raw: format!("{:.4}", best_ask),
                 bid_liq,
                 ask_liq,
             }));
@@ -39,12 +41,15 @@ pub fn start_dummy_feed(tx: std::sync::mpsc::Sender<AppEvent>) {
             if n % 2 == 0 {
                 let side = if n % 4 == 0 { "Buy" } else { "Sell" }.to_string();
                 let size = format!("{:.4}", 0.01 + ((n % 9) as f64) * 0.005);
+                let price = format!("{:.4}", px);
 
                 let _ = tx.send(AppEvent::Feed(FeedEvent::Trade {
                     ts_unix: ts,
                     ticker: ticker.clone(),
                     side,
                     size,
+                    price: price.parse().unwrap_or(px),
+                    price_raw: price,
                     source: "dummy".to_string(),
                 }));
             }

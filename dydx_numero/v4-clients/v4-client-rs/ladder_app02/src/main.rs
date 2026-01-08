@@ -10,10 +10,15 @@ mod signer;
 use ladder_app02::feed_shared;
 
 use anyhow::Result;
+use serde_json::Value;
 use slint::{Timer, TimerMode};
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
     time::{Duration, Instant},
 };
 
@@ -29,6 +34,7 @@ fn main() -> Result<()> {
 
     let cfg = persistence.load();
     persist::Persistence::apply_to_ui(&cfg, &ui);
+    ui.set_ticker_input(ui.get_current_ticker());
     persistence.start_autosave(ui.as_weak())?;
 
     // --- Event bus ---
@@ -45,6 +51,14 @@ fn main() -> Result<()> {
         let mut rt = runtime.borrow_mut();
         rt.state = app::AppState::from_ui(&ui);
         rt.render(); // initial paint
+    }
+    {
+        let rt = runtime.borrow();
+        start_market_poll(
+            tx.clone(),
+            rt.state.market_poll_interval.clone(),
+            rt.state.market_poll_ticker.clone(),
+        );
     }
 
     if ui.get_chart_enabled() && ui.get_history_valve_open() {
@@ -144,6 +158,81 @@ fn main() -> Result<()> {
 
     ui.run()?;
     Ok(())
+}
+
+fn start_market_poll(
+    tx: std::sync::mpsc::Sender<app::AppEvent>,
+    poll_interval: Arc<AtomicU64>,
+    poll_ticker: Arc<Mutex<String>>,
+) {
+    const MARKET_URL: &str = "https://indexer.dydx.trade/v4/perpetualMarkets";
+
+    std::thread::spawn(move || {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build();
+        let Ok(client) = client else {
+            return;
+        };
+        loop {
+            if let Ok(resp) = client.get(MARKET_URL).send() {
+                if let Ok(json) = resp.json::<Value>() {
+                    if let Some(markets) = json.get("markets").and_then(|v| v.as_object()) {
+                        let mut markets_list: Vec<app::MarketInfo> =
+                            Vec::with_capacity(markets.len());
+                        for (ticker, meta) in markets {
+                            let active = meta
+                                .get("status")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.eq_ignore_ascii_case("ACTIVE"))
+                                .unwrap_or(true);
+                            markets_list.push(app::MarketInfo {
+                                ticker: ticker.to_string(),
+                                active,
+                            });
+                        }
+                        if !markets_list.is_empty() {
+                            let _ = tx.send(app::AppEvent::Feed(app::FeedEvent::MarketList {
+                                markets: markets_list,
+                            }));
+                        }
+                        let now = app::state::now_unix();
+                        let ticker = poll_ticker
+                            .lock()
+                            .ok()
+                            .map(|t| t.clone())
+                            .unwrap_or_else(|| "BTC-USD".to_string());
+                        if let Some(mkt) = markets.get(&ticker) {
+                            let oracle_raw = mkt
+                                .get("oraclePrice")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            if !oracle_raw.is_empty() {
+                                let oracle_price = oracle_raw.parse::<f64>().unwrap_or(0.0);
+                                let mark_raw = mkt
+                                    .get("markPrice")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or(&oracle_raw)
+                                    .to_string();
+                                let mark_price = mark_raw.parse::<f64>().unwrap_or(0.0);
+                                let _ = tx.send(app::AppEvent::Feed(app::FeedEvent::MarketPrice {
+                                    ts_unix: now,
+                                    ticker: ticker.to_string(),
+                                    mark_price,
+                                    mark_price_raw: mark_raw,
+                                    oracle_price,
+                                    oracle_price_raw: oracle_raw,
+                                }));
+                            }
+                        }
+                    }
+                }
+            }
+            let secs = poll_interval.load(Ordering::Relaxed).max(1);
+            std::thread::sleep(Duration::from_secs(secs));
+        }
+    });
 }
 
 fn spawn_history_load(tx: std::sync::mpsc::Sender<app::AppEvent>, ticker: String, full: bool) {

@@ -6,7 +6,9 @@
 
 use anyhow::{anyhow, Context, Result};
 use futures_util::{SinkExt, StreamExt};
-use ladder_app02::feed_shared::{self, BookTopRecord, SnapshotState, TradeRecord};
+use ladder_app02::feed_shared::{
+    self, BookLevel, BookLevelsRecord, BookTopRecord, SnapshotState, TradeRecord,
+};
 use rustls::crypto::ring;
 use serde_json::{json, Value};
 use std::fs::{create_dir_all, OpenOptions};
@@ -18,15 +20,18 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
 const WS_MAINNET: &str = "wss://indexer.dydx.trade/v4/ws";
-const TICKERS: &[&str] = &["ETH-USD", "BTC-USD", "SOL-USD"];
+const DEFAULT_TICKERS: &[&str] = &["ETH-USD", "BTC-USD", "SOL-USD"];
 const MAX_TRADES: usize = 2000;
 const SNAPSHOT_INTERVAL_SECS: u64 = 5;
+const MARKET_HTTP: &str = "https://indexer.dydx.trade/v4/perpetualMarkets";
 
 #[derive(Debug, serde::Serialize)]
 #[serde(tag = "kind")]
 enum PersistedEvent {
     #[serde(rename = "book_top")]
     BookTop { data: BookTopRecord },
+    #[serde(rename = "book_levels")]
+    BookLevels { data: BookLevelsRecord },
     #[serde(rename = "trade")]
     Trade { data: TradeRecord },
 }
@@ -70,7 +75,13 @@ async fn run_connection(state: &mut SnapshotState, log_file: &mut std::fs::File)
         .context("failed to connect to dYdX websocket")?;
     println!("[data_daemon02] connected to {WS_MAINNET}");
 
-    for tk in TICKERS {
+    let mut tickers = fetch_market_tickers().await;
+    if tickers.is_empty() {
+        tickers = DEFAULT_TICKERS.iter().map(|s| s.to_string()).collect();
+    }
+    println!("[data_daemon02] subscribing to {} tickers", tickers.len());
+
+    for tk in &tickers {
         subscribe(&mut ws, "v4_orderbook", tk).await?;
         subscribe(&mut ws, "v4_trades", tk).await?;
     }
@@ -109,6 +120,37 @@ async fn run_connection(state: &mut SnapshotState, log_file: &mut std::fs::File)
     }
 
     Ok(())
+}
+
+async fn fetch_market_tickers() -> Vec<String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(8))
+        .build();
+    let Ok(client) = client else {
+        return Vec::new();
+    };
+    let resp = client.get(MARKET_HTTP).send().await;
+    let Ok(resp) = resp else {
+        return Vec::new();
+    };
+    let json = resp.json::<Value>().await;
+    let Ok(json) = json else {
+        return Vec::new();
+    };
+    let Some(markets) = json.get("markets").and_then(|v| v.as_object()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::with_capacity(markets.len());
+    for (ticker, meta) in markets {
+        if let Some(status) = meta.get("status").and_then(|v| v.as_str()) {
+            if status != "ACTIVE" {
+                continue;
+            }
+        }
+        out.push(ticker.to_string());
+    }
+    out.sort();
+    out
 }
 
 async fn subscribe(
@@ -172,24 +214,37 @@ fn handle_orderbook(
         .cloned()
         .unwrap_or_default();
 
-    let (best_bid, bid_liq) = parse_side(&bids);
-    let (best_ask, ask_liq) = parse_side(&asks);
+    let bid_levels = parse_levels(&bids);
+    let ask_levels = parse_levels(&asks);
+    let (best_bid, bid_liq, best_bid_raw) = levels_stats(&bid_levels, true);
+    let (best_ask, ask_liq, best_ask_raw) = levels_stats(&ask_levels, false);
 
     if best_bid == 0.0 && best_ask == 0.0 {
         return Ok(());
     }
 
+    let ts_unix = now_unix();
     let record = BookTopRecord {
-        ts_unix: now_unix(),
+        ts_unix,
         ticker: ticker.to_string(),
         best_bid,
         best_ask,
+        best_bid_raw,
+        best_ask_raw,
         bid_liq,
         ask_liq,
     };
 
     state.last_book = Some(record.clone());
-    persist_event(log_file, &PersistedEvent::BookTop { data: record })
+    persist_event(log_file, &PersistedEvent::BookTop { data: record })?;
+
+    let levels_record = BookLevelsRecord {
+        ts_unix,
+        ticker: ticker.to_string(),
+        bids: bid_levels,
+        asks: ask_levels,
+    };
+    persist_event(log_file, &PersistedEvent::BookLevels { data: levels_record })
 }
 
 fn handle_trades(
@@ -215,6 +270,11 @@ fn handle_trades(
             .and_then(Value::as_str)
             .unwrap_or("0")
             .to_string();
+        let price = tr.get("price").and_then(parse_num).unwrap_or(0.0);
+        let price_raw = tr
+            .get("price")
+            .and_then(raw_string)
+            .unwrap_or_else(|| price.to_string());
 
         let ts_unix = tr
             .get("createdAt")
@@ -233,6 +293,8 @@ fn handle_trades(
             }
             .to_string(),
             size: size.clone(),
+            price,
+            price_raw,
             source: "dydx".to_string(),
         };
 
@@ -244,45 +306,103 @@ fn handle_trades(
     Ok(())
 }
 
-fn parse_side(levels: &[Value]) -> (f64, f64) {
-    let mut best = 0.0;
-    let mut total = 0.0;
+fn parse_levels(levels: &[Value]) -> Vec<BookLevel> {
+    let mut out = Vec::with_capacity(levels.len());
 
     for level in levels.iter() {
         // Handle both array format ([price, size]) and object format ({"price": "...", "size": "..."}).
-        let (price_opt, size_opt) = if let Some(arr) = level.as_array() {
+        let (price_opt, size_opt, price_raw, size_raw) = if let Some(arr) = level.as_array() {
             if arr.len() >= 2 {
-                (parse_num(&arr[0]), parse_num(&arr[1]))
+                (
+                    parse_num(&arr[0]),
+                    parse_num(&arr[1]),
+                    raw_string(&arr[0]),
+                    raw_string(&arr[1]),
+                )
             } else {
-                (None, None)
+                (None, None, None, None)
             }
         } else if let Some(obj) = level.as_object() {
             (
                 obj.get("price").and_then(parse_num),
                 obj.get("size").and_then(parse_num),
+                obj.get("price").and_then(raw_string),
+                obj.get("size").and_then(raw_string),
             )
         } else {
-            (None, None)
+            (None, None, None, None)
         };
 
         let price = price_opt.unwrap_or(0.0);
         let size = size_opt.unwrap_or(0.0);
 
-        if price > 0.0 && best == 0.0 {
-            best = price;
+        if price <= 0.0 || size <= 0.0 {
+            continue;
         }
-        if size > 0.0 {
-            total += size;
+
+        let price_raw = price_raw.unwrap_or_else(|| price.to_string());
+        let size_raw = size_raw.unwrap_or_else(|| size.to_string());
+        out.push(BookLevel {
+            price,
+            size,
+            price_raw,
+            size_raw,
+        });
+    }
+
+    out
+}
+
+fn levels_stats(levels: &[BookLevel], is_bid: bool) -> (f64, f64, String) {
+    let mut best = 0.0;
+    let mut total = 0.0;
+    let mut best_raw = String::new();
+
+    for level in levels {
+        total += level.size;
+        if best == 0.0 {
+            best = level.price;
+            best_raw = if level.price_raw.is_empty() {
+                level.price.to_string()
+            } else {
+                level.price_raw.clone()
+            };
+        } else if is_bid {
+            if level.price > best {
+                best = level.price;
+                best_raw = if level.price_raw.is_empty() {
+                    level.price.to_string()
+                } else {
+                    level.price_raw.clone()
+                };
+            }
+        } else {
+            if level.price < best {
+                best = level.price;
+                best_raw = if level.price_raw.is_empty() {
+                    level.price.to_string()
+                } else {
+                    level.price_raw.clone()
+                };
+            }
         }
     }
 
-    (best, total)
+    (best, total, best_raw)
 }
 
 fn parse_num(v: &Value) -> Option<f64> {
     match v {
         Value::Number(num) => num.as_f64(),
         Value::String(s) => s.parse::<f64>().ok(),
+        _ => None,
+    }
+}
+
+fn raw_string(v: &Value) -> Option<String> {
+    match v {
+        Value::Number(num) => Some(num.to_string()),
+        Value::String(s) => Some(s.to_string()),
         _ => None,
     }
 }
