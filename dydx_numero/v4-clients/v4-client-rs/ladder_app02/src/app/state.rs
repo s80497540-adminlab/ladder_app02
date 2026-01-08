@@ -4,6 +4,8 @@ use std::collections::{HashMap, VecDeque};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::sync::atomic::AtomicU64;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{debug_hooks, feed_shared};
@@ -12,6 +14,7 @@ const MID_TICK_CACHE_VERSION: u32 = 1;
 const MAX_CONDENSED_MID_TICKS: usize = 200_000;
 const CONDENSED_HISTORY_WINDOW_SECS: u64 = 24 * 60 * 60;
 const TAIL_READ_CHUNK_BYTES: usize = 64 * 1024;
+const DEFAULT_MARKET_POLL_SECS: u64 = 5;
 
 #[derive(Debug, Clone)]
 pub struct ReceiptRow {
@@ -34,8 +37,10 @@ pub struct TradeRow {
 
 #[derive(Debug, Clone)]
 pub struct BookLevelRow {
-    pub price: String,
-    pub size: String,
+    pub price_main: String,
+    pub price_pad: String,
+    pub size_main: String,
+    pub size_pad: String,
     pub depth_ratio: f32,
     pub is_best: bool,
 }
@@ -86,12 +91,38 @@ pub struct CandlePointState {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DrawPoint {
+    pub x: f32,
+    pub y: f32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DrawShapeState {
+    #[serde(default)]
+    pub id: u64,
     pub kind: String,
     pub x1: f32,
     pub y1: f32,
     pub x2: f32,
     pub y2: f32,
+    #[serde(default)]
+    pub points: Vec<DrawPoint>,
+    #[serde(default)]
+    pub sides: u8,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HeatmapLevel {
+    pub price: f64,
+    pub size: f64,
+    pub is_bid: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HeatmapSnapshot {
+    pub ts_unix: u64,
+    pub ticker: String,
+    pub levels: Vec<HeatmapLevel>,
 }
 
 // -------------------- AppState --------------------
@@ -114,9 +145,18 @@ pub struct AppState {
     pub close_after_save: bool,
     pub feed_enabled: bool,
     pub chart_enabled: bool,
+    pub chart_view_mode: String,
+    pub heatmap_enabled: bool,
+    pub heatmap_snapshots: VecDeque<HeatmapSnapshot>,
     pub depth_enabled: bool,
     pub trades_enabled: bool,
     pub volume_enabled: bool,
+    pub market_poll_secs: u64,
+    pub market_poll_interval: Arc<AtomicU64>,
+    pub market_poll_ticker: Arc<Mutex<String>>,
+    pub available_tickers: Vec<String>,
+    pub ticker_feed_enabled: HashMap<String, bool>,
+    pub ticker_active: HashMap<String, bool>,
 
     pub trade_side: String,
     pub trade_size: f32,
@@ -159,11 +199,19 @@ pub struct AppState {
     pub draw_tool: String,
     pub drawings: Vec<DrawShapeState>,
     pub draw_active: Option<DrawShapeState>,
+    pub draw_selected_id: Option<u64>,
+    pub draw_next_id: u64,
 
     pub metrics: Metrics,
+    pub best_bid_raw: String,
+    pub best_ask_raw: String,
 
     pub daemon_active: bool,
     pub daemon_status: String,
+
+    pub mark_price_raw: String,
+    pub oracle_price_raw: String,
+    pub last_price_raw: String,
 
     pub perf_frame_ms_ema: f32,
     pub perf_events_ema: f32,
@@ -213,8 +261,17 @@ impl Default for AppState {
     fn default() -> Self {
         let session_start_unix = now_unix();
         let session_id = Self::session_id_from_unix(session_start_unix);
+        let current_ticker = "ETH-USD".to_string();
+        let market_poll_secs = DEFAULT_MARKET_POLL_SECS;
+        let market_poll_interval = Arc::new(AtomicU64::new(market_poll_secs));
+        let market_poll_ticker = Arc::new(Mutex::new(current_ticker.clone()));
+        let available_tickers = vec![current_ticker.clone()];
+        let mut ticker_feed_enabled = HashMap::new();
+        let mut ticker_active = HashMap::new();
+        ticker_feed_enabled.insert(current_ticker.clone(), false);
+        ticker_active.insert(current_ticker.clone(), true);
         Self {
-            current_ticker: "ETH-USD".to_string(),
+            current_ticker,
             mode: "Live".to_string(),
             time_mode: "Local".to_string(),
 
@@ -230,9 +287,18 @@ impl Default for AppState {
             close_after_save: false,
             feed_enabled: false,
             chart_enabled: false,
+            chart_view_mode: "Chart".to_string(),
+            heatmap_enabled: false,
+            heatmap_snapshots: VecDeque::new(),
             depth_enabled: true,
             trades_enabled: true,
             volume_enabled: true,
+            market_poll_secs,
+            market_poll_interval,
+            market_poll_ticker,
+            available_tickers,
+            ticker_feed_enabled,
+            ticker_active,
 
             trade_side: "Buy".to_string(),
             trade_size: 0.01,
@@ -271,11 +337,19 @@ impl Default for AppState {
             draw_tool: "Pan".to_string(),
             drawings: Vec::new(),
             draw_active: None,
+            draw_selected_id: None,
+            draw_next_id: 1,
 
             metrics: Metrics::default(),
+            best_bid_raw: String::new(),
+            best_ask_raw: String::new(),
 
             daemon_active: false,
             daemon_status: "Daemon: idle".to_string(),
+
+            mark_price_raw: String::new(),
+            oracle_price_raw: String::new(),
+            last_price_raw: String::new(),
 
             perf_frame_ms_ema: 0.0,
             perf_events_ema: 0.0,
@@ -299,8 +373,17 @@ impl AppState {
     pub fn from_ui(ui: &crate::AppWindow) -> Self {
         let session_start_unix = now_unix();
         let session_id = Self::session_id_from_unix(session_start_unix);
+        let current_ticker = ui.get_current_ticker().to_string();
+        let market_poll_secs = ui.get_market_poll_secs().max(1) as u64;
+        let market_poll_interval = Arc::new(AtomicU64::new(market_poll_secs));
+        let market_poll_ticker = Arc::new(Mutex::new(current_ticker.clone()));
+        let available_tickers = vec![current_ticker.clone()];
+        let mut ticker_feed_enabled = HashMap::new();
+        let mut ticker_active = HashMap::new();
+        ticker_feed_enabled.insert(current_ticker.clone(), false);
+        ticker_active.insert(current_ticker.clone(), true);
         let mut state = Self {
-            current_ticker: ui.get_current_ticker().to_string(),
+            current_ticker,
             mode: ui.get_mode().to_string(),
             time_mode: ui.get_time_mode().to_string(),
 
@@ -316,9 +399,18 @@ impl AppState {
             close_after_save: false,
             feed_enabled: ui.get_feed_enabled(),
             chart_enabled: ui.get_chart_enabled(),
+            chart_view_mode: ui.get_chart_view_mode().to_string(),
+            heatmap_enabled: ui.get_heatmap_enabled(),
+            heatmap_snapshots: VecDeque::new(),
             depth_enabled: ui.get_show_depth(),
             trades_enabled: ui.get_show_trades(),
             volume_enabled: ui.get_show_volume(),
+            market_poll_secs,
+            market_poll_interval,
+            market_poll_ticker,
+            available_tickers,
+            ticker_feed_enabled,
+            ticker_active,
 
             trade_side: ui.get_trade_side().to_string(),
             trade_size: ui.get_trade_size(),
@@ -357,11 +449,19 @@ impl AppState {
             draw_tool: ui.get_draw_tool().to_string(),
             drawings: Vec::new(),
             draw_active: None,
+            draw_selected_id: None,
+            draw_next_id: 1,
 
             metrics: Metrics::default(),
+            best_bid_raw: String::new(),
+            best_ask_raw: String::new(),
 
             daemon_active: false,
             daemon_status: "Daemon: idle".to_string(),
+
+            mark_price_raw: String::new(),
+            oracle_price_raw: String::new(),
+            last_price_raw: String::new(),
 
             perf_frame_ms_ema: 0.0,
             perf_events_ema: 0.0,
@@ -380,6 +480,16 @@ impl AppState {
         self.candle_active_bucket = None;
 
         debug_hooks::log_candle_reset("explicit reset_candles call");
+    }
+
+    pub fn is_ticker_feed_enabled(&self, ticker: &str) -> bool {
+        if ticker.is_empty() {
+            return true;
+        }
+        self.ticker_feed_enabled
+            .get(ticker)
+            .copied()
+            .unwrap_or(true)
     }
 
     fn tf_secs_u64(&self) -> u64 {
@@ -729,6 +839,22 @@ impl AppState {
         self.session_dir().join("drawings.json")
     }
 
+    fn session_heatmap_dir(&self) -> PathBuf {
+        self.session_dir().join("heatmap")
+    }
+
+    fn session_heatmap_path(&self, ticker: &str) -> Option<PathBuf> {
+        if ticker.is_empty() {
+            return None;
+        }
+        let mut safe = ticker.to_string();
+        safe = safe
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect();
+        Some(self.session_heatmap_dir().join(format!("heatmap_{safe}.jsonl")))
+    }
+
     pub fn load_session_drawings(&mut self) -> bool {
         let path = self.session_drawings_path();
         if !path.exists() {
@@ -738,6 +864,8 @@ impl AppState {
             Ok(raw) => {
                 if let Ok(drawings) = serde_json::from_str::<Vec<DrawShapeState>>(&raw) {
                     self.drawings = drawings;
+                    self.draw_selected_id = None;
+                    self.normalize_drawings_ids();
                     return true;
                 }
             }
@@ -752,6 +880,46 @@ impl AppState {
         let raw = serde_json::to_string_pretty(&self.drawings).map_err(|e| e.to_string())?;
         fs::write(&path, raw).map_err(|e| e.to_string())?;
         Ok(path)
+    }
+
+    pub fn record_heatmap_snapshot(&mut self, snapshot: HeatmapSnapshot) {
+        if self.session_recording {
+            self.ensure_session_dir();
+            let dir = self.session_heatmap_dir();
+            if fs::create_dir_all(&dir).is_ok() {
+                if let Some(path) = self.session_heatmap_path(&snapshot.ticker) {
+                    if let Ok(line) = serde_json::to_string(&snapshot) {
+                        if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path)
+                        {
+                            let _ = writeln!(f, "{line}");
+                        }
+                    }
+                }
+            }
+        }
+        self.heatmap_snapshots.push_back(snapshot);
+    }
+
+    fn normalize_drawings_ids(&mut self) {
+        let mut max_id = 0u64;
+        for d in &mut self.drawings {
+            if d.id == 0 {
+                max_id = max_id.saturating_add(1);
+                d.id = max_id;
+            } else {
+                max_id = max_id.max(d.id);
+            }
+            if d.kind == "Poly" && d.sides < 3 {
+                d.sides = 5;
+            }
+        }
+        self.draw_next_id = max_id.saturating_add(1).max(1);
+    }
+
+    pub(crate) fn next_draw_id(&mut self) -> u64 {
+        let id = self.draw_next_id.max(1);
+        self.draw_next_id = self.draw_next_id.saturating_add(1);
+        id
     }
 
     fn record_session_tick(&mut self, ticker: &str, tick: &MidTick) {
@@ -1266,4 +1434,57 @@ pub fn format_time_basic(now: u64) -> String {
 
 pub fn ss(s: impl Into<String>) -> SharedString {
     SharedString::from(s.into())
+}
+
+pub fn format_num_compact(value: f64, max_decimals: usize) -> String {
+    if !value.is_finite() {
+        return "0".to_string();
+    }
+    let mut out = format!("{:.*}", max_decimals, value);
+    if out.contains('.') {
+        while out.ends_with('0') {
+            out.pop();
+        }
+        if out.ends_with('.') {
+            out.pop();
+        }
+    }
+    if out.is_empty() || out == "-0" {
+        "0".to_string()
+    } else {
+        out
+    }
+}
+
+pub const PRICE_DECIMALS: usize = 10;
+pub const SIZE_DECIMALS: usize = 6;
+
+pub fn split_number_raw(raw: &str, max_decimals: usize) -> (String, String) {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return ("0".to_string(), String::new());
+    }
+    if max_decimals == 0 {
+        let int_part = trimmed.split('.').next().unwrap_or(trimmed);
+        return (int_part.to_string(), String::new());
+    }
+    if let Some(dot_idx) = trimmed.find('.') {
+        let decimals = trimmed.len().saturating_sub(dot_idx + 1);
+        if decimals > max_decimals {
+            let cut = dot_idx + 1 + max_decimals;
+            return (trimmed[..cut].to_string(), String::new());
+        }
+        if decimals == max_decimals {
+            return (trimmed.to_string(), String::new());
+        }
+        let pad = "0".repeat(max_decimals - decimals);
+        return (trimmed.to_string(), pad);
+    }
+
+    (trimmed.to_string(), format!(".{}", "0".repeat(max_decimals)))
+}
+
+pub fn split_number_value(value: f64, max_decimals: usize) -> (String, String) {
+    let raw = format_num_compact(value, max_decimals);
+    split_number_raw(&raw, max_decimals)
 }

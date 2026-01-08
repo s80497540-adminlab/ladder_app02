@@ -1,4 +1,5 @@
 use super::state::MidTick;
+use crate::feed_shared::BookLevel;
 
 #[derive(Debug, Clone)]
 pub enum AppEvent {
@@ -32,11 +33,19 @@ pub enum UiEvent {
     RenderModeChanged { full: bool },
     HistoryValveChanged { open: bool },
     SessionRecordingChanged { enabled: bool },
+    ChartViewModeChanged { mode: String },
+    HeatmapEnabledChanged { enabled: bool },
     CloseAndSaveRequested,
     DrawToolChanged { tool: String },
     DrawBegin { x: f32, y: f32 },
     DrawUpdate { x: f32, y: f32 },
     DrawEnd { x: f32, y: f32 },
+    DrawPolySidesDelta { delta: i32 },
+    DrawingSelected { id: u64 },
+    DrawingDelete { id: u64 },
+    DrawingClearAll,
+    MarketPollAdjust { delta: i32 },
+    TickerFeedToggled { ticker: String, enabled: bool },
 
     SendOrder,
     ReloadData,
@@ -57,6 +66,8 @@ pub enum FeedEvent {
         ticker: String,
         best_bid: f64,
         best_ask: f64,
+        best_bid_raw: String,
+        best_ask_raw: String,
         bid_liq: f64,
         ask_liq: f64,
     },
@@ -66,8 +77,33 @@ pub enum FeedEvent {
         ticker: String,
         side: String,
         size: String,
+        price: f64,
+        price_raw: String,
         source: String,
     },
+    MarketPrice {
+        ts_unix: u64,
+        ticker: String,
+        mark_price: f64,
+        mark_price_raw: String,
+        oracle_price: f64,
+        oracle_price_raw: String,
+    },
+    MarketList {
+        markets: Vec<MarketInfo>,
+    },
+    BookLevels {
+        ts_unix: u64,
+        ticker: String,
+        bids: Vec<BookLevel>,
+        asks: Vec<BookLevel>,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct MarketInfo {
+    pub ticker: String,
+    pub active: bool,
 }
 
 #[derive(Debug, Clone)]

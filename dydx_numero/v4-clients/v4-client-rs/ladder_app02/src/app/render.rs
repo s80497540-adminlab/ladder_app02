@@ -1,5 +1,8 @@
 use super::state::*;
-use crate::{AxisTick, BookLevel, CandlePoint, CandleRow, DrawShape, Receipt, Trade};
+use crate::{
+    AxisTick, BookLevel, CandlePoint, CandleRow, DrawShape, DrawTick, HeatmapCell, Receipt, Trade,
+    TickerFeedRow,
+};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use slint::{ModelRc, SharedString, VecModel};
 
@@ -10,6 +13,7 @@ pub fn render(state: &AppState, ui: &crate::AppWindow) {
     ui.set_current_ticker(SharedString::from(state.current_ticker.clone()));
     ui.set_mode(SharedString::from(state.mode.clone()));
     ui.set_time_mode(SharedString::from(state.time_mode.clone()));
+    ui.set_market_poll_secs(state.market_poll_secs as i32);
 
     ui.set_candle_tf_secs(state.candle_tf_secs);
     ui.set_candle_window_minutes(state.candle_window_minutes);
@@ -18,6 +22,8 @@ pub fn render(state: &AppState, ui: &crate::AppWindow) {
     ui.set_render_all_candles(state.render_all_candles);
     ui.set_feed_enabled(state.feed_enabled);
     ui.set_chart_enabled(state.chart_enabled);
+    ui.set_chart_view_mode(SharedString::from(state.chart_view_mode.clone()));
+    ui.set_heatmap_enabled(state.heatmap_enabled);
     ui.set_session_recording(state.session_recording);
 
     ui.set_trade_side(SharedString::from(state.trade_side.clone()));
@@ -43,6 +49,22 @@ pub fn render(state: &AppState, ui: &crate::AppWindow) {
     ui.set_daemon_status(SharedString::from(state.daemon_status.clone()));
     ui.set_daemon_active(state.daemon_active);
     ui.set_draw_tool(SharedString::from(state.draw_tool.clone()));
+    ui.set_draw_selected_id(state.draw_selected_id.map(|id| id as i32).unwrap_or(-1));
+
+    let mut rows: Vec<TickerFeedRow> = Vec::new();
+    let mut tickers = state.available_tickers.clone();
+    tickers.sort();
+    tickers.dedup();
+    for tk in tickers {
+        let enabled = state.ticker_feed_enabled.get(&tk).copied().unwrap_or(true);
+        let active = state.ticker_active.get(&tk).copied().unwrap_or(true);
+        rows.push(TickerFeedRow {
+            ticker: SharedString::from(tk),
+            feed_on: enabled,
+            active,
+        });
+    }
+    ui.set_ticker_feed_rows(ModelRc::new(VecModel::from(rows)));
 
     // Metrics
     ui.set_mid_price(state.metrics.mid as f32);
@@ -50,14 +72,77 @@ pub fn render(state: &AppState, ui: &crate::AppWindow) {
     ui.set_best_ask(state.metrics.best_ask as f32);
     ui.set_spread(state.metrics.spread as f32);
     ui.set_imbalance(state.metrics.imbalance as f32);
+    let (mid_main, mid_pad) = split_number_value(state.metrics.mid, PRICE_DECIMALS);
+    let (bid_main, bid_pad) = if state.best_bid_raw.is_empty() {
+        split_number_value(state.metrics.best_bid, PRICE_DECIMALS)
+    } else {
+        split_number_raw(&state.best_bid_raw, PRICE_DECIMALS)
+    };
+    let (ask_main, ask_pad) = if state.best_ask_raw.is_empty() {
+        split_number_value(state.metrics.best_ask, PRICE_DECIMALS)
+    } else {
+        split_number_raw(&state.best_ask_raw, PRICE_DECIMALS)
+    };
+    let (spread_main, spread_pad) = split_number_value(state.metrics.spread, PRICE_DECIMALS);
+
+    ui.set_mid_price_main(SharedString::from(mid_main));
+    ui.set_mid_price_pad(SharedString::from(mid_pad));
+    ui.set_best_bid_main(SharedString::from(bid_main));
+    ui.set_best_bid_pad(SharedString::from(bid_pad));
+    ui.set_best_ask_main(SharedString::from(ask_main));
+    ui.set_best_ask_pad(SharedString::from(ask_pad));
+    ui.set_spread_main(SharedString::from(spread_main));
+    ui.set_spread_pad(SharedString::from(spread_pad));
+
+    let (cur_main, cur_pad) = match state.candle_price_mode.as_str() {
+        "Bid" if !state.best_bid_raw.is_empty() => {
+            split_number_raw(&state.best_bid_raw, PRICE_DECIMALS)
+        }
+        "Ask" if !state.best_ask_raw.is_empty() => {
+            split_number_raw(&state.best_ask_raw, PRICE_DECIMALS)
+        }
+        "Bid" if state.metrics.best_bid.is_finite() && state.metrics.best_bid > 0.0 => {
+            split_number_value(state.metrics.best_bid, PRICE_DECIMALS)
+        }
+        "Ask" if state.metrics.best_ask.is_finite() && state.metrics.best_ask > 0.0 => {
+            split_number_value(state.metrics.best_ask, PRICE_DECIMALS)
+        }
+        _ => split_number_value(state.metrics.mid, PRICE_DECIMALS),
+    };
+    ui.set_current_price_main(SharedString::from(cur_main));
+    ui.set_current_price_pad(SharedString::from(cur_pad));
+
+    let (mark_main, mark_pad) = if state.mark_price_raw.trim().is_empty() {
+        (String::new(), String::new())
+    } else {
+        split_number_raw(&state.mark_price_raw, PRICE_DECIMALS)
+    };
+    let (oracle_main, oracle_pad) = if state.oracle_price_raw.trim().is_empty() {
+        (String::new(), String::new())
+    } else {
+        split_number_raw(&state.oracle_price_raw, PRICE_DECIMALS)
+    };
+    let (last_main, last_pad) = if state.last_price_raw.trim().is_empty() {
+        (String::new(), String::new())
+    } else {
+        split_number_raw(&state.last_price_raw, PRICE_DECIMALS)
+    };
+    ui.set_mark_price_main(SharedString::from(mark_main));
+    ui.set_mark_price_pad(SharedString::from(mark_pad));
+    ui.set_oracle_price_main(SharedString::from(oracle_main));
+    ui.set_oracle_price_pad(SharedString::from(oracle_pad));
+    ui.set_last_price_main(SharedString::from(last_main));
+    ui.set_last_price_pad(SharedString::from(last_pad));
 
     // Book models
     let bids: Vec<BookLevel> = state
         .bids
         .iter()
         .map(|b| BookLevel {
-            price: SharedString::from(b.price.clone()),
-            size: SharedString::from(b.size.clone()),
+            price_main: SharedString::from(b.price_main.clone()),
+            price_pad: SharedString::from(b.price_pad.clone()),
+            size_main: SharedString::from(b.size_main.clone()),
+            size_pad: SharedString::from(b.size_pad.clone()),
             depth_ratio: b.depth_ratio,
             is_best: b.is_best,
         })
@@ -68,8 +153,10 @@ pub fn render(state: &AppState, ui: &crate::AppWindow) {
         .asks
         .iter()
         .map(|a| BookLevel {
-            price: SharedString::from(a.price.clone()),
-            size: SharedString::from(a.size.clone()),
+            price_main: SharedString::from(a.price_main.clone()),
+            price_pad: SharedString::from(a.price_pad.clone()),
+            size_main: SharedString::from(a.size_main.clone()),
+            size_pad: SharedString::from(a.size_pad.clone()),
             depth_ratio: a.depth_ratio,
             is_best: a.is_best,
         })
@@ -99,11 +186,11 @@ pub fn render(state: &AppState, ui: &crate::AppWindow) {
         .take(500)
         .map(|c| CandleRow {
             ts: SharedString::from(c.ts.clone()),
-            open: SharedString::from(format!("{:.2}", c.open)),
-            high: SharedString::from(format!("{:.2}", c.high)),
-            low: SharedString::from(format!("{:.2}", c.low)),
-            close: SharedString::from(format!("{:.2}", c.close)),
-            volume: SharedString::from(format!("{:.2}", c.volume)),
+            open: SharedString::from(format_num_compact(c.open, PRICE_DECIMALS)),
+            high: SharedString::from(format_num_compact(c.high, PRICE_DECIMALS)),
+            low: SharedString::from(format_num_compact(c.low, PRICE_DECIMALS)),
+            close: SharedString::from(format_num_compact(c.close, PRICE_DECIMALS)),
+            volume: SharedString::from(format_num_compact(c.volume, SIZE_DECIMALS)),
         })
         .collect();
     ui.set_candles(ModelRc::new(VecModel::from(candle_rows)));
@@ -163,15 +250,44 @@ pub fn render(state: &AppState, ui: &crate::AppWindow) {
         .unwrap_or_default();
     ui.set_time_ticks(ModelRc::new(VecModel::from(time_ticks)));
 
+    let heatmap_cells = if state.chart_view_mode == "Advanced" && state.heatmap_enabled {
+        build_heatmap_cells(
+            state,
+            price_ctx.as_ref(),
+            time_ctx.as_ref(),
+            chart_x_zoom,
+            chart_pan_x,
+            chart_y_zoom,
+            chart_pan_y,
+        )
+    } else {
+        Vec::new()
+    };
+    ui.set_heatmap_cells(ModelRc::new(VecModel::from(heatmap_cells)));
+
     let mut drawings: Vec<DrawShape> = state
         .drawings
         .iter()
-        .map(|d| build_draw_shape(d, false, price_ctx.as_ref(), time_ctx.as_ref(), chart_x_zoom, chart_pan_x, chart_y_zoom, chart_pan_y))
+        .map(|d| {
+            let selected = state.draw_selected_id == Some(d.id);
+            build_draw_shape(
+                d,
+                false,
+                selected,
+                price_ctx.as_ref(),
+                time_ctx.as_ref(),
+                chart_x_zoom,
+                chart_pan_x,
+                chart_y_zoom,
+                chart_pan_y,
+            )
+        })
         .collect();
     if let Some(active) = &state.draw_active {
         drawings.push(build_draw_shape(
             active,
             true,
+            false,
             price_ctx.as_ref(),
             time_ctx.as_ref(),
             chart_x_zoom,
@@ -181,6 +297,31 @@ pub fn render(state: &AppState, ui: &crate::AppWindow) {
         ));
     }
     ui.set_drawings(ModelRc::new(VecModel::from(drawings)));
+
+    let mut draw_ticks: Vec<DrawTick> = Vec::new();
+    for d in &state.drawings {
+        if d.kind == "Ruler" {
+            draw_ticks.extend(build_ruler_ticks(
+                d,
+                false,
+                price_ctx.as_ref(),
+                chart_y_zoom,
+                chart_pan_y,
+            ));
+        }
+    }
+    if let Some(active) = &state.draw_active {
+        if active.kind == "Ruler" {
+            draw_ticks.extend(build_ruler_ticks(
+                active,
+                true,
+                price_ctx.as_ref(),
+                chart_y_zoom,
+                chart_pan_y,
+            ));
+        }
+    }
+    ui.set_draw_ticks(ModelRc::new(VecModel::from(draw_ticks)));
 
     // Receipts
     let receipts: Vec<Receipt> = state
@@ -351,6 +492,11 @@ fn price_from_screen(ctx: &PriceAxisContext, y_screen: f64, y_zoom: f64, pan_y: 
     ctx.hi - y_norm * ctx.span
 }
 
+fn screen_from_price(ctx: &PriceAxisContext, price: f64, y_zoom: f64, pan_y: f64) -> f64 {
+    let y_norm = (ctx.hi - price) / ctx.span;
+    0.5 + (y_norm - 0.5) * y_zoom + pan_y
+}
+
 fn time_axis_context(candles: &[Candle]) -> Option<TimeAxisContext> {
     let ts: Vec<u64> = candles
         .iter()
@@ -381,6 +527,52 @@ fn ts_from_screen(ctx: &TimeAxisContext, x_screen: f64, x_zoom: f64, pan_x: f64)
     (t_lo + (t_hi - t_lo) * frac) as u64
 }
 
+fn screen_from_ts(ctx: &TimeAxisContext, ts_unix: u64, x_zoom: f64, pan_x: f64) -> f64 {
+    let n = ctx.ts.len();
+    if n == 0 {
+        return 0.5;
+    }
+    if n == 1 {
+        return 0.5 + pan_x;
+    }
+
+    let ts_first = ctx.ts[0];
+    let ts_last = ctx.ts[n - 1];
+    if ts_first == ts_last {
+        return 0.5 + pan_x;
+    }
+
+    let mut idx = match ctx.ts.binary_search(&ts_unix) {
+        Ok(i) => i as f64,
+        Err(i) => {
+            if i == 0 {
+                0.0
+            } else if i >= n {
+                (n - 1) as f64
+            } else {
+                let lo_i = i - 1;
+                let hi_i = i;
+                let t_lo = ctx.ts[lo_i] as f64;
+                let t_hi = ctx.ts[hi_i] as f64;
+                let frac = if t_hi > t_lo {
+                    (ts_unix as f64 - t_lo) / (t_hi - t_lo)
+                } else {
+                    0.0
+                };
+                lo_i as f64 + frac.clamp(0.0, 1.0)
+            }
+        }
+    };
+
+    idx = idx.clamp(0.0, (n - 1) as f64);
+    let x_norm = if n > 1 {
+        idx / (n as f64 - 1.0)
+    } else {
+        0.5
+    };
+    0.5 + (x_norm - 0.5) * x_zoom + pan_x
+}
+
 fn build_price_ticks_visible(
     ctx: &PriceAxisContext,
     y_zoom: f64,
@@ -392,9 +584,10 @@ fn build_price_ticks_visible(
     for i in 0..steps {
         let frac = i as f64 / (steps - 1) as f64;
         let price = price_from_screen(ctx, frac, y_zoom, pan_y);
+        let label = format_num_compact(price, ctx.decimals);
         out.push(AxisTick {
             pos: frac as f32,
-            label: format!("{price:.decimals$} {unit}", decimals = ctx.decimals).into(),
+            label: format!("{label} {unit}").into(),
         });
     }
     out
@@ -419,9 +612,95 @@ fn build_time_ticks_visible(
     out
 }
 
+fn heat_color(intensity: f32) -> slint::Color {
+    let t = intensity.clamp(0.0, 1.0) as f64;
+    let (cr, cg, cb) = (26.0, 90.0, 190.0);
+    let (hr, hg, hb) = (220.0, 60.0, 45.0);
+    let r = cr + (hr - cr) * t;
+    let g = cg + (hg - cg) * t;
+    let b = cb + (hb - cb) * t;
+    let a = 0.12 + 0.45 * t;
+    slint::Color::from_argb_u8(
+        (a * 255.0).round().clamp(10.0, 200.0) as u8,
+        r.round().clamp(0.0, 255.0) as u8,
+        g.round().clamp(0.0, 255.0) as u8,
+        b.round().clamp(0.0, 255.0) as u8,
+    )
+}
+
+fn build_heatmap_cells(
+    state: &AppState,
+    price_ctx: Option<&PriceAxisContext>,
+    time_ctx: Option<&TimeAxisContext>,
+    x_zoom: f64,
+    pan_x: f64,
+    y_zoom: f64,
+    pan_y: f64,
+) -> Vec<HeatmapCell> {
+    let (Some(pctx), Some(tctx)) = (price_ctx, time_ctx) else {
+        return Vec::new();
+    };
+    if state.heatmap_snapshots.is_empty() {
+        return Vec::new();
+    }
+
+    let ts_min = *tctx.ts.first().unwrap_or(&0);
+    let ts_max = *tctx.ts.last().unwrap_or(&0);
+    let mut max_size = 0.0_f64;
+    for snap in state.heatmap_snapshots.iter() {
+        if snap.ticker != state.current_ticker {
+            continue;
+        }
+        if snap.ts_unix < ts_min || snap.ts_unix > ts_max {
+            continue;
+        }
+        for lvl in &snap.levels {
+            max_size = max_size.max(lvl.size);
+        }
+    }
+    if max_size <= 0.0 {
+        return Vec::new();
+    }
+
+    let n = tctx.ts.len().max(2) as f64;
+    let step_norm = 1.0 / (n - 1.0);
+    let cell_w = (step_norm * x_zoom).clamp(0.002, 0.04) as f32;
+    let cell_h = (0.008 * y_zoom).clamp(0.003, 0.03) as f32;
+
+    let mut out = Vec::new();
+    for snap in state.heatmap_snapshots.iter() {
+        if snap.ticker != state.current_ticker {
+            continue;
+        }
+        if snap.ts_unix < ts_min || snap.ts_unix > ts_max {
+            continue;
+        }
+        let x = screen_from_ts(tctx, snap.ts_unix, x_zoom, pan_x);
+        if x < -0.1 || x > 1.1 {
+            continue;
+        }
+        for lvl in &snap.levels {
+            let y = screen_from_price(pctx, lvl.price, y_zoom, pan_y);
+            if y < -0.1 || y > 1.1 {
+                continue;
+            }
+            let intensity = (lvl.size / max_size).clamp(0.0, 1.0) as f32;
+            out.push(HeatmapCell {
+                x: x as f32,
+                y: y as f32,
+                w: cell_w,
+                h: cell_h,
+                color: heat_color(intensity),
+            });
+        }
+    }
+    out
+}
+
 fn build_draw_shape(
     shape: &super::state::DrawShapeState,
     is_preview: bool,
+    selected: bool,
     price_ctx: Option<&PriceAxisContext>,
     time_ctx: Option<&TimeAxisContext>,
     x_zoom: f64,
@@ -434,14 +713,24 @@ fn build_draw_shape(
     } else {
         String::new()
     };
+    let commands = if shape.kind == "Poly" {
+        build_poly_commands(shape)
+    } else if shape.kind == "Pencil" {
+        build_pencil_commands(shape)
+    } else {
+        String::new()
+    };
     DrawShape {
+        id: shape.id as i32,
         kind: SharedString::from(shape.kind.clone()),
         x1: shape.x1,
         y1: shape.y1,
         x2: shape.x2,
         y2: shape.y2,
+        commands: SharedString::from(commands),
         label: SharedString::from(label),
         is_preview,
+        selected,
     }
 }
 
@@ -464,11 +753,95 @@ fn build_ruler_label(
     }
     let delta = p2 - p1;
     let pct = (delta / p1) * 100.0;
+    let direction = if delta >= 0.0 { "Long" } else { "Short" };
     format!(
-        "Delta {:+.*}  Long {:+.2}%  Short {:+.2}%",
+        "{direction} PnL {pct:+.2}%  Delta {delta:+.*}",
         ctx.decimals,
-        delta,
-        pct,
-        -pct
+        direction = direction,
+        pct = pct,
+        delta = delta
     )
+}
+
+fn build_ruler_ticks(
+    shape: &super::state::DrawShapeState,
+    is_preview: bool,
+    price_ctx: Option<&PriceAxisContext>,
+    y_zoom: f64,
+    pan_y: f64,
+) -> Vec<DrawTick> {
+    let Some(ctx) = price_ctx else {
+        return Vec::new();
+    };
+    let dx = shape.x2 - shape.x1;
+    let dy = shape.y2 - shape.y1;
+    let len = ((dx * dx + dy * dy) as f64).sqrt().max(1e-6);
+    let mut steps = (len * 12.0).round() as usize;
+    steps = steps.clamp(4, 10);
+
+    let mut out = Vec::with_capacity(steps + 1);
+    for i in 0..=steps {
+        let frac = i as f32 / steps as f32;
+        let x = shape.x1 + dx * frac;
+        let y = shape.y1 + dy * frac;
+        let price = price_from_screen(ctx, y as f64, y_zoom, pan_y);
+        let label = if price.is_finite() {
+            format_num_compact(price, ctx.decimals)
+        } else {
+            String::new()
+        };
+        out.push(DrawTick {
+            x,
+            y,
+            label: label.into(),
+            is_preview,
+        });
+    }
+    out
+}
+
+fn build_poly_commands(shape: &super::state::DrawShapeState) -> String {
+    let mut sides = shape.sides as usize;
+    if sides < 3 {
+        sides = 5;
+    }
+    let cx = (shape.x1 + shape.x2) * 0.5;
+    let cy = (shape.y1 + shape.y2) * 0.5;
+    let rx = (shape.x2 - shape.x1).abs() * 0.5;
+    let ry = (shape.y2 - shape.y1).abs() * 0.5;
+    if rx <= 0.0 || ry <= 0.0 {
+        return String::new();
+    }
+
+    let mut out = String::new();
+    let tau = std::f64::consts::PI * 2.0;
+    for i in 0..sides {
+        let theta = (tau / sides as f64) * i as f64 - std::f64::consts::FRAC_PI_2;
+        let x = (cx as f64 + rx as f64 * theta.cos()).clamp(0.0, 1.0);
+        let y = (cy as f64 + ry as f64 * theta.sin()).clamp(0.0, 1.0);
+        if i == 0 {
+            out.push_str(&format!("M {:.4} {:.4}", x, y));
+        } else {
+            out.push_str(&format!(" L {:.4} {:.4}", x, y));
+        }
+    }
+    out.push_str(" Z");
+    out
+}
+
+fn build_pencil_commands(shape: &super::state::DrawShapeState) -> String {
+    if shape.points.len() < 2 {
+        return String::new();
+    }
+    let mut out = String::new();
+    for (i, p) in shape.points.iter().enumerate() {
+        let x = (p.x as f64).clamp(0.0, 1.0);
+        let y = (p.y as f64).clamp(0.0, 1.0);
+        if i == 0 {
+            out.push_str(&format!("M {:.4} {:.4}", x, y));
+        } else {
+            out.push_str(&format!(" L {:.4} {:.4}", x, y));
+        }
+    }
+    out
 }

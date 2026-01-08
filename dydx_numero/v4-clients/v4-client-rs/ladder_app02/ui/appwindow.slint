@@ -3,10 +3,18 @@ import { Button, CheckBox, ComboBox, LineEdit, ListView, TextEdit } from "std-wi
 // ---------- Data structs exposed to Rust ----------------------------
 
 export struct BookLevel {
-    price: string,
-    size: string,
+    price_main: string,
+    price_pad: string,
+    size_main: string,
+    size_pad: string,
     depth_ratio: float,
     is_best: bool,
+}
+
+export struct TickerFeedRow {
+    ticker: string,
+    feed_on: bool,
+    active: bool,
 }
 
 export struct Trade {
@@ -47,13 +55,31 @@ export struct AxisTick {
 }
 
 export struct DrawShape {
+    id: int,
     kind: string,
     x1: float,
     y1: float,
     x2: float,
     y2: float,
+    commands: string,
     label: string,
     is_preview: bool,
+    selected: bool,
+}
+
+export struct DrawTick {
+    x: float,
+    y: float,
+    label: string,
+    is_preview: bool,
+}
+
+export struct HeatmapCell {
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    color: color,
 }
 
 export struct Receipt {
@@ -66,6 +92,258 @@ export struct Receipt {
     comment: string,
 }
 
+component ZeroPadText inherits Rectangle {
+    in property <string> main;
+    in property <string> pad;
+    in property <color> main_color: #ffffff;
+    in property <color> pad_color: #7aa8ff;
+    in property <length> font_size: 12px;
+    in property <length> pad_font_size: font_size - 3px;
+    in property <string> font_family: "";
+
+    width: main_text.preferred-width + pad_text.preferred-width;
+    height: main_text.preferred-height;
+
+    main_text := Text {
+        x: 0px;
+        y: 0px;
+        text: main;
+        color: main_color;
+        font-size: font_size;
+        font-family: font_family;
+    }
+
+    pad_text := Text {
+        x: main_text.preferred-width;
+        y: 0px;
+        text: pad;
+        color: pad_color;
+        font-size: pad_font_size;
+        font-family: font_family;
+    }
+}
+
+component TickerBadge inherits Rectangle {
+    in property <string> value;
+    in property <length> font_size: 12px;
+    in property <color> text_color: #e4ebff;
+    in property <color> accent_color: #2a3852;
+    in property <string> font_family: "";
+
+    background: #0f1420;
+    border-width: 1px;
+    border-color: #2b3446;
+    border-radius: 6px;
+    clip: true;
+
+    Rectangle {
+        x: 1px;
+        y: 1px;
+        width: parent.width - 2px;
+        height: 1px;
+        background: #1a2232;
+    }
+
+    Rectangle {
+        x: 0px;
+        y: parent.height - 2px;
+        width: parent.width;
+        height: 2px;
+        background: accent_color;
+    }
+
+    TextInput {
+        x: 10px;
+        y: 2px;
+        width: parent.width - 20px;
+        height: parent.height - 4px;
+        text: root.value;
+        read-only: true;
+        single-line: true;
+        color: text_color;
+        font-size: font_size;
+        font-family: font_family;
+        selection-background-color: #2a3b63;
+        selection-foreground-color: #ffffff;
+    }
+}
+
+component TopBarLabel inherits Text {
+    in property <length> label_font_size: 18px;
+    in property <string> label_font_family: "Avenir Next";
+    font-size: label_font_size;
+    font-family: label_font_family;
+}
+
+component TopBarButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> active: false;
+    in property <bool> enabled: true;
+    in property <length> font_size: 18px;
+    in property <string> font_family: "Avenir Next";
+    in property <color> text_color: #dfe7ff;
+    in property <color> active_text_color: #f5f7ff;
+    callback clicked;
+
+    background: active ? #2b3550 : #1e2433;
+    border-width: 1px;
+    border-color: active ? #5a6aa0 : #2a3242;
+    border-radius: 4px;
+    opacity: enabled ? 1 : 0.5;
+
+    Text {
+        x: 8px;
+        y: 0px;
+        width: parent.width - 16px;
+        height: parent.height;
+        text: root.text;
+        color: root.active ? root.active_text_color : root.text_color;
+        font-size: root.font_size;
+        font-family: root.font_family;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}
+
+component TopBarCheck inherits Rectangle {
+    in-out property <bool> checked;
+    in property <string> text;
+    in property <length> font_size: 18px;
+    in property <string> font_family: "Avenir Next";
+    in property <length> box_size: 14px;
+    callback toggled(checked: bool);
+
+    Rectangle {
+        x: 0px;
+        y: (parent.height - box_size) / 2;
+        width: box_size;
+        height: box_size;
+        background: root.checked ? #3b70ff : #141a26;
+        border-width: 1px;
+        border-color: root.checked ? #6a8dff : #2c3547;
+        border-radius: 3px;
+    }
+
+    TopBarLabel {
+        x: box_size + 6px;
+        y: 0px;
+        width: parent.width - (box_size + 6px);
+        height: parent.height;
+        text: root.text;
+        color: #d0d6e6;
+        label_font_size: root.font_size;
+        label_font_family: root.font_family;
+        vertical-alignment: center;
+    }
+
+    TouchArea {
+        clicked => {
+            root.checked = !root.checked;
+            root.toggled(root.checked);
+        }
+    }
+}
+
+component TopBarSelect inherits Rectangle {
+    in property <[string]> model;
+    in-out property <int> current_index: 0;
+    in property <bool> enabled: true;
+    in property <length> font_size: 18px;
+    in property <string> font_family: "Avenir Next";
+    in-out property <bool> open: false;
+    callback selected(value: string);
+
+    property <string> current_label:
+        (current_index >= 0 && current_index < model.length) ? model[current_index] : "";
+
+    background: #1e2433;
+    border-width: 1px;
+    border-color: #2a3242;
+    border-radius: 4px;
+    clip: false;
+    opacity: enabled ? 1 : 0.5;
+
+    TopBarLabel {
+        x: 8px;
+        y: 0px;
+        width: parent.width - 22px;
+        height: parent.height;
+        text: root.current_label;
+        color: #dfe7ff;
+        label_font_size: root.font_size;
+        label_font_family: root.font_family;
+        vertical-alignment: center;
+    }
+
+    TopBarLabel {
+        x: parent.width - 16px;
+        y: 0px;
+        width: 12px;
+        height: parent.height;
+        text: root.open ? "^" : "v";
+        color: #9fb3d9;
+        label_font_size: root.font_size;
+        label_font_family: root.font_family;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    TouchArea {
+        enabled: root.enabled;
+        clicked => { root.open = !root.open; }
+    }
+
+    Rectangle {
+        x: 0px;
+        y: parent.height + 2px;
+        width: parent.width;
+        height: Math.min(220px, model.length * (font_size + 6px) + 8px);
+        background: #0f1420;
+        border-width: 1px;
+        border-color: #2b3446;
+        border-radius: 4px;
+        visible: root.open;
+
+        ListView {
+            x: 6px;
+            y: 6px;
+            width: parent.width - 12px;
+            height: parent.height - 12px;
+
+            for option[i] in root.model : Rectangle {
+                width: parent.width;
+                height: font_size + 6px;
+                background: i == root.current_index ? #1b2438 : #111725;
+
+                TopBarLabel {
+                    x: 6px;
+                    y: 0px;
+                    width: parent.width - 12px;
+                    height: parent.height;
+                    text: option;
+                    color: #d6dcff;
+                    label_font_size: root.font_size;
+                    label_font_family: root.font_family;
+                    vertical-alignment: center;
+                }
+
+                TouchArea {
+                    clicked => {
+                        root.current_index = i;
+                        root.selected(option);
+                        root.open = false;
+                    }
+                }
+            }
+        }
+    }
+}
+
 // ---------- Orderbook panel with drag + richer rows + intensity -----
 
 component OrderbookPanel inherits Rectangle {
@@ -74,6 +352,8 @@ component OrderbookPanel inherits Rectangle {
     in property <string> title;
     in property <float> mid;
     in property <float> spread;
+    in property <string> spread_main;
+    in property <string> spread_pad;
 
     background: #202533;
     border-radius: 4px;
@@ -106,16 +386,26 @@ component OrderbookPanel inherits Rectangle {
                 ? #123922
                 : (spread > mid * 0.0015 ? #45161c : #303545);
 
-            Text {
+            HorizontalLayout {
                 x: 4px;
                 y: 1px;
                 width: parent.width - 8px;
                 height: parent.height - 2px;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-                text: "Spr: " + spread;
-                color: #e0e0e0;
-                font-size: 10px;
+                spacing: 2px;
+
+                Text {
+                    text: "Spr:";
+                    color: #e0e0e0;
+                    font-size: 10px;
+                }
+
+                ZeroPadText {
+                    main: spread_main;
+                    pad: spread_pad;
+                    main_color: #e0e0e0;
+                    pad_color: #7aa8ff;
+                    font_size: 10px;
+                }
             }
         }
 
@@ -189,20 +479,24 @@ component OrderbookPanel inherits Rectangle {
                     opacity: (0.12 + heat * 0.88) * row_fade;
                 }
 
-                Text {
+                ZeroPadText {
                     x: 4px;
                     y: 1px;
-                    text: b.price;
-                    color: b.depth_ratio > 0.7 ? #ffffff : (b.depth_ratio > 0.3 ? #b0ffb0 : #80b080);
+                    main: b.price_main;
+                    pad: b.price_pad;
+                    main_color: b.depth_ratio > 0.7 ? #ffffff : (b.depth_ratio > 0.3 ? #b0ffb0 : #80b080);
+                    pad_color: #7aa8ff;
+                    font_size: 12px;
                 }
 
-                Text {
-                    x: parent.width - 4px;
+                ZeroPadText {
                     y: 1px;
-                    horizontal-alignment: right;
-                    width: 70px;
-                    text: b.size;
-                    color: b.depth_ratio > 0.7 ? #f0fff0 : (b.depth_ratio > 0.3 ? #e0ffe0 : #a0c0a0);
+                    main: b.size_main;
+                    pad: b.size_pad;
+                    main_color: b.depth_ratio > 0.7 ? #f0fff0 : (b.depth_ratio > 0.3 ? #e0ffe0 : #a0c0a0);
+                    pad_color: #7aa8ff;
+                    font_size: 12px;
+                    x: parent.width - 4px - self.width;
                 }
             }
         }
@@ -247,20 +541,24 @@ component OrderbookPanel inherits Rectangle {
                     opacity: (0.12 + heat * 0.88) * row_fade;
                 }
 
-                Text {
+                ZeroPadText {
                     x: 4px;
                     y: 1px;
-                    text: a.price;
-                    color: a.depth_ratio > 0.7 ? #ffffff : (a.depth_ratio > 0.3 ? #ffd0d0 : #c08080);
+                    main: a.price_main;
+                    pad: a.price_pad;
+                    main_color: a.depth_ratio > 0.7 ? #ffffff : (a.depth_ratio > 0.3 ? #ffd0d0 : #c08080);
+                    pad_color: #7aa8ff;
+                    font_size: 12px;
                 }
 
-                Text {
-                    x: parent.width - 4px;
+                ZeroPadText {
                     y: 1px;
-                    horizontal-alignment: right;
-                    width: 70px;
-                    text: a.size;
-                    color: a.depth_ratio > 0.7 ? #ffeaea : (a.depth_ratio > 0.3 ? #ffdada : #c0a0a0);
+                    main: a.size_main;
+                    pad: a.size_pad;
+                    main_color: a.depth_ratio > 0.7 ? #ffeaea : (a.depth_ratio > 0.3 ? #ffdada : #c0a0a0);
+                    pad_color: #7aa8ff;
+                    font_size: 12px;
+                    x: parent.width - 4px - self.width;
                 }
             }
         }
@@ -478,6 +776,10 @@ component CandleChart inherits Rectangle {
     in property <[CandlePoint]> points;
     in property <float> mid_line_y;
     in property <[DrawShape]> drawings;
+    in property <[DrawTick]> draw_ticks;
+    in property <[HeatmapCell]> heatmap_cells;
+    in property <bool> heatmap_enabled;
+    in property <bool> advanced_mode;
     in property <string> draw_tool;
     in-out property <float> x_zoom;
     in-out property <float> y_zoom;
@@ -489,16 +791,19 @@ component CandleChart inherits Rectangle {
     callback draw_begin(x: float, y: float);
     callback draw_update(x: float, y: float);
     callback draw_end(x: float, y: float);
+    callback draw_poly_sides_delta(delta: int);
 
-    background: #10131a;
+    property <bool> draw_dragging: false;
+
+    background: advanced_mode ? #0a0c14 : #0b0f16;
     clip: true;
     border-radius: 2px;
     border-width: 1px;
-    border-color: #222634;
+    border-color: advanced_mode ? #2a2f45 : #1c2230;
 
-    Rectangle { x: 0px; width: parent.width; height: 1px; y: parent.height * 0.25; background: #202633; opacity: 0.35; }
-    Rectangle { x: 0px; width: parent.width; height: 1px; y: parent.height * 0.5;  background: #202633; opacity: 0.35; }
-    Rectangle { x: 0px; width: parent.width; height: 1px; y: parent.height * 0.75; background: #202633; opacity: 0.35; }
+    Rectangle { x: 0px; width: parent.width; height: 1px; y: parent.height * 0.25; background: advanced_mode ? #1f2b3f : #1a202d; opacity: advanced_mode ? 0.55 : 0.35; }
+    Rectangle { x: 0px; width: parent.width; height: 1px; y: parent.height * 0.5;  background: advanced_mode ? #1f2b3f : #1a202d; opacity: advanced_mode ? 0.55 : 0.35; }
+    Rectangle { x: 0px; width: parent.width; height: 1px; y: parent.height * 0.75; background: advanced_mode ? #1f2b3f : #1a202d; opacity: advanced_mode ? 0.55 : 0.35; }
 
     Rectangle {
         x: 0px;
@@ -506,8 +811,23 @@ component CandleChart inherits Rectangle {
         height: 1px;
         property <float> mid_z: Math.max(0.0, Math.min(1.0, mid_line_y + root.pan_y));
         y: mid_z * parent.height;
-        background: #303545;
-        opacity: 0.7;
+        background: advanced_mode ? #2b3d5e : #232a39;
+        opacity: advanced_mode ? 0.85 : 0.7;
+    }
+
+    // Heatmap underlay
+    for h in heatmap_cells : Rectangle {
+        visible: root.heatmap_enabled;
+        property <float> x0: Math.max(-0.2, h.x - h.w * 0.5);
+        property <float> x1: Math.min(1.2, h.x + h.w * 0.5);
+        property <float> y0: Math.max(-0.2, h.y - h.h * 0.5);
+        property <float> y1: Math.min(1.2, h.y + h.h * 0.5);
+
+        x: x0 * parent.width;
+        y: y0 * parent.height;
+        width: Math.max(1px, (x1 - x0) * parent.width);
+        height: Math.max(1px, (y1 - y0) * parent.height);
+        background: h.color;
     }
 
     // Volume bars (gapless via snapped edges)
@@ -594,10 +914,28 @@ component CandleChart inherits Rectangle {
         y: y0 * parent.height;
         width: Math.max(2px, (x1 - x0) * parent.width);
         height: Math.max(2px, (y1 - y0) * parent.height);
-        background: d.is_preview ? #1e2d4666 : #1e2d4633;
+        background: d.is_preview ? #1e2d4666 : (d.selected ? #2b3a4f55 : #1e2d4633);
         border-width: 1px;
-        border-color: #6ab0ff;
+        border-color: d.selected ? #f0d66a : #6ab0ff;
         border-radius: 2px;
+    }
+
+    // Drawn polygons + pencil paths
+    for d in drawings : Path {
+        visible: d.commands != "";
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 1;
+        viewbox-height: 1;
+        commands: d.commands;
+        stroke: d.selected ? #f0d66a : (d.kind == "Pencil" ? #88ccff : #6ab0ff);
+        stroke-width: d.selected ? 2px : 1px;
+        fill: d.kind == "Poly" ? (d.is_preview ? #2b3a4f55 : #2b3a4f33) : #00000000;
+        opacity: d.is_preview ? 0.6 : 0.9;
     }
 
     // Drawn lines + rulers
@@ -607,13 +945,47 @@ component CandleChart inherits Rectangle {
         y: 0px;
         width: parent.width;
         height: parent.height;
-        stroke: d.kind == "Ruler" ? #6ab0ff : #ffaa66;
-        stroke-width: 1px;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 1;
+        viewbox-height: 1;
+        stroke: d.selected ? #f0d66a : (d.kind == "Ruler" ? #6ab0ff : #ffaa66);
+        stroke-width: d.selected ? 2px : 1px;
         fill: #00000000;
         opacity: d.is_preview ? 0.6 : 0.9;
 
-        MoveTo { x: (d.x1 * parent.width) / 1px; y: (d.y1 * parent.height) / 1px; }
-        LineTo { x: (d.x2 * parent.width) / 1px; y: (d.y2 * parent.height) / 1px; }
+        MoveTo { x: d.x1; y: d.y1; }
+        LineTo { x: d.x2; y: d.y2; }
+    }
+
+    // Ruler ticks (tape measure)
+    for t in draw_ticks : Rectangle {
+        property <length> tick_x: Math.max(2px, Math.min(parent.width - 8px, (t.x * parent.width) - 3px));
+        property <length> tick_y: Math.max(2px, Math.min(parent.height - 2px, (t.y * parent.height)));
+        x: tick_x;
+        y: tick_y;
+        width: 6px;
+        height: 1px;
+        background: #6ab0ff;
+        opacity: t.is_preview ? 0.5 : 0.9;
+    }
+
+    for t in draw_ticks : Rectangle {
+        visible: t.label != "";
+        property <length> label_w: 70px;
+        property <length> lx: Math.max(4px, Math.min(parent.width - label_w - 4px, (t.x * parent.width) + 6px));
+        property <length> ly: Math.max(2px, Math.min(parent.height - 14px, (t.y * parent.height) - 6px));
+        x: lx;
+        y: ly;
+        width: label_w;
+        height: 12px;
+        background: #0f1420cc;
+        border-width: 1px;
+        border-color: #38435a;
+        border-radius: 2px;
+        opacity: t.is_preview ? 0.6 : 0.95;
+
+        Text { x: 3px; y: 0px; text: t.label; color: #d7e8ff; font-size: 8px; }
     }
 
     // Ruler labels
@@ -637,8 +1009,8 @@ component CandleChart inherits Rectangle {
         y: 0px;
         width: 1px;
         height: parent.height;
-        background: #303545;
-        opacity: 0.45;
+        background: advanced_mode ? #2e3b52 : #303545;
+        opacity: advanced_mode ? 0.6 : 0.45;
     }
 
     Rectangle {
@@ -646,8 +1018,8 @@ component CandleChart inherits Rectangle {
         y: Math.max(0px, Math.min(parent.height - 1px, root.cursor_y * parent.height));
         width: parent.width;
         height: 1px;
-        background: #303545;
-        opacity: 0.45;
+        background: advanced_mode ? #2e3b52 : #303545;
+        opacity: advanced_mode ? 0.6 : 0.45;
     }
 
     TouchArea {
@@ -661,18 +1033,22 @@ component CandleChart inherits Rectangle {
         property <bool> dragging;
 
         pointer-event(event) => {
-            root.cursor_x = Math.max(0.0, Math.min(1.0, self.mouse-x / parent.width));
-            root.cursor_y = Math.max(0.0, Math.min(1.0, self.mouse-y / parent.height));
+            let local_x = self.absolute-position.x + self.mouse-x - root.absolute-position.x;
+            let local_y = self.absolute-position.y + self.mouse-y - root.absolute-position.y;
+            root.cursor_x = Math.max(0.0, Math.min(1.0, local_x / parent.width));
+            root.cursor_y = Math.max(0.0, Math.min(1.0, local_y / parent.height));
             let x_n = root.cursor_x;
             let y_n = root.cursor_y;
 
             if root.draw_tool == "Pan" {
                 if event.kind == PointerEventKind.down {
                     dragging = true;
+                    root.draw_dragging = false;
                     last_x = self.mouse-x;
                     last_y = self.mouse-y;
                 } else if event.kind == PointerEventKind.up {
                     dragging = false;
+                    root.draw_dragging = false;
                 } else if event.kind == PointerEventKind.move && dragging {
                     let dx = (self.mouse-x - last_x) / parent.width;
                     let dy = (self.mouse-y - last_y) / parent.height;
@@ -686,12 +1062,15 @@ component CandleChart inherits Rectangle {
             } else {
                 if event.kind == PointerEventKind.down {
                     dragging = true;
+                    root.draw_dragging = true;
+                    draw_focus.focus();
                     root.draw_begin(x_n, y_n);
                 } else if event.kind == PointerEventKind.up {
                     if dragging {
                         root.draw_end(x_n, y_n);
                     }
                     dragging = false;
+                    root.draw_dragging = false;
                 } else if event.kind == PointerEventKind.move && dragging {
                     root.draw_update(x_n, y_n);
                 }
@@ -699,8 +1078,10 @@ component CandleChart inherits Rectangle {
         }
 
         scroll-event(event) => {
-            root.cursor_x = Math.max(0.0, Math.min(1.0, self.mouse-x / parent.width));
-            root.cursor_y = Math.max(0.0, Math.min(1.0, self.mouse-y / parent.height));
+            let local_x = self.absolute-position.x + self.mouse-x - root.absolute-position.x;
+            let local_y = self.absolute-position.y + self.mouse-y - root.absolute-position.y;
+            root.cursor_x = Math.max(0.0, Math.min(1.0, local_x / parent.width));
+            root.cursor_y = Math.max(0.0, Math.min(1.0, local_y / parent.height));
 
             let dy = event.delta-y;
             let is_shift = event.modifiers.shift;
@@ -739,6 +1120,21 @@ component CandleChart inherits Rectangle {
             EventResult.accept
         }
     }
+
+    draw_focus := FocusScope {
+        key-pressed(event) => {
+            if root.draw_tool == "Poly" && root.draw_dragging {
+                if event.text == Key.UpArrow {
+                    root.draw_poly_sides_delta(1);
+                    return accept;
+                } else if event.text == Key.DownArrow {
+                    root.draw_poly_sides_delta(-1);
+                    return accept;
+                }
+            }
+            return reject;
+        }
+    }
 }
 
 
@@ -769,6 +1165,10 @@ component ChartPopoutPanel inherits Rectangle {
     in property <[CandlePoint]> points;
     in property <float> mid_line_y;
     in property <[DrawShape]> drawings;
+    in property <[DrawTick]> draw_ticks;
+    in property <[HeatmapCell]> heatmap_cells;
+    in property <bool> heatmap_enabled;
+    in property <bool> advanced_mode;
     in property <string> draw_tool;
 
     in-out property <float> x_zoom;
@@ -783,6 +1183,7 @@ component ChartPopoutPanel inherits Rectangle {
     callback draw_begin(x: float, y: float);
     callback draw_update(x: float, y: float);
     callback draw_end(x: float, y: float);
+    callback draw_poly_sides_delta(delta: int);
 
     x: px;
     y: py;
@@ -791,16 +1192,16 @@ component ChartPopoutPanel inherits Rectangle {
 
     visible: open;
 
-    background: #202533;
+    background: advanced_mode ? #0b0f17 : #202533;
     border-radius: 6px;
     border-width: 1px;
-    border-color: #31384a;
+    border-color: advanced_mode ? #3a3f55 : #31384a;
 
     Rectangle {
         x: 0px; y: 0px; width: parent.width; height: 26px;
-        background: #303545;
+        background: advanced_mode ? #1b2031 : #303545;
 
-        Text { x: 8px; y: 5px; text: title; color: #ffffff; }
+        Text { x: 8px; y: 5px; text: title; color: advanced_mode ? #f5e9ff : #ffffff; }
 
         Button {
             x: parent.width - 54px; y: 3px; width: 48px; height: 20px;
@@ -841,10 +1242,10 @@ component ChartPopoutPanel inherits Rectangle {
         y: 32px;
         width: parent.width - 12px;
         height: parent.height - 38px;
-        background: #10131a;
+        background: #0b0f16;
         border-radius: 4px;
         border-width: 1px;
-        border-color: #222634;
+        border-color: #1c2230;
 
         CandleChart {
             x: 6px;
@@ -855,6 +1256,10 @@ component ChartPopoutPanel inherits Rectangle {
             points: root.points;
             mid_line_y: root.mid_line_y;
             drawings: root.drawings;
+            draw_ticks: root.draw_ticks;
+            heatmap_cells: root.heatmap_cells;
+            heatmap_enabled: root.heatmap_enabled;
+            advanced_mode: root.advanced_mode;
             draw_tool: root.draw_tool;
 
             x_zoom <=> root.x_zoom;
@@ -867,6 +1272,7 @@ component ChartPopoutPanel inherits Rectangle {
             draw_begin(x, y) => { root.draw_begin(x, y); }
             draw_update(x, y) => { root.draw_update(x, y); }
             draw_end(x, y) => { root.draw_end(x, y); }
+            draw_poly_sides_delta(delta) => { root.draw_poly_sides_delta(delta); }
         }
     }
 
@@ -942,6 +1348,18 @@ export component AppWindow inherits Window {
 
     in-out property <int> tf_selected: 4; // default "60s"
 
+    property <float> topbar_scale: 1.5;
+    property <string> topbar_font: "Avenir Next";
+    property <length> topbar_font_size: 12px * topbar_scale;
+    property <length> topbar_font_size_small: 10px * topbar_scale;
+    property <length> topbar_y: 108px;
+    property <length> topbar_h: 110px;
+    property <length> topbar_gap: 4px;
+    property <length> secondbar_h: 70px;
+    property <length> secondbar_gap: 6px;
+    property <length> secondbar_y: topbar_y + topbar_h + topbar_gap;
+    property <length> chart_top_y: secondbar_y + secondbar_h + secondbar_gap;
+
     // Persisted panel positions (for phase-1 persistence)
     in-out property <length> orderbook_x: 16px;
     in-out property <length> orderbook_y: 80px;
@@ -990,21 +1408,43 @@ export component AppWindow inherits Window {
 
     in-out property <string> data_range;
     in-out property <string> current_ticker;
+    in-out property <string> ticker_input: "ETH-USD";
+    in-out property <int> market_poll_secs: 5;
+    in-out property <bool> tickers_dropdown_open: false;
 
     in-out property <float> mid_price;
     in-out property <float> best_bid;
     in-out property <float> best_ask;
     in-out property <float> spread;
     in-out property <float> imbalance;
+    in-out property <string> mid_price_main;
+    in-out property <string> mid_price_pad;
+    in-out property <string> best_bid_main;
+    in-out property <string> best_bid_pad;
+    in-out property <string> best_ask_main;
+    in-out property <string> best_ask_pad;
+    in-out property <string> spread_main;
+    in-out property <string> spread_pad;
+    in-out property <string> current_price_main;
+    in-out property <string> current_price_pad;
+    in-out property <string> mark_price_main;
+    in-out property <string> mark_price_pad;
+    in-out property <string> oracle_price_main;
+    in-out property <string> oracle_price_pad;
+    in-out property <string> last_price_main;
+    in-out property <string> last_price_pad;
 
     in-out property <[BookLevel]> bids;
     in-out property <[BookLevel]> asks;
+    in-out property <[TickerFeedRow]> ticker_feed_rows;
     in-out property <[Trade]> recent_trades;
     in-out property <[CandleRow]> candles;
     in-out property <[CandlePoint]> candle_points;
     in-out property <[AxisTick]> price_ticks;
     in-out property <[AxisTick]> time_ticks;
     in-out property <[DrawShape]> drawings;
+    in-out property <[DrawTick]> draw_ticks;
+    in-out property <[HeatmapCell]> heatmap_cells;
     in-out property <[Receipt]> receipts;
 
     in-out property <float> candle_midline;
@@ -1035,8 +1475,12 @@ export component AppWindow inherits Window {
     in-out property <length> inline_chart_height: 260px;
     in-out property <bool> is_fullscreen: false;
 
-    in-out property <[string]> draw_tools: ["Pan", "Line", "Rect", "Ruler"];
+    in-out property <[string]> draw_tools: ["Pan", "Line", "Rect", "Ruler", "Poly", "Pencil"];
     in-out property <string> draw_tool: "Pan";
+    in-out property <int> draw_selected_id: -1;
+    in-out property <string> chart_view_mode: "Chart";
+    in-out property <bool> heatmap_enabled: false;
+    in-out property <bool> chart_sidebar_open: false;
 
     in-out property <bool> chart_popout_open: false;
     in-out property <length> chart_popout_x: 80px;
@@ -1076,6 +1520,14 @@ export component AppWindow inherits Window {
     callback draw_begin(x: float, y: float);
     callback draw_update(x: float, y: float);
     callback draw_end(x: float, y: float);
+    callback draw_poly_sides_delta(delta: int);
+    callback drawing_selected(id: int);
+    callback drawing_delete(id: int);
+    callback drawing_clear_all();
+    callback chart_view_mode_changed(mode: string);
+    callback heatmap_enabled_changed(enabled: bool);
+    callback market_poll_adjust(delta: int);
+    callback ticker_feed_toggled(ticker: string, enabled: bool);
 
     callback send_order();
     callback reload_data();
@@ -1240,16 +1692,24 @@ export component AppWindow inherits Window {
 
                 Text { x: 8px; y: 4px; text: "Balances  USDC: " + balance_usdc + "   PnL: " + balance_pnl; color: #d0e080; }
 
-                Text {
+                HorizontalLayout {
                     x: 8px;
                     y: 26px;
-                    text:
-                        "Mid: " + mid_price + " " + mid_move_symbol
-                        + "  Bid: " + best_bid
-                        + "  Ask: " + best_ask
-                        + "  Spread: " + spread
-                        + "  Imb: " + imbalance;
-                    color: mid_text_color;
+                    width: parent.width - 16px;
+                    height: 18px;
+                    spacing: 6px;
+
+                    Text { text: "Mid:"; color: mid_text_color; font-size: 12px; }
+                    ZeroPadText { main: root.mid_price_main; pad: root.mid_price_pad; main_color: mid_text_color; pad_color: #7aa8ff; font_size: 12px; }
+                    Text { text: mid_move_symbol; color: mid_text_color; font-size: 12px; }
+                    Text { text: "Bid:"; color: mid_text_color; font-size: 12px; }
+                    ZeroPadText { main: root.best_bid_main; pad: root.best_bid_pad; main_color: mid_text_color; pad_color: #7aa8ff; font_size: 12px; }
+                    Text { text: "Ask:"; color: mid_text_color; font-size: 12px; }
+                    ZeroPadText { main: root.best_ask_main; pad: root.best_ask_pad; main_color: mid_text_color; pad_color: #7aa8ff; font_size: 12px; }
+                    Text { text: "Spread:"; color: mid_text_color; font-size: 12px; }
+                    ZeroPadText { main: root.spread_main; pad: root.spread_pad; main_color: mid_text_color; pad_color: #7aa8ff; font_size: 12px; }
+                    Text { text: "Imb:"; color: mid_text_color; font-size: 12px; }
+                    Text { text: imbalance; color: mid_text_color; font-size: 12px; }
                 }
 
                 Text {
@@ -1297,76 +1757,163 @@ export component AppWindow inherits Window {
 
             Rectangle {
                 x: 0px;
-                y: 108px;
+                y: root.topbar_y;
                 width: parent.width;
-                height: 56px;
+                height: root.topbar_h;
                 background: #181b24;
 
-                Text { x: 8px; y: 6px; text: "Ticker:"; color: #cccccc; }
+                property <length> row1_y: 4px * root.topbar_scale;
+                property <length> row1_text_y: 6px * root.topbar_scale;
+                property <length> row2_y: 30px * root.topbar_scale;
+                property <length> row2_text_y: 32px * root.topbar_scale;
+                property <length> btn_h: 20px * root.topbar_scale;
+                property <length> zoom_btn_h: 18px * root.topbar_scale;
+                property <length> slider_h: 10px * root.topbar_scale;
+                property <length> slider_y: row2_y + 4px * root.topbar_scale;
+                property <length> font_main: root.topbar_font_size;
+                property <length> font_small: root.topbar_font_size_small;
 
-                Button { x: 70px;  y: 4px; text: "ETH-USD"; clicked => { root.ticker_changed("ETH-USD"); } }
-                Button { x: 150px; y: 4px; text: "BTC-USD"; clicked => { root.ticker_changed("BTC-USD"); } }
-                Button { x: 230px; y: 4px; text: "SOL-USD"; clicked => { root.ticker_changed("SOL-USD"); } }
+                TopBarLabel { x: 8px; y: row1_text_y; text: "Ticker:"; color: #cccccc; label_font_size: font_main; label_font_family: root.topbar_font; }
 
-                Text { x: 320px; y: 6px; text: "Mode:"; color: #cccccc; }
-                Button { x: 370px; y: 4px; text: "Live";   clicked => { root.mode_changed("Live"); } }
-                Button { x: 430px; y: 4px; text: "Replay"; clicked => { root.mode_changed("Replay"); } }
+                TopBarButton {
+                    x: 70px; y: row1_y; width: 70px; height: btn_h;
+                    text: root.tickers_dropdown_open ? "List ▲" : "List ▼";
+                    font_size: font_main; font_family: root.topbar_font;
+                    clicked => { root.tickers_dropdown_open = !root.tickers_dropdown_open; }
+                }
 
-                Text { x: 520px; y: 6px; text: "Time:"; color: #cccccc; }
-                Button { x: 570px; y: 4px; text: "Local"; clicked => { root.time_mode_changed("Local"); } }
-                Button { x: 640px; y: 4px; text: "UTC";   clicked => { root.time_mode_changed("UTC"); } }
+                TickerBadge {
+                    x: 146px;
+                    y: row1_y;
+                    width: 220px;
+                    height: btn_h;
+                    value: root.ticker_input;
+                    font_size: font_main;
+                    font_family: root.topbar_font;
+                }
 
-                Button {
-                    x: 700px; y: 4px; width: 70px; height: 20px;
+                TopBarLabel { x: 518px; y: row1_text_y; text: "Mode:"; color: #cccccc; label_font_size: font_main; label_font_family: root.topbar_font; }
+                TopBarButton {
+                    x: 568px; y: row1_y; width: 56px; height: btn_h;
+                    text: "Live";
+                    active: root.mode == "Live";
+                    font_size: font_main; font_family: root.topbar_font;
+                    clicked => { root.mode_changed("Live"); }
+                }
+                TopBarButton {
+                    x: 628px; y: row1_y; width: 76px; height: btn_h;
+                    text: "Replay";
+                    active: root.mode == "Replay";
+                    font_size: font_main; font_family: root.topbar_font;
+                    clicked => { root.mode_changed("Replay"); }
+                }
+
+                TopBarLabel { x: 718px; y: row1_text_y; text: "Time:"; color: #cccccc; label_font_size: font_main; label_font_family: root.topbar_font; }
+                TopBarButton {
+                    x: 768px; y: row1_y; width: 60px; height: btn_h;
+                    text: "Local";
+                    active: root.time_mode == "Local";
+                    font_size: font_main; font_family: root.topbar_font;
+                    clicked => { root.time_mode_changed("Local"); }
+                }
+                TopBarButton {
+                    x: 838px; y: row1_y; width: 50px; height: btn_h;
+                    text: "UTC";
+                    active: root.time_mode == "UTC";
+                    font_size: font_main; font_family: root.topbar_font;
+                    clicked => { root.time_mode_changed("UTC"); }
+                }
+
+                TopBarButton {
+                    x: 898px; y: row1_y; width: 70px; height: btn_h;
                     text: "Stretch";
+                    font_size: font_main; font_family: root.topbar_font;
                     clicked => { root.stretch_to_viewport(); }
                 }
-                Button {
-                    x: 774px; y: 4px; width: 98px; height: 20px;
+                TopBarButton {
+                    x: 972px; y: row1_y; width: 98px; height: btn_h;
                     text: root.is_fullscreen ? "Exit Full" : "Fullscreen";
+                    active: root.is_fullscreen;
+                    font_size: font_main; font_family: root.topbar_font;
                     clicked => {
                         root.is_fullscreen = !root.is_fullscreen;
                         root.fullscreen_toggle(root.is_fullscreen);
                     }
                 }
-                Button {
-                    x: 880px; y: 4px; width: 120px; height: 20px;
+                TopBarButton {
+                    x: 1078px; y: row1_y; width: 120px; height: btn_h;
                     text: root.render_all_candles ? "Render: Full" : "Render: Cond";
+                    active: root.render_all_candles;
+                    font_size: font_main; font_family: root.topbar_font;
                     clicked => {
                         root.render_all_candles = !root.render_all_candles;
                         root.render_mode_changed(root.render_all_candles);
                     }
                 }
-                Button {
-                    x: 1008px; y: 4px; width: 78px; height: 20px;
+                TopBarButton {
+                    x: 1206px; y: row1_y; width: 78px; height: btn_h;
                     text: root.feed_enabled ? "Feed: On" : "Feed: Off";
+                    active: root.feed_enabled;
+                    font_size: font_main; font_family: root.topbar_font;
                     clicked => {
                         root.feed_enabled = !root.feed_enabled;
                         root.feed_enabled_changed(root.feed_enabled);
                     }
                 }
-                Button {
-                    x: 1090px; y: 4px; width: 78px; height: 20px;
+                TopBarButton {
+                    x: 1288px; y: row1_y; width: 78px; height: btn_h;
                     text: root.chart_enabled ? "Chart: On" : "Chart: Off";
+                    active: root.chart_enabled;
+                    font_size: font_main; font_family: root.topbar_font;
                     clicked => {
                         root.chart_enabled = !root.chart_enabled;
                         root.chart_enabled_changed(root.chart_enabled);
                     }
                 }
 
-                Text { x: 8px; y: 32px; text: "TF / Window:"; color: #aaaaaa; }
+                TopBarButton {
+                    x: 1350px; y: row1_y; width: 70px; height: btn_h;
+                    text: root.chart_popout_open ? "Popout ✓" : "Popout";
+                    active: root.chart_popout_open;
+                    font_size: font_main; font_family: root.topbar_font;
+                    clicked => {
+                        if !root.chart_popout_open {
+                            root.chart_popout_x = 80px;
+                            root.chart_popout_y = 240px;
+                            root.chart_popout_w = 760px;
+                            root.chart_popout_h = 440px;
+                        }
+                        root.chart_popout_open = !root.chart_popout_open;
+                    }
+                }
 
-                // TF dropdown (string-based in this Slint std-widgets ComboBox)
-                ComboBox {
+                TopBarButton {
+                    x: 1426px; y: row1_y; width: 48px; height: btn_h;
+                    text: "Chart-";
+                    font_size: font_main; font_family: root.topbar_font;
+                    clicked => { root.inline_chart_height = Math.max(120px, root.inline_chart_height - 40px); }
+                }
+                TopBarButton {
+                    x: 1480px; y: row1_y; width: 48px; height: btn_h;
+                    text: "Chart+";
+                    font_size: font_main; font_family: root.topbar_font;
+                    clicked => { root.inline_chart_height = Math.min(600px, root.inline_chart_height + 40px); }
+                }
+
+                TopBarLabel {
+                    x: 8px; y: row2_text_y;
+                    text: "TF / Window:"; color: #aaaaaa;
+                    label_font_size: font_main; label_font_family: root.topbar_font;
+                }
+
+                TopBarSelect {
                     x: 110px;
-                    y: 30px;
+                    y: row2_y;
                     width: 90px;
-                    height: 20px;
-
+                    height: btn_h;
                     model: root.tf_labels;
-
-                    // 'selected' passes a STRING in this version (not an index),
-                    // so we map label -> index, then index -> seconds.
+                    current_index <=> root.tf_selected;
+                    font_size: font_main; font_family: root.topbar_font;
                     selected(value) => {
                         let idx =
                             value == "1s"   ? 0  :
@@ -1393,56 +1940,81 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                Button { x: 230px; y: 30px; text: "Win 60m";  clicked => { root.candle_window_changed(60); } }
-                Button { x: 310px; y: 30px; text: "Win 240m"; clicked => { root.candle_window_changed(240); } }
+                TopBarButton {
+                    x: 230px; y: row2_y; width: 80px; height: btn_h;
+                    text: "Win 60m";
+                    font_size: font_main; font_family: root.topbar_font;
+                    clicked => { root.candle_window_changed(60); }
+                }
+                TopBarButton {
+                    x: 310px; y: row2_y; width: 90px; height: btn_h;
+                    text: "Win 240m";
+                    font_size: font_main; font_family: root.topbar_font;
+                    clicked => { root.candle_window_changed(240); }
+                }
 
-                Text { x: 400px; y: 32px; text: "Price:"; color: #aaaaaa; }
-                Button {
-                    x: 450px; y: 30px; width: 52px; height: 20px;
-                    text: root.candle_price_mode == "Bid" ? "Bid ✓" : "Bid";
+                TopBarLabel { x: 400px; y: row2_text_y; text: "Price:"; color: #aaaaaa; label_font_size: font_main; label_font_family: root.topbar_font; }
+                TopBarButton {
+                    x: 450px; y: row2_y; width: 52px; height: btn_h;
+                    text: "Bid";
+                    active: root.candle_price_mode == "Bid";
+                    font_size: font_main; font_family: root.topbar_font;
                     clicked => {
                         root.candle_price_mode = "Bid";
                         root.candle_price_mode_changed(root.candle_price_mode);
                     }
                 }
-                Button {
-                    x: 506px; y: 30px; width: 52px; height: 20px;
-                    text: root.candle_price_mode == "Mid" ? "Mid ✓" : "Mid";
+                TopBarButton {
+                    x: 506px; y: row2_y; width: 52px; height: btn_h;
+                    text: "Mid";
+                    active: root.candle_price_mode == "Mid";
+                    font_size: font_main; font_family: root.topbar_font;
                     clicked => {
                         root.candle_price_mode = "Mid";
                         root.candle_price_mode_changed(root.candle_price_mode);
                     }
                 }
-                Button {
-                    x: 562px; y: 30px; width: 52px; height: 20px;
-                    text: root.candle_price_mode == "Ask" ? "Ask ✓" : "Ask";
+                TopBarButton {
+                    x: 562px; y: row2_y; width: 52px; height: btn_h;
+                    text: "Ask";
+                    active: root.candle_price_mode == "Ask";
+                    font_size: font_main; font_family: root.topbar_font;
                     clicked => {
                         root.candle_price_mode = "Ask";
                         root.candle_price_mode_changed(root.candle_price_mode);
                     }
                 }
 
-                Text { x: 630px; y: 32px; text: "Panels:"; color: #aaaaaa; }
-                CheckBox {
-                    x: 690px; y: 30px; text: "Depth";
+                TopBarLabel { x: 630px; y: row2_text_y; text: "Panels:"; color: #aaaaaa; label_font_size: font_main; label_font_family: root.topbar_font; }
+                TopBarCheck {
+                    x: 690px; y: row2_y; width: 70px; height: btn_h;
+                    text: "Depth";
                     checked <=> show_depth;
+                    font_size: font_main; font_family: root.topbar_font;
+                    box_size: 12px * root.topbar_scale;
                     toggled => { root.depth_panel_changed(self.checked); }
                 }
-                CheckBox {
-                    x: 770px; y: 30px; text: "Trades";
+                TopBarCheck {
+                    x: 770px; y: row2_y; width: 74px; height: btn_h;
+                    text: "Trades";
                     checked <=> show_trades;
+                    font_size: font_main; font_family: root.topbar_font;
+                    box_size: 12px * root.topbar_scale;
                     toggled => { root.trades_panel_changed(self.checked); }
                 }
-                CheckBox {
-                    x: 860px; y: 30px; text: "Volume";
+                TopBarCheck {
+                    x: 860px; y: row2_y; width: 80px; height: btn_h;
+                    text: "Volume";
                     checked <=> show_volume;
+                    font_size: font_main; font_family: root.topbar_font;
+                    box_size: 12px * root.topbar_scale;
                     toggled => { root.volume_panel_changed(self.checked); }
                 }
 
-                Text { x: 940px; y: 32px; text: "DOM depth:"; color: #aaaaaa; }
+                TopBarLabel { x: 940px; y: row2_text_y; text: "DOM depth:"; color: #aaaaaa; label_font_size: font_main; label_font_family: root.topbar_font; }
 
                 Rectangle {
-                    x: 1020px; y: 34px; width: 180px; height: 10px;
+                    x: 1020px; y: slider_y; width: 180px; height: slider_h;
                     background: #202633; border-radius: 5px;
 
                     property <length> knob_x: (root.dom_depth_levels - 5) * (parent.width - 12px) / 45;
@@ -1491,39 +2063,44 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                Text { x: 1210px; y: 32px; text: dom_depth_levels + " lvls"; color: #cccccc; font-size: 10px; }
-
-                Button {
-                    x: 1174px; y: 4px; width: 70px; height: 20px;
-                    text: root.chart_popout_open ? "Popout ✓" : "Popout";
-                    clicked => {
-                        if !root.chart_popout_open {
-                            root.chart_popout_x = 80px;
-                            root.chart_popout_y = 240px;
-                            root.chart_popout_w = 760px;
-                            root.chart_popout_h = 440px;
-                        }
-                        root.chart_popout_open = !root.chart_popout_open;
-                    }
+                TopBarLabel {
+                    x: 1210px; y: row2_text_y;
+                    text: dom_depth_levels + " lvls";
+                    color: #cccccc;
+                    label_font_size: font_small; label_font_family: root.topbar_font;
                 }
 
-                Button {
-                    x: 1250px; y: 4px; width: 48px; height: 20px;
-                    text: "Chart-";
-                    clicked => { root.inline_chart_height = Math.max(120px, root.inline_chart_height - 40px); }
+                TopBarLabel { x: 1500px; y: row2_text_y; text: "Poll:"; color: #aaaaaa; label_font_size: font_main; label_font_family: root.topbar_font; }
+                TopBarButton {
+                    x: 1540px; y: row2_y; width: 26px; height: btn_h;
+                    text: "-";
+                    font_size: font_main; font_family: root.topbar_font;
+                    clicked => { root.market_poll_adjust(-1); }
                 }
-                Button {
-                    x: 1304px; y: 4px; width: 48px; height: 20px;
-                    text: "Chart+";
-                    clicked => { root.inline_chart_height = Math.min(600px, root.inline_chart_height + 40px); }
+                TopBarLabel {
+                    x: 1570px; y: row2_text_y;
+                    text: root.market_poll_secs + "s";
+                    color: #cccccc;
+                    label_font_size: font_small; label_font_family: root.topbar_font;
                 }
-                Text { x: 1120px; y: 28px; text: (root.inline_chart_height / 1px) + "px"; color: #c0c0c0; font-size: 10px; }
+                TopBarButton {
+                    x: 1610px; y: row2_y; width: 26px; height: btn_h;
+                    text: "+";
+                    font_size: font_main; font_family: root.topbar_font;
+                    clicked => { root.market_poll_adjust(1); }
+                }
 
-                Text { x: 1060px; y: 28px; text: "Zoom:"; color: #aaaaaa; font-size: 10px; }
-
-                Button {
-                    x: 1060px; y: 42px; width: 36px; height: 18px;
+                TopBarLabel {
+                    x: 1644px; y: row2_text_y;
+                    text: "Zoom:";
+                    color: #aaaaaa;
+                    label_font_size: font_small; label_font_family: root.topbar_font;
+                }
+                TopBarButton {
+                    x: 1644px; y: row2_y + (btn_h + 2px);
+                    width: 36px; height: zoom_btn_h;
                     text: "X-";
+                    font_size: font_small; font_family: root.topbar_font;
                     clicked => {
                         let old_z = Math.max(0.25, Math.min(8.0, root.chart_x_zoom));
                         let cx = root.chart_cursor_x;
@@ -1537,9 +2114,11 @@ export component AppWindow inherits Window {
                         root.chart_pan_x = Math.max(-2.0, Math.min(2.0, px2));
                     }
                 }
-                Button {
-                    x: 1100px; y: 42px; width: 36px; height: 18px;
+                TopBarButton {
+                    x: 1684px; y: row2_y + (btn_h + 2px);
+                    width: 36px; height: zoom_btn_h;
                     text: "X+";
+                    font_size: font_small; font_family: root.topbar_font;
                     clicked => {
                         let old_z = Math.max(0.25, Math.min(8.0, root.chart_x_zoom));
                         let cx = root.chart_cursor_x;
@@ -1553,9 +2132,11 @@ export component AppWindow inherits Window {
                         root.chart_pan_x = Math.max(-2.0, Math.min(2.0, px2));
                     }
                 }
-                Button {
-                    x: 1140px; y: 42px; width: 36px; height: 18px;
+                TopBarButton {
+                    x: 1724px; y: row2_y + (btn_h + 2px);
+                    width: 36px; height: zoom_btn_h;
                     text: "Y-";
+                    font_size: font_small; font_family: root.topbar_font;
                     clicked => {
                         let old_z = Math.max(0.25, Math.min(8.0, root.chart_y_zoom));
                         let cy = root.chart_cursor_y;
@@ -1570,9 +2151,11 @@ export component AppWindow inherits Window {
                         root.chart_pan_y = Math.max(-1.0, Math.min(1.0, py2));
                     }
                 }
-                Button {
-                    x: 1180px; y: 42px; width: 36px; height: 18px;
+                TopBarButton {
+                    x: 1764px; y: row2_y + (btn_h + 2px);
+                    width: 36px; height: zoom_btn_h;
                     text: "Y+";
+                    font_size: font_small; font_family: root.topbar_font;
                     clicked => {
                         let old_z = Math.max(0.25, Math.min(8.0, root.chart_y_zoom));
                         let cy = root.chart_cursor_y;
@@ -1586,14 +2169,21 @@ export component AppWindow inherits Window {
                         let py2 = cy - mid - (yw - mid) * new_z;
                         root.chart_pan_y = Math.max(-1.0, Math.min(1.0, py2));
                     }
+                }
+
+                TopBarLabel {
+                    x: 1320px; y: row2_text_y;
+                    text: (root.inline_chart_height / 1px) + "px";
+                    color: #c0c0c0;
+                    label_font_size: font_small; label_font_family: root.topbar_font;
                 }
             }
 
             Rectangle {
                 x: 0px;
-                y: 168px;
+                y: root.secondbar_y;
                 width: parent.width;
-                height: 70px;
+                height: root.secondbar_h;
                 background: #181b24;
 
                 Button { x: 8px; y: 8px; text: "Buy";  clicked => { root.trade_side = "Buy"; } }
@@ -1664,44 +2254,70 @@ export component AppWindow inherits Window {
 
             Rectangle {
                 x: 0px;
-                y: 244px;
+                y: root.chart_top_y;
                 width: parent.width * 0.5;
                 height: parent.height - 320px;
-                background: #181b24;
+                background: root.chart_view_mode == "Advanced" ? #0b0f17 : #11151d;
 
-                property <length> header_h: 24px;
-                property <length> gap: 6px;
+                property <length> header_h: 40px;
+                property <length> gap: root.chart_sidebar_open ? 6px : 0px;
                 property <length> chart_h: root.inline_chart_height;
+                property <length> tools_w: root.chart_sidebar_open ? 140px : 0px;
+                property <length> chart_x: 8px + tools_w + gap;
+                property <length> chart_w: parent.width - chart_x - 8px;
                 property <length> list_y: header_h + gap + chart_h + gap;
+                property <length> toggle_w: 32px;
+                property <length> header_text_x: 8px + toggle_w + 6px;
+                property <length> price_w: 220px;
+                property <length> price_x: parent.width - price_w - 8px;
+                property <length> auto_x: parent.width - 180px;
 
                 Text {
-                    x: 8px;
-                    y: 4px;
-                    width: parent.width - 520px;
+                    x: header_text_x;
+                    y: 6px;
+                    width: parent.width - price_w - 100px;
                     text:
                         "Candles  tf=" + candle_tf_secs
                         + "s  window=" + candle_window_minutes + "m"
                         + "   | X=" + chart_x_zoom + "  Y=" + chart_y_zoom
                         + "   | H=" + (root.inline_chart_height / 1px) + "px";
-                    color: #ffffff;
+                    color: root.chart_view_mode == "Advanced" ? #f5e9ff : #ffffff;
                 }
 
-                Text { x: parent.width - 500px; y: 4px; text: "Tool:"; color: #cccccc; font-size: 10px; }
-                for tool[idx] in root.draw_tools : Button {
-                    x: parent.width - 460px + (idx * 54px);
-                    y: 2px;
-                    width: 50px;
-                    height: 20px;
-                    text: tool == root.draw_tool ? tool + "✓" : tool;
-                    clicked => {
-                        root.draw_tool = tool;
-                        root.draw_tool_changed(tool);
+                Rectangle {
+                    x: 8px;
+                    y: 7px;
+                    width: toggle_w;
+                    height: 26px;
+                    background: root.chart_view_mode == "Advanced" ? #12162a : #151b26;
+                    border-width: 1px;
+                    border-color: root.chart_view_mode == "Advanced" ? #343a52 : #2a3040;
+                    border-radius: 3px;
+
+                    Text {
+                        x: 0px;
+                        y: 0px;
+                        width: parent.width;
+                        height: parent.height;
+                        text: root.chart_sidebar_open ? "<" : ">";
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        color: root.chart_view_mode == "Advanced" ? #f0d9ff : #dfe8ff;
+                        font-size: 14px;
+                    }
+
+                    TouchArea {
+                        x: 0px;
+                        y: 0px;
+                        width: parent.width;
+                        height: parent.height;
+                        clicked => { root.chart_sidebar_open = !root.chart_sidebar_open; }
                     }
                 }
 
                 Button {
-                    x: parent.width - 180px;
-                    y: 2px;
+                    x: auto_x;
+                    y: 10px;
                     width: 72px;
                     height: 20px;
                     text: "Auto: center";
@@ -1713,15 +2329,138 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                CandleChart {
+                Rectangle {
                     x: 8px;
                     y: header_h + gap;
-                    width: parent.width - 16px;
+                    width: tools_w;
+                    height: chart_h;
+                    visible: root.chart_sidebar_open;
+                    background: root.chart_view_mode == "Advanced" ? #101424 : #0c111a;
+                    border-width: 1px;
+                    border-color: root.chart_view_mode == "Advanced" ? #2c3146 : #1c2230;
+                    border-radius: 3px;
+
+                    property <length> tools_label_y: 84px;
+                    property <length> tools_top: tools_label_y + 14px;
+                    property <length> tools_row_h: 22px;
+                    property <length> clear_y: tools_top + tools_row_h * root.draw_tools.length + 4px;
+                    property <length> list_y: clear_y + 40px;
+
+                    Text { x: 6px; y: 4px; text: "View"; color: root.chart_view_mode == "Advanced" ? #f0d9ff : #cfd6e6; font-size: 10px; }
+
+                    Button {
+                        x: 6px;
+                        y: 18px;
+                        width: parent.width - 12px;
+                        height: 20px;
+                        text: root.chart_view_mode == "Chart" ? "Chart View ✓" : "Chart View";
+                        clicked => {
+                            root.chart_view_mode = "Chart";
+                            root.chart_view_mode_changed(root.chart_view_mode);
+                        }
+                    }
+                    Button {
+                        x: 6px;
+                        y: 40px;
+                        width: parent.width - 12px;
+                        height: 20px;
+                        text: root.chart_view_mode == "Advanced" ? "Advanced ✓" : "Advanced";
+                        clicked => {
+                            root.chart_view_mode = "Advanced";
+                            root.chart_view_mode_changed(root.chart_view_mode);
+                        }
+                    }
+                    Button {
+                        x: 6px;
+                        y: 62px;
+                        width: parent.width - 12px;
+                        height: 20px;
+                        visible: root.chart_view_mode == "Advanced";
+                        text: root.heatmap_enabled ? "Heatmap: On" : "Heatmap: Off";
+                        clicked => {
+                            root.heatmap_enabled = !root.heatmap_enabled;
+                            root.heatmap_enabled_changed(root.heatmap_enabled);
+                        }
+                    }
+
+                    Text { x: 6px; y: tools_label_y; text: "Tools"; color: root.chart_view_mode == "Advanced" ? #f0d9ff : #cfd6e6; font-size: 10px; }
+
+                    for tool[idx] in root.draw_tools : Button {
+                        x: 6px;
+                        y: tools_top + (idx * tools_row_h);
+                        width: parent.width - 12px;
+                        height: 20px;
+                        text: tool == root.draw_tool ? tool + " ✓" : tool;
+                        clicked => {
+                            root.draw_tool = tool;
+                            root.draw_tool_changed(tool);
+                        }
+                    }
+
+                    Button {
+                        x: 6px;
+                        y: clear_y;
+                        width: parent.width - 12px;
+                        height: 20px;
+                        text: "Clear All";
+                        clicked => { root.drawing_clear_all(); }
+                    }
+
+                    Text { x: 6px; y: clear_y + 24px; text: "Drawings"; color: root.chart_view_mode == "Advanced" ? #f0d9ff : #cfd6e6; font-size: 10px; }
+
+                    ListView {
+                        x: 6px;
+                        y: list_y;
+                        width: parent.width - 12px;
+                        height: parent.height - (list_y + 6px);
+
+                        for d in root.drawings : Rectangle {
+                            width: parent.width;
+                            height: 18px;
+                            visible: !d.is_preview;
+                            background: d.selected ? #2b3244 : (root.chart_view_mode == "Advanced" ? #0f1322 : #121720);
+
+                            Text {
+                                x: 4px;
+                                y: 2px;
+                                text: d.kind + " #" + d.id;
+                                color: d.selected ? #fff4c2 : #c9d4ea;
+                                font-size: 9px;
+                            }
+
+                            Button {
+                                x: parent.width - 20px;
+                                y: 1px;
+                                width: 18px;
+                                height: 16px;
+                                text: "X";
+                                clicked => { root.drawing_delete(d.id); }
+                            }
+
+                            TouchArea {
+                                x: 0px;
+                                y: 0px;
+                                width: parent.width - 24px;
+                                height: parent.height;
+                                clicked => { root.drawing_selected(d.id); }
+                            }
+                        }
+                    }
+                }
+
+                CandleChart {
+                    x: chart_x;
+                    y: header_h + gap;
+                    width: chart_w;
                     height: chart_h;
 
                     points <=> root.candle_points;
                     mid_line_y: root.candle_midline;
                     drawings: root.drawings;
+                    draw_ticks: root.draw_ticks;
+                    heatmap_cells: root.heatmap_cells;
+                    heatmap_enabled: root.heatmap_enabled;
+                    advanced_mode: root.chart_view_mode == "Advanced";
                     draw_tool: root.draw_tool;
 
                     x_zoom <=> root.chart_x_zoom;
@@ -1737,13 +2476,14 @@ export component AppWindow inherits Window {
                     draw_begin(x, y) => { root.draw_begin(x, y); }
                     draw_update(x, y) => { root.draw_update(x, y); }
                     draw_end(x, y) => { root.draw_end(x, y); }
+                    draw_poly_sides_delta(delta) => { root.draw_poly_sides_delta(delta); }
                 }
 
                 // Price axis ticks (left)
                 for t in root.price_ticks : Rectangle {
-                    x: 8px;
+                    x: chart_x;
                     y: header_h + gap + chart_h * t.pos - 8px;
-                    width: parent.width - 16px;
+                    width: chart_w;
                     height: 16px;
                     background: #00000000;
 
@@ -1766,7 +2506,7 @@ export component AppWindow inherits Window {
 
                 // Time axis ticks (bottom)
                 for t in root.time_ticks : Rectangle {
-                    x: 8px + (parent.width - 16px) * t.pos;
+                    x: chart_x + chart_w * t.pos;
                     y: header_h + gap + chart_h + 2px;
                     width: 1px;
                     height: 16px;
@@ -1798,10 +2538,10 @@ export component AppWindow inherits Window {
 
             Rectangle {
                 x: parent.width * 0.5;
-                y: 244px;
+                y: root.chart_top_y;
                 width: parent.width * 0.5;
                 height: parent.height - 320px;
-                background: #181b24;
+                background: root.chart_view_mode == "Advanced" ? #141726 : #181b24;
 
                 Rectangle {
                     x: 4px;
@@ -1890,6 +2630,8 @@ export component AppWindow inherits Window {
                 asks <=> root.asks;
                 mid: root.mid_price;
                 spread: root.spread;
+                spread_main: root.spread_main;
+                spread_pad: root.spread_pad;
                 visible: root.show_depth || root.show_ladders;
             }
 
@@ -1933,6 +2675,168 @@ export component AppWindow inherits Window {
                 imbalance: root.imbalance;
                 visible: root.show_depth;
             }
+
+            Rectangle {
+                property <length> chart_left: 0px;
+                property <length> chart_top: 244px;
+                property <length> chart_w: parent.width * 0.5;
+                property <length> price_w: 240px;
+                property <length> price_h: 36px;
+                property <length> meta_w: 220px;
+                property <length> meta_h: 74px;
+
+                Rectangle {
+                    x: -meta_w - 12px;
+                    y: -4px;
+                    width: meta_w;
+                    height: meta_h;
+                    background: root.chart_view_mode == "Advanced" ? #0f1324cc : #0e1422cc;
+                    border-width: 1px;
+                    border-color: root.chart_view_mode == "Advanced" ? #2f3550 : #273042;
+                    border-radius: 4px;
+
+                    Text {
+                        x: 8px;
+                        y: 6px;
+                        text: "Mark:";
+                        color: #b8c5ff;
+                        font-size: 20px;
+                    }
+                    ZeroPadText {
+                        main: root.mark_price_main == "" ? "--" : root.mark_price_main;
+                        pad: root.mark_price_main == "" ? "" : root.mark_price_pad;
+                        main_color: #e8f6ff;
+                        pad_color: #7aa8ff;
+                        font_size: 20px;
+                        x: 70px;
+                        y: 6px;
+                    }
+
+                    Text {
+                        x: 8px;
+                        y: 28px;
+                        text: "Oracle:";
+                        color: #b8c5ff;
+                        font-size: 20px;
+                    }
+                    ZeroPadText {
+                        main: root.oracle_price_main == "" ? "--" : root.oracle_price_main;
+                        pad: root.oracle_price_main == "" ? "" : root.oracle_price_pad;
+                        main_color: #e8f6ff;
+                        pad_color: #7aa8ff;
+                        font_size: 20px;
+                        x: 70px;
+                        y: 28px;
+                    }
+
+                    Text {
+                        x: 8px;
+                        y: 50px;
+                        text: "Last:";
+                        color: #b8c5ff;
+                        font-size: 20px;
+                    }
+                    ZeroPadText {
+                        main: root.last_price_main == "" ? "--" : root.last_price_main;
+                        pad: root.last_price_main == "" ? "" : root.last_price_pad;
+                        main_color: #e8f6ff;
+                        pad_color: #7aa8ff;
+                        font_size: 20px;
+                        x: 70px;
+                        y: 50px;
+                    }
+                }
+
+                x: chart_left + chart_w - price_w - 12px;
+                y: chart_top + 4px;
+                width: price_w;
+                height: price_h;
+                background: root.chart_view_mode == "Advanced" ? #0f1324cc : #0e1422cc;
+                border-width: 1px;
+                border-color: root.chart_view_mode == "Advanced" ? #2f3550 : #273042;
+                border-radius: 4px;
+                visible: true;
+
+                ZeroPadText {
+                    main: root.current_price_main == "" ? "--" : root.current_price_main;
+                    pad: root.current_price_main == "" ? "" : root.current_price_pad;
+                    main_color: root.chart_view_mode == "Advanced" ? #ffdaff : #e8f6ff;
+                    pad_color: #7aa8ff;
+                    font_size: 30px;
+                    x: parent.width - self.width - 6px;
+                    y: (parent.height - self.height) / 2;
+                }
+            }
+        Rectangle {
+            x: 70px;
+            y: root.topbar_y + root.topbar_h;
+            width: 260px;
+            height: 280px;
+            background: #0f1320;
+            border-radius: 4px;
+            border-width: 1px;
+            border-color: #2a3346;
+            visible: root.tickers_dropdown_open;
+
+            Text { x: 8px; y: 6px; text: "Tickers"; color: #c7d2ff; font-size: 12px; }
+
+            ListView {
+                x: 6px;
+                y: 26px;
+                width: parent.width - 12px;
+                height: parent.height - 32px;
+
+                for row in root.ticker_feed_rows : Rectangle {
+                    width: parent.width;
+                    height: 22px;
+                    background: row.ticker == root.current_ticker
+                        ? (row.active ? #1b2438 : #242835)
+                        : (row.active ? #111725 : #0b0f1a);
+
+                    Text {
+                        x: 6px;
+                        y: 3px;
+                        text: row.ticker;
+                        color: row.active ? #d6dcff : #6f778a;
+                        font-size: 12px;
+                    }
+
+                    Button {
+                        x: parent.width - 74px;
+                        y: 2px;
+                        width: 70px;
+                        height: 18px;
+                        text: row.feed_on ? "Feed: On" : "Feed: Off";
+                        enabled: row.active;
+                        clicked => { root.ticker_feed_toggled(row.ticker, !row.feed_on); }
+                    }
+                    Text {
+                        x: parent.width - 150px;
+                        y: 4px;
+                        width: 70px;
+                        text: "Inactive";
+                        color: #6f778a;
+                        font-size: 10px;
+                        horizontal-alignment: right;
+                        visible: !row.active;
+                    }
+
+                    TouchArea {
+                        x: 0px;
+                        y: 0px;
+                        width: parent.width - 78px;
+                        height: parent.height;
+                        clicked => {
+                            if row.active {
+                                root.ticker_input = row.ticker;
+                                root.ticker_changed(row.ticker);
+                                root.tickers_dropdown_open = false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
         }
 
         // Horizontal scrollbar
@@ -2046,6 +2950,10 @@ export component AppWindow inherits Window {
             points <=> root.candle_points;
             mid_line_y: root.candle_midline;
             drawings <=> root.drawings;
+            draw_ticks <=> root.draw_ticks;
+            heatmap_cells <=> root.heatmap_cells;
+            heatmap_enabled: root.heatmap_enabled;
+            advanced_mode: root.chart_view_mode == "Advanced";
             draw_tool: root.draw_tool;
 
             x_zoom <=> root.chart_x_zoom;
@@ -2058,6 +2966,7 @@ export component AppWindow inherits Window {
             draw_begin(x, y) => { root.draw_begin(x, y); }
             draw_update(x, y) => { root.draw_update(x, y); }
             draw_end(x, y) => { root.draw_end(x, y); }
+            draw_poly_sides_delta(delta) => { root.draw_poly_sides_delta(delta); }
         }
     }
 }

@@ -1,6 +1,6 @@
 use crate::app::{AppEvent, FeedEvent};
 use crate::debug_hooks;
-use ladder_app02::feed_shared::{self, BookTopRecord, SnapshotState, TradeRecord};
+use ladder_app02::feed_shared::{self, BookLevelsRecord, BookTopRecord, SnapshotState, TradeRecord};
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::PathBuf;
@@ -41,6 +41,8 @@ fn send_book(top: &BookTopRecord, tx: &std::sync::mpsc::Sender<AppEvent>) {
         ticker: top.ticker.clone(),
         best_bid: top.best_bid,
         best_ask: top.best_ask,
+        best_bid_raw: top.best_bid_raw.clone(),
+        best_ask_raw: top.best_ask_raw.clone(),
         bid_liq: top.bid_liq,
         ask_liq: top.ask_liq,
     }));
@@ -52,7 +54,18 @@ fn send_trade(trade: &TradeRecord, tx: &std::sync::mpsc::Sender<AppEvent>) {
         ticker: trade.ticker.clone(),
         side: trade.side.clone(),
         size: trade.size.clone(),
+        price: trade.price,
+        price_raw: trade.price_raw.clone(),
         source: trade.source.clone(),
+    }));
+}
+
+fn send_book_levels(levels: &BookLevelsRecord, tx: &std::sync::mpsc::Sender<AppEvent>) {
+    let _ = tx.send(AppEvent::Feed(FeedEvent::BookLevels {
+        ts_unix: levels.ts_unix,
+        ticker: levels.ticker.clone(),
+        bids: levels.bids.clone(),
+        asks: levels.asks.clone(),
     }));
 }
 
@@ -61,6 +74,8 @@ fn send_trade(trade: &TradeRecord, tx: &std::sync::mpsc::Sender<AppEvent>) {
 enum PersistedLine {
     #[serde(rename = "book_top")]
     BookTop { data: BookTopRecord },
+    #[serde(rename = "book_levels")]
+    BookLevels { data: BookLevelsRecord },
     #[serde(rename = "trade")]
     Trade { data: TradeRecord },
 }
@@ -129,6 +144,7 @@ pub fn start_daemon_bridge(tx: std::sync::mpsc::Sender<AppEvent>, start_at_end: 
                         if let Ok(parsed) = serde_json::from_str::<PersistedLine>(&line) {
                             match parsed {
                                 PersistedLine::BookTop { data } => send_book(&data, &tx),
+                                PersistedLine::BookLevels { data } => send_book_levels(&data, &tx),
                                 PersistedLine::Trade { data } => send_trade(&data, &tx),
                             }
                         } else if let Err(err) = serde_json::from_str::<PersistedLine>(&line) {

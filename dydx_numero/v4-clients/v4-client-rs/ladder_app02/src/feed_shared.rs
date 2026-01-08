@@ -11,8 +11,30 @@ pub struct BookTopRecord {
     pub ticker: String,
     pub best_bid: f64,
     pub best_ask: f64,
+    #[serde(default)]
+    pub best_bid_raw: String,
+    #[serde(default)]
+    pub best_ask_raw: String,
     pub bid_liq: f64,
     pub ask_liq: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BookLevel {
+    pub price: f64,
+    pub size: f64,
+    #[serde(default)]
+    pub price_raw: String,
+    #[serde(default)]
+    pub size_raw: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BookLevelsRecord {
+    pub ts_unix: u64,
+    pub ticker: String,
+    pub bids: Vec<BookLevel>,
+    pub asks: Vec<BookLevel>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,6 +43,10 @@ pub struct TradeRecord {
     pub ticker: String,
     pub side: String,
     pub size: String,
+    #[serde(default)]
+    pub price: f64,
+    #[serde(default)]
+    pub price_raw: String,
     pub source: String,
 }
 
