@@ -157,6 +157,7 @@ pub struct AppState {
     pub available_tickers: Vec<String>,
     pub ticker_feed_enabled: HashMap<String, bool>,
     pub ticker_active: HashMap<String, bool>,
+    pub ticker_favorites: HashMap<String, bool>,
 
     pub trade_side: String,
     pub trade_size: f32,
@@ -268,8 +269,10 @@ impl Default for AppState {
         let available_tickers = vec![current_ticker.clone()];
         let mut ticker_feed_enabled = HashMap::new();
         let mut ticker_active = HashMap::new();
+        let mut ticker_favorites = HashMap::new();
         ticker_feed_enabled.insert(current_ticker.clone(), false);
         ticker_active.insert(current_ticker.clone(), true);
+        ticker_favorites.insert(current_ticker.clone(), false);
         Self {
             current_ticker,
             mode: "Live".to_string(),
@@ -299,6 +302,7 @@ impl Default for AppState {
             available_tickers,
             ticker_feed_enabled,
             ticker_active,
+            ticker_favorites,
 
             trade_side: "Buy".to_string(),
             trade_size: 0.01,
@@ -380,8 +384,10 @@ impl AppState {
         let available_tickers = vec![current_ticker.clone()];
         let mut ticker_feed_enabled = HashMap::new();
         let mut ticker_active = HashMap::new();
+        let mut ticker_favorites = HashMap::new();
         ticker_feed_enabled.insert(current_ticker.clone(), false);
         ticker_active.insert(current_ticker.clone(), true);
+        ticker_favorites.insert(current_ticker.clone(), false);
         let mut state = Self {
             current_ticker,
             mode: ui.get_mode().to_string(),
@@ -411,6 +417,7 @@ impl AppState {
             available_tickers,
             ticker_feed_enabled,
             ticker_active,
+            ticker_favorites,
 
             trade_side: ui.get_trade_side().to_string(),
             trade_size: ui.get_trade_size(),

@@ -55,13 +55,23 @@ pub fn render(state: &AppState, ui: &crate::AppWindow) {
     let mut tickers = state.available_tickers.clone();
     tickers.sort();
     tickers.dedup();
+    tickers.sort_by(|a, b| {
+        let fa = state.ticker_favorites.get(a).copied().unwrap_or(false);
+        let fb = state.ticker_favorites.get(b).copied().unwrap_or(false);
+        if fa != fb {
+            return fb.cmp(&fa);
+        }
+        a.cmp(b)
+    });
     for tk in tickers {
         let enabled = state.ticker_feed_enabled.get(&tk).copied().unwrap_or(true);
         let active = state.ticker_active.get(&tk).copied().unwrap_or(true);
+        let favorite = state.ticker_favorites.get(&tk).copied().unwrap_or(false);
         rows.push(TickerFeedRow {
             ticker: SharedString::from(tk),
             feed_on: enabled,
             active,
+            favorite,
         });
     }
     ui.set_ticker_feed_rows(ModelRc::new(VecModel::from(rows)));

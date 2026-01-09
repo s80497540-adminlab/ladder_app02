@@ -187,6 +187,15 @@ pub fn wire_ui(ui: &crate::AppWindow, tx: std::sync::mpsc::Sender<AppEvent>) {
             }));
         });
     }
+    {
+        let tx = tx.clone();
+        ui.on_ticker_favorite_toggled(move |ticker, favorite| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::TickerFavoriteToggled {
+                ticker: ticker.to_string(),
+                favorite,
+            }));
+        });
+    }
 
     // --- Actions ---
     {
