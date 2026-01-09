@@ -11,16 +11,20 @@ use ladder_app02::feed_shared::{
 };
 use rustls::crypto::ring;
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::fs::{create_dir_all, OpenOptions};
 use std::io::Write;
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::net::TcpStream;
+use tokio::sync::Mutex;
 use tokio::time::sleep;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
 const WS_MAINNET: &str = "wss://indexer.dydx.trade/v4/ws";
 const DEFAULT_TICKERS: &[&str] = &["ETH-USD", "BTC-USD", "SOL-USD"];
+const MAX_TICKERS_PER_CONN: usize = 20;
 const MAX_TRADES: usize = 2000;
 const SNAPSHOT_INTERVAL_SECS: u64 = 5;
 const MARKET_HTTP: &str = "https://indexer.dydx.trade/v4/perpetualMarkets";
@@ -47,41 +51,71 @@ async fn main() -> Result<()> {
     println!("[data_daemon02] starting, writing to ./data");
     create_dir_all(feed_shared::DATA_DIR)?;
 
-    let mut state = SnapshotState::default();
-    let mut log_file = open_log()?;
-
-    loop {
-        match run_connection(&mut state, &mut log_file).await {
-            Ok(_) => {
-                println!("[data_daemon02] stream ended cleanly, reconnecting");
-            }
-            Err(err) => {
-                eprintln!("[data_daemon02] error: {err:?}");
-            }
-        }
-
-        // Persist the current snapshot before reconnecting so the UI can still read something.
-        if let Err(err) = persist_snapshot(&state) {
-            eprintln!("[data_daemon02] snapshot persist error: {err:?}");
-        }
-
-        sleep(Duration::from_secs(3)).await;
-    }
-}
-
-async fn run_connection(state: &mut SnapshotState, log_file: &mut std::fs::File) -> Result<()> {
-    let (mut ws, _) = connect_async(WS_MAINNET)
-        .await
-        .context("failed to connect to dYdX websocket")?;
-    println!("[data_daemon02] connected to {WS_MAINNET}");
+    let state = Arc::new(Mutex::new(SnapshotState::default()));
+    let log_file = Arc::new(Mutex::new(open_log()?));
 
     let mut tickers = fetch_market_tickers().await;
     if tickers.is_empty() {
         tickers = DEFAULT_TICKERS.iter().map(|s| s.to_string()).collect();
     }
-    println!("[data_daemon02] subscribing to {} tickers", tickers.len());
+    prioritize_tickers(&mut tickers, DEFAULT_TICKERS);
+    let chunks: Vec<Vec<String>> = tickers
+        .chunks(MAX_TICKERS_PER_CONN)
+        .map(|c| c.to_vec())
+        .collect();
+    println!(
+        "[data_daemon02] subscribing to {} tickers across {} connections",
+        tickers.len(),
+        chunks.len()
+    );
 
-    for tk in &tickers {
+    for (idx, chunk) in chunks.into_iter().enumerate() {
+        let state = Arc::clone(&state);
+        let log_file = Arc::clone(&log_file);
+        tokio::spawn(async move {
+            loop {
+                match run_connection(&chunk, idx, &state, &log_file).await {
+                    Ok(_) => {
+                        println!(
+                            "[data_daemon02] stream {idx} ended cleanly, reconnecting"
+                        );
+                    }
+                    Err(err) => {
+                        eprintln!("[data_daemon02] stream {idx} error: {err:?}");
+                    }
+                }
+
+                let state_guard = state.lock().await;
+                if let Err(err) = persist_snapshot(&state_guard) {
+                    eprintln!("[data_daemon02] snapshot persist error: {err:?}");
+                }
+
+                sleep(Duration::from_secs(3)).await;
+            }
+        });
+    }
+
+    loop {
+        sleep(Duration::from_secs(3600)).await;
+    }
+}
+
+async fn run_connection(
+    tickers: &[String],
+    idx: usize,
+    state: &Arc<Mutex<SnapshotState>>,
+    log_file: &Arc<Mutex<std::fs::File>>,
+) -> Result<()> {
+    let (mut ws, _) = connect_async(WS_MAINNET)
+        .await
+        .context("failed to connect to dYdX websocket")?;
+    println!("[data_daemon02] connected to {WS_MAINNET} (stream {idx})");
+    println!(
+        "[data_daemon02] stream {idx} subscribing to {} tickers",
+        tickers.len()
+    );
+
+    for tk in tickers {
         subscribe(&mut ws, "v4_orderbook", tk).await?;
         subscribe(&mut ws, "v4_trades", tk).await?;
     }
@@ -91,7 +125,9 @@ async fn run_connection(state: &mut SnapshotState, log_file: &mut std::fs::File)
     while let Some(msg) = ws.next().await {
         match msg {
             Ok(Message::Text(txt)) => {
-                if let Err(err) = handle_message(&txt, state, log_file) {
+                let mut state_guard = state.lock().await;
+                let mut log_guard = log_file.lock().await;
+                if let Err(err) = handle_message(&txt, &mut state_guard, &mut log_guard) {
                     eprintln!("[data_daemon02] handle_message error: {err:?}");
                 }
             }
@@ -112,7 +148,8 @@ async fn run_connection(state: &mut SnapshotState, log_file: &mut std::fs::File)
         }
 
         if last_snapshot.elapsed().as_secs() >= SNAPSHOT_INTERVAL_SECS {
-            if let Err(err) = persist_snapshot(state) {
+            let state_guard = state.lock().await;
+            if let Err(err) = persist_snapshot(&state_guard) {
                 eprintln!("[data_daemon02] snapshot persist error: {err:?}");
             }
             last_snapshot = Instant::now();
@@ -120,6 +157,21 @@ async fn run_connection(state: &mut SnapshotState, log_file: &mut std::fs::File)
     }
 
     Ok(())
+}
+
+fn prioritize_tickers(tickers: &mut Vec<String>, priority: &[&str]) {
+    let mut seen = HashSet::new();
+    tickers.retain(|t| seen.insert(t.clone()));
+
+    let mut ordered = Vec::with_capacity(tickers.len() + priority.len());
+    for &tk in priority {
+        if let Some(pos) = tickers.iter().position(|t| t == tk) {
+            tickers.remove(pos);
+        }
+        ordered.push(tk.to_string());
+    }
+    ordered.extend(tickers.iter().cloned());
+    *tickers = ordered;
 }
 
 async fn fetch_market_tickers() -> Vec<String> {

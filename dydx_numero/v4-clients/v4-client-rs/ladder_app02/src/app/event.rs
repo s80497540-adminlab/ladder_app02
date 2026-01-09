@@ -46,6 +46,7 @@ pub enum UiEvent {
     DrawingClearAll,
     MarketPollAdjust { delta: i32 },
     TickerFeedToggled { ticker: String, enabled: bool },
+    TickerFavoriteToggled { ticker: String, favorite: bool },
 
     SendOrder,
     ReloadData,

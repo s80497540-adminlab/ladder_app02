@@ -15,6 +15,7 @@ export struct TickerFeedRow {
     ticker: string,
     feed_on: bool,
     active: bool,
+    favorite: bool,
 }
 
 export struct Trade {
@@ -103,10 +104,11 @@ component ZeroPadText inherits Rectangle {
 
     width: main_text.preferred-width + pad_text.preferred-width;
     height: main_text.preferred-height;
+    property <length> text_y: (self.height - main_text.preferred-height) * 0.5;
 
     main_text := Text {
         x: 0px;
-        y: 0px;
+        y: text_y;
         text: main;
         color: main_color;
         font-size: font_size;
@@ -115,7 +117,7 @@ component ZeroPadText inherits Rectangle {
 
     pad_text := Text {
         x: main_text.preferred-width;
-        y: 0px;
+        y: text_y;
         text: pad;
         color: pad_color;
         font-size: pad_font_size;
@@ -165,6 +167,240 @@ component TickerBadge inherits Rectangle {
         font-family: font_family;
         selection-background-color: #2a3b63;
         selection-foreground-color: #ffffff;
+    }
+}
+
+component GridOverlay inherits Rectangle {
+    in property <bool> enabled: false;
+    in property <[string]> col_labels;
+    in property <[string]> row_labels;
+    in-out property <int> cursor_col: -1;
+    in-out property <int> cursor_row: -1;
+    in property <length> label_font_size: 10px;
+    in property <string> label_font_family: "Avenir Next";
+    in property <color> line_color: #3a4660;
+    in property <float> line_opacity: 0.25;
+
+    visible: enabled;
+    background: #00000000;
+    clip: false;
+
+    property <length> col_w: col_labels.length > 0 ? (self.width / col_labels.length) : self.width;
+    property <length> row_h: row_labels.length > 0 ? (self.height / row_labels.length) : self.height;
+
+    for label[i] in col_labels : Rectangle {
+        x: i * col_w;
+        y: 0px;
+        width: 1px;
+        height: parent.height;
+        background: line_color;
+        opacity: line_opacity;
+    }
+    for label[i] in col_labels : Text {
+        x: i * col_w + 2px;
+        y: 2px;
+        text: label;
+        color: line_color;
+        font-size: label_font_size;
+        font-family: label_font_family;
+    }
+
+    for label[i] in row_labels : Rectangle {
+        x: 0px;
+        y: i * row_h;
+        width: parent.width;
+        height: 1px;
+        background: line_color;
+        opacity: line_opacity;
+    }
+    for label[i] in row_labels : Text {
+        x: 2px;
+        y: i * row_h + 2px;
+        text: label;
+        color: line_color;
+        font-size: label_font_size;
+        font-family: label_font_family;
+    }
+}
+
+component LayoutHandle inherits Rectangle {
+    in property <bool> enabled: false;
+    in property <string> label;
+    in-out property <length> target_x;
+    in-out property <length> target_y;
+    in property <length> target_w;
+    in property <length> target_h;
+    in property <length> grid_col_w: 1px;
+    in property <length> grid_row_h: 1px;
+    in property <bool> show_layer: false;
+    in-out property <int> layer: 0;
+    in property <length> pass1_x: 0px;
+    in property <length> pass1_y: 0px;
+    in property <length> pass1_w: 0px;
+    in property <length> pass1_h: 0px;
+    in property <length> pass2_x: 0px;
+    in property <length> pass2_y: 0px;
+    in property <length> pass2_w: 0px;
+    in property <length> pass2_h: 0px;
+    in property <length> pass3_x: 0px;
+    in property <length> pass3_y: 0px;
+    in property <length> pass3_w: 0px;
+    in property <length> pass3_h: 0px;
+
+    x: target_x;
+    y: target_y;
+    width: target_w;
+    height: target_h;
+    visible: enabled;
+    background: #2a86ff22;
+    border-width: 1px;
+    border-color: #4aa6ff;
+    border-radius: 3px;
+
+    Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: 18px;
+        background: #0b1630cc;
+
+        Text {
+            x: 6px;
+            y: 0px;
+            width: parent.width - (show_layer ? 64px : 12px);
+            height: parent.height;
+            text: show_layer ? (label + "  L=" + layer) : label;
+            color: #dfe8ff;
+            font-size: 10px;
+            vertical-alignment: center;
+        }
+
+        Rectangle {
+            x: parent.width - 52px;
+            y: 2px;
+            width: 24px;
+            height: 14px;
+            background: #1f2b4a;
+            border-width: 1px;
+            border-color: #3b4a70;
+            border-radius: 2px;
+            visible: show_layer;
+
+            Text {
+                x: 0px;
+                y: 0px;
+                width: parent.width;
+                height: parent.height;
+                text: "L-";
+                color: #c9d4ea;
+                font-size: 9px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+
+            TouchArea {
+                clicked => { layer = Math.max(0, layer - 1); }
+            }
+        }
+
+        Rectangle {
+            x: parent.width - 26px;
+            y: 2px;
+            width: 24px;
+            height: 14px;
+            background: #1f2b4a;
+            border-width: 1px;
+            border-color: #3b4a70;
+            border-radius: 2px;
+            visible: show_layer;
+
+            Text {
+                x: 0px;
+                y: 0px;
+                width: parent.width;
+                height: parent.height;
+                text: "L+";
+                color: #c9d4ea;
+                font-size: 9px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+
+            TouchArea {
+                clicked => { layer = Math.min(2, layer + 1); }
+            }
+        }
+    }
+
+    TouchArea {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+
+        property <length> last_x;
+        property <length> last_y;
+        property <bool> dragging;
+
+        pointer-event(event) => {
+            let in_pass1 =
+                pass1_w > 0px && pass1_h > 0px
+                && self.mouse-x >= pass1_x && self.mouse-x <= (pass1_x + pass1_w)
+                && self.mouse-y >= pass1_y && self.mouse-y <= (pass1_y + pass1_h);
+            let in_pass2 =
+                pass2_w > 0px && pass2_h > 0px
+                && self.mouse-x >= pass2_x && self.mouse-x <= (pass2_x + pass2_w)
+                && self.mouse-y >= pass2_y && self.mouse-y <= (pass2_y + pass2_h);
+            let in_pass3 =
+                pass3_w > 0px && pass3_h > 0px
+                && self.mouse-x >= pass3_x && self.mouse-x <= (pass3_x + pass3_w)
+                && self.mouse-y >= pass3_y && self.mouse-y <= (pass3_y + pass3_h);
+            let in_pass = in_pass1 || in_pass2 || in_pass3;
+
+            if event.kind == PointerEventKind.down {
+                if in_pass {
+                    EventResult.reject
+                } else {
+                dragging = true;
+                last_x = self.mouse-x;
+                last_y = self.mouse-y;
+                EventResult.accept
+                }
+            } else if event.kind == PointerEventKind.up {
+                if dragging {
+                    dragging = false;
+                    let col_px = grid_col_w / 1px;
+                    let row_px = grid_row_h / 1px;
+                    if col_px > 0.0 && row_px > 0.0 {
+                        target_x = Math.round((target_x / 1px) / col_px) * grid_col_w;
+                        target_y = Math.round((target_y / 1px) / row_px) * grid_row_h;
+                    }
+                    EventResult.accept
+                } else if in_pass {
+                    EventResult.reject
+                } else {
+                    EventResult.accept
+                }
+            } else if event.kind == PointerEventKind.move {
+                if dragging {
+                    let dx = self.mouse-x - last_x;
+                    let dy = self.mouse-y - last_y;
+                    target_x = target_x + dx;
+                    target_y = target_y + dy;
+                    last_x = self.mouse-x;
+                    last_y = self.mouse-y;
+                    EventResult.accept
+                } else if in_pass {
+                    EventResult.reject
+                } else {
+                    EventResult.accept
+                }
+            } else if in_pass {
+                EventResult.reject
+            } else {
+                EventResult.accept
+            }
+        }
     }
 }
 
@@ -354,6 +590,9 @@ component OrderbookPanel inherits Rectangle {
     in property <float> spread;
     in property <string> spread_main;
     in property <string> spread_pad;
+    in property <length> grid_col_w: 1px;
+    in property <length> grid_row_h: 1px;
+    in property <bool> allow_drag: false;
 
     background: #202533;
     border-radius: 4px;
@@ -420,12 +659,20 @@ component OrderbookPanel inherits Rectangle {
             property <bool> dragging;
 
             pointer-event(event) => {
-                if event.kind == PointerEventKind.down {
+                if !root.allow_drag {
+                    EventResult.reject
+                } else if event.kind == PointerEventKind.down {
                     dragging = true;
                     last_x = self.mouse-x;
                     last_y = self.mouse-y;
                 } else if event.kind == PointerEventKind.up {
                     dragging = false;
+                    let col_px = root.grid_col_w / 1px;
+                    let row_px = root.grid_row_h / 1px;
+                    if col_px > 0.0 && row_px > 0.0 {
+                        root.x = Math.round((root.x / 1px) / col_px) * root.grid_col_w;
+                        root.y = Math.round((root.y / 1px) / row_px) * root.grid_row_h;
+                    }
                 } else if event.kind == PointerEventKind.move && dragging {
                     let dx = self.mouse-x - last_x;
                     let dy = self.mouse-y - last_y;
@@ -579,6 +826,9 @@ component SettingsPanel inherits Rectangle {
     in-out property <string> signer_status;
 
     in-out property <string> last_error;
+    in property <length> grid_col_w: 1px;
+    in property <length> grid_row_h: 1px;
+    in property <bool> allow_drag: false;
 
     callback connect_wallet();
     callback disconnect_wallet();
@@ -610,12 +860,20 @@ component SettingsPanel inherits Rectangle {
             property <bool> dragging;
 
             pointer-event(event) => {
-                if event.kind == PointerEventKind.down {
+                if !root.allow_drag {
+                    EventResult.reject
+                } else if event.kind == PointerEventKind.down {
                     dragging = true;
                     last_x = self.mouse-x;
                     last_y = self.mouse-y;
                 } else if event.kind == PointerEventKind.up {
                     dragging = false;
+                    let col_px = root.grid_col_w / 1px;
+                    let row_px = root.grid_row_h / 1px;
+                    if col_px > 0.0 && row_px > 0.0 {
+                        root.x = Math.round((root.x / 1px) / col_px) * root.grid_col_w;
+                        root.y = Math.round((root.y / 1px) / row_px) * root.grid_row_h;
+                    }
                 } else if event.kind == PointerEventKind.move && dragging {
                     let dx = self.mouse-x - last_x;
                     let dy = self.mouse-y - last_y;
@@ -720,6 +978,8 @@ component MicroDepthPanel inherits Rectangle {
     in-out property <[BookLevel]> bids;
     in-out property <[BookLevel]> asks;
     in property <float> imbalance;
+    in property <length> grid_col_w: 1px;
+    in property <length> grid_row_h: 1px;
 
     property <float> top_bid_ratio: bids.length > 0 ? bids[0].depth_ratio : 0.0;
     property <float> top_ask_ratio: asks.length > 0 ? asks[0].depth_ratio : 0.0;
@@ -729,15 +989,33 @@ component MicroDepthPanel inherits Rectangle {
     border-width: 1px;
     border-color: #262b38;
 
-    Text { x: 4px; y: 2px; text: "Micro Depth"; color: #bbbbbb; font-size: 10px; }
-    Text { x: parent.width - 80px; y: 2px; width: 76px; horizontal-alignment: right;
-           text: "Imb: " + imbalance; color: #c0c0c0; font-size: 10px; }
+    Text {
+        x: 0px;
+        y: 0px;
+        width: parent.width - (grid_col_w * 4);
+        height: grid_row_h;
+        text: "Micro Depth";
+        color: #bbbbbb;
+        font-size: 10px;
+        vertical-alignment: center;
+    }
+    Text {
+        x: parent.width - (grid_col_w * 4);
+        y: 0px;
+        width: grid_col_w * 4;
+        height: grid_row_h;
+        horizontal-alignment: right;
+        text: "Imb: " + imbalance;
+        color: #c0c0c0;
+        font-size: 10px;
+        vertical-alignment: center;
+    }
 
     Rectangle {
-        x: 4px;
-        y: 16px;
-        width: parent.width - 8px;
-        height: parent.height - 20px;
+        x: 0px;
+        y: grid_row_h;
+        width: parent.width;
+        height: parent.height - grid_row_h;
         background: #151821;
 
         Rectangle { x: 0.5 * parent.width - 1px; y: 2px; width: 2px; height: parent.height - 4px;
@@ -1161,6 +1439,9 @@ component ChartPopoutPanel inherits Rectangle {
     in-out property <length> py;
     in-out property <length> pw;
     in-out property <length> ph;
+    in property <length> grid_col_w: 1px;
+    in property <length> grid_row_h: 1px;
+    in property <bool> allow_drag: true;
 
     in property <[CandlePoint]> points;
     in property <float> mid_line_y;
@@ -1198,31 +1479,39 @@ component ChartPopoutPanel inherits Rectangle {
     border-color: advanced_mode ? #3a3f55 : #31384a;
 
     Rectangle {
-        x: 0px; y: 0px; width: parent.width; height: 26px;
+        x: 0px; y: 0px; width: parent.width; height: grid_row_h;
         background: advanced_mode ? #1b2031 : #303545;
 
-        Text { x: 8px; y: 5px; text: title; color: advanced_mode ? #f5e9ff : #ffffff; }
+        Text { x: grid_col_w; y: 0px; width: parent.width - (grid_col_w * 3); height: parent.height; text: title; color: advanced_mode ? #f5e9ff : #ffffff; vertical-alignment: center; }
 
         Button {
-            x: parent.width - 54px; y: 3px; width: 48px; height: 20px;
+            x: parent.width - (grid_col_w * 2); y: 0px; width: grid_col_w * 2; height: parent.height;
             text: "Close";
             clicked => { root.open = false; }
         }
 
         TouchArea {
-            x: 0px; y: 0px; width: parent.width - 60px; height: parent.height;
+            x: 0px; y: 0px; width: parent.width - (grid_col_w * 2); height: parent.height;
 
             property <length> last_x;
             property <length> last_y;
             property <bool> dragging;
 
             pointer-event(event) => {
-                if event.kind == PointerEventKind.down {
+                if !root.allow_drag {
+                    EventResult.reject
+                } else if event.kind == PointerEventKind.down {
                     dragging = true;
                     last_x = self.mouse-x;
                     last_y = self.mouse-y;
                 } else if event.kind == PointerEventKind.up {
                     dragging = false;
+                    let col_px = root.grid_col_w / 1px;
+                    let row_px = root.grid_row_h / 1px;
+                    if col_px > 0.0 && row_px > 0.0 {
+                        root.px = Math.round((root.px / 1px) / col_px) * root.grid_col_w;
+                        root.py = Math.round((root.py / 1px) / row_px) * root.grid_row_h;
+                    }
                 } else if event.kind == PointerEventKind.move && dragging {
                     let dx = self.mouse-x - last_x;
                     let dy = self.mouse-y - last_y;
@@ -1238,20 +1527,20 @@ component ChartPopoutPanel inherits Rectangle {
     }
 
     Rectangle {
-        x: 6px;
-        y: 32px;
-        width: parent.width - 12px;
-        height: parent.height - 38px;
+        x: grid_col_w;
+        y: grid_row_h;
+        width: parent.width - (grid_col_w * 2);
+        height: parent.height - grid_row_h;
         background: #0b0f16;
         border-radius: 4px;
         border-width: 1px;
         border-color: #1c2230;
 
         CandleChart {
-            x: 6px;
-            y: 6px;
-            width: parent.width - 12px;
-            height: parent.height - 12px;
+            x: 0px;
+            y: 0px;
+            width: parent.width;
+            height: parent.height;
 
             points: root.points;
             mid_line_y: root.mid_line_y;
@@ -1321,7 +1610,7 @@ component ChartPopoutPanel inherits Rectangle {
 // ---------- Main window component -----------------------------------
 
 export component AppWindow inherits Window {
-    preferred-width: 1600px;
+    preferred-width: 1664px;
     preferred-height: 1000px;
     min-width: 1200px;
     min-height: 800px;
@@ -1352,26 +1641,81 @@ export component AppWindow inherits Window {
     property <string> topbar_font: "Avenir Next";
     property <length> topbar_font_size: 12px * topbar_scale;
     property <length> topbar_font_size_small: 10px * topbar_scale;
-    property <length> topbar_y: 108px;
-    property <length> topbar_h: 110px;
-    property <length> topbar_gap: 4px;
-    property <length> secondbar_h: 70px;
-    property <length> secondbar_gap: 6px;
-    property <length> secondbar_y: topbar_y + topbar_h + topbar_gap;
-    property <length> chart_top_y: secondbar_y + secondbar_h + secondbar_gap;
+    property <length> header_h: grid_row_h * 2;
+    property <length> midbar_h: grid_row_h * 2;
+    property <length> topbar_h: grid_row_h * 3;
+    property <length> secondbar_h: grid_row_h * 2;
+    property <length> chart_top_y: secondbar_y + secondbar_h;
+
+    in-out property <bool> grid_enabled: false;
+    in-out property <int> grid_cursor_col: -1;
+    in-out property <int> grid_cursor_row: -1;
+    property <[string]> grid_col_labels: [
+        "a","b","c","d","e","f","g","h","i","j","k","l","m",
+        "n","o","p","q","r","s","t","u","v","w","x","y","z",
+        "A","B","C","D","E","F","G","H","I","J","K","L","M",
+        "N","O","P","Q","R","S","T","U","V","W","X","Y","Z"
+    ];
+    property <[string]> grid_row_labels: [
+        "I","II","III","IV","V","VI","VII","VIII","IX","X",
+        "XI","XII","XIII","XIV","XV","XVI","XVII","XVIII","XIX","XX",
+        "XXI","XXII","XXIII","XXIV","XXV"
+    ];
+    property <string> grid_col_label:
+        (grid_cursor_col >= 0 && grid_cursor_col < grid_col_labels.length)
+            ? grid_col_labels[grid_cursor_col]
+            : "-";
+    property <string> grid_row_label:
+        (grid_cursor_row >= 0 && grid_cursor_row < grid_row_labels.length)
+            ? grid_row_labels[grid_cursor_row]
+            : "-";
+    property <length> grid_col_w: (ui_content_w_px / 52) * 1px;
+    property <length> grid_row_h: (ui_content_h_px / 25) * 1px;
+
+    in-out property <bool> layout_edit_mode: false;
+
+    in-out property <length> header_x: 0px;
+    in-out property <length> header_y: 0px;
+
+    in-out property <length> midbar_x: 0px;
+    in-out property <length> midbar_y: header_h;
+
+    in-out property <length> topbar_x: 0px;
+    in-out property <length> topbar_y: header_h + midbar_h;
+
+    in-out property <length> secondbar_x: 0px;
+    in-out property <length> secondbar_y: topbar_y + topbar_h;
+
+    in-out property <length> chart_left_x: 0px;
+    in-out property <length> chart_left_y: chart_top_y;
+
+    in-out property <length> chart_right_x: grid_col_w * 26;
+    in-out property <length> chart_right_y: chart_top_y;
+
+    in-out property <length> ticker_dropdown_x: grid_col_w * 3;
+    in-out property <length> ticker_dropdown_y: topbar_y + topbar_h;
+
+    in-out property <length> microdepth_x: grid_col_w * 44;
+    in-out property <length> microdepth_y: grid_row_h * 1;
+
+    in-out property <int> orderbook_layer: 1;
+    in-out property <int> settings_layer: 1;
+    in-out property <int> microdepth_layer: 1;
+    in-out property <int> ticker_dropdown_layer: 1;
+    in-out property <int> chart_popout_layer: 2;
 
     // Persisted panel positions (for phase-1 persistence)
-    in-out property <length> orderbook_x: 16px;
-    in-out property <length> orderbook_y: 80px;
-    in-out property <length> settings_x: 392px;
-    in-out property <length> settings_y: 80px;
+    in-out property <length> orderbook_x: grid_col_w * 1;
+    in-out property <length> orderbook_y: grid_row_h * 9;
+    in-out property <length> settings_x: grid_col_w * 13;
+    in-out property <length> settings_y: grid_row_h * 9;
 
     // ---- app-wide scroll state ----
     in-out property <float> ui_scroll_x_px: 0.0;
     in-out property <float> ui_scroll_y_px: 0.0;
 
-    in-out property <float> ui_content_w_px: 1800.0;
-    in-out property <float> ui_content_h_px: 1050.0;
+    in-out property <float> ui_content_w_px: 1664.0;
+    in-out property <float> ui_content_h_px: 1000.0;
 
     in-out property <string> mode;
     in-out property <string> time_mode;
@@ -1472,7 +1816,7 @@ export component AppWindow inherits Window {
     in-out property <float> chart_cursor_x: 0.5;
     in-out property <float> chart_cursor_y: 0.5;
 
-    in-out property <length> inline_chart_height: 260px;
+    in-out property <length> inline_chart_height: grid_row_h * 6;
     in-out property <bool> is_fullscreen: false;
 
     in-out property <[string]> draw_tools: ["Pan", "Line", "Rect", "Ruler", "Poly", "Pencil"];
@@ -1483,13 +1827,15 @@ export component AppWindow inherits Window {
     in-out property <bool> chart_sidebar_open: false;
 
     in-out property <bool> chart_popout_open: false;
-    in-out property <length> chart_popout_x: 80px;
-    in-out property <length> chart_popout_y: 240px;
-    in-out property <length> chart_popout_w: 760px;
-    in-out property <length> chart_popout_h: 440px;
+    in-out property <length> chart_popout_x: grid_col_w * 5;
+    in-out property <length> chart_popout_y: grid_row_h * 6;
+    in-out property <length> chart_popout_w: grid_col_w * 24;
+    in-out property <length> chart_popout_h: grid_row_h * 11;
 
     in-out property <string> current_time;
     in-out property <string> order_message;
+
+    in-out property <bool> settings_panel_open: true;
 
     in-out property <string> settings_wallet_address;
     in-out property <string> settings_wallet_status;
@@ -1528,6 +1874,7 @@ export component AppWindow inherits Window {
     callback heatmap_enabled_changed(enabled: bool);
     callback market_poll_adjust(delta: int);
     callback ticker_feed_toggled(ticker: string, enabled: bool);
+    callback ticker_favorite_toggled(ticker: string, favorite: bool);
 
     callback send_order();
     callback reload_data();
@@ -1577,7 +1924,17 @@ export component AppWindow inherits Window {
             width: parent.width;
             height: parent.height;
 
-            pointer-event(event) => { EventResult.reject }
+            pointer-event(event) => {
+                if root.grid_enabled {
+                    let px = self.mouse-x + (viewport.sx * 1px);
+                    let py = self.mouse-y + (viewport.sy * 1px);
+                    let cx = Math.floor(px / root.grid_col_w);
+                    let cy = Math.floor(py / root.grid_row_h);
+                    root.grid_cursor_col = Math.max(0, Math.min(root.grid_col_labels.length - 1, cx));
+                    root.grid_cursor_row = Math.max(0, Math.min(root.grid_row_labels.length - 1, cy));
+                }
+                EventResult.reject
+            }
 
             scroll-event(event) => {
                 let dx0 = event.delta-x / 1px;
@@ -1603,17 +1960,22 @@ export component AppWindow inherits Window {
             background: #151821;
 
             Rectangle {
-                x: 0px;
-                y: 0px;
+                x: root.header_x;
+                y: root.header_y;
                 width: parent.width;
-                height: 40px;
+                height: root.header_h;
                 background: #1c202b;
 
+                property <length> col_w: root.grid_col_w;
+                property <length> row_h: root.grid_row_h;
+                property <length> row1_y: 0px;
+                property <length> row2_y: row_h;
+
                 Text {
-                    x: 8px;
-                    y: 6px;
-                    width: parent.width - 640px;
-                    height: 28px;
+                    x: col_w * 1;
+                    y: row1_y;
+                    width: col_w * 21;
+                    height: row_h;
                     text:
                         "Ticker: " + current_ticker
                         + "  | Mode: " + mode
@@ -1621,12 +1983,21 @@ export component AppWindow inherits Window {
                         + "  | Range: " + data_range
                         + "  | Now: " + current_time;
                     color: #e0e0e0;
+                    vertical-alignment: center;
                 }
                 Button {
-                    x: parent.width - 600px;
-                    y: 6px;
-                    width: 76px;
-                    height: 20px;
+                    x: col_w * 22;
+                    y: row1_y;
+                    width: col_w * 3;
+                    height: row_h;
+                    text: root.settings_panel_open ? "Settings ✓" : "Settings";
+                    clicked => { root.settings_panel_open = !root.settings_panel_open; }
+                }
+                Button {
+                    x: col_w * 25;
+                    y: row1_y;
+                    width: col_w * 3;
+                    height: row_h;
                     text: root.session_recording ? "Sess: On" : "Sess: Off";
                     clicked => {
                         root.session_recording = !root.session_recording;
@@ -1634,18 +2005,45 @@ export component AppWindow inherits Window {
                     }
                 }
                 Button {
-                    x: parent.width - 680px;
-                    y: 6px;
-                    width: 72px;
-                    height: 20px;
+                    x: col_w * 28;
+                    y: row1_y;
+                    width: col_w * 2;
+                    height: row_h;
                     text: "Close";
                     clicked => { root.close_and_save_requested(); }
                 }
                 Button {
-                    x: parent.width - 520px;
-                    y: 6px;
-                    width: 72px;
-                    height: 20px;
+                    x: col_w * 30;
+                    y: row1_y;
+                    width: col_w * 3;
+                    height: row_h;
+                    text: root.grid_enabled ? "Grid: On" : "Grid: Off";
+                    clicked => { root.grid_enabled = !root.grid_enabled; }
+                }
+                Button {
+                    x: col_w * 33;
+                    y: row1_y;
+                    width: col_w * 3;
+                    height: row_h;
+                    text: root.layout_edit_mode ? "Edit ✓" : "Edit";
+                    clicked => { root.layout_edit_mode = !root.layout_edit_mode; }
+                }
+                Text {
+                    x: col_w * 36;
+                    y: row1_y;
+                    width: col_w * 3;
+                    height: row_h;
+                    text: root.grid_enabled ? ("Grid " + root.grid_col_label + ":" + root.grid_row_label) : "";
+                    color: #8fb0ff;
+                    font-size: 10px;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                }
+                Button {
+                    x: col_w * 39;
+                    y: row1_y;
+                    width: col_w * 3;
+                    height: row_h;
                     text: root.history_valve_open ? "Hist: On" : "Hist: Off";
                     clicked => {
                         root.history_valve_open = !root.history_valve_open;
@@ -1653,34 +2051,41 @@ export component AppWindow inherits Window {
                     }
                 }
                 Text {
-                    x: parent.width - 440px;
-                    y: 6px;
-                    width: 432px;
-                    height: 28px;
+                    x: col_w * 42;
+                    y: row1_y;
+                    width: col_w * 10;
+                    height: row_h;
                     text: candle_feed_status;
                     color: #a0a0a0;
                     horizontal-alignment: right;
+                    vertical-alignment: center;
                     font-size: 10px;
                 }
                 Text {
-                    x: parent.width - 440px;
-                    y: 20px;
-                    width: 432px;
-                    height: 16px;
+                    x: col_w * 42;
+                    y: row2_y;
+                    width: col_w * 10;
+                    height: row_h;
                     text: history_status;
                     color: #a0c0ff;
                     horizontal-alignment: right;
+                    vertical-alignment: center;
                     font-size: 9px;
                     visible: history_status != "";
                 }
             }
 
             Rectangle {
-                x: 0px;
-                y: 44px;
+                x: root.midbar_x;
+                y: root.midbar_y;
                 width: parent.width;
-                height: 60px;
+                height: root.midbar_h;
                 background: #1a1e27;
+
+                property <length> col_w: root.grid_col_w;
+                property <length> row_h: root.grid_row_h;
+                property <length> row1_y: 0px;
+                property <length> row2_y: row_h;
 
                 property <color> mid_text_color: root.last_move == "up"
                     ? #80ff80
@@ -1690,44 +2095,33 @@ export component AppWindow inherits Window {
                     ? "▲"
                     : (root.last_move == "down" ? "▼" : "•");
 
-                Text { x: 8px; y: 4px; text: "Balances  USDC: " + balance_usdc + "   PnL: " + balance_pnl; color: #d0e080; }
-
-                HorizontalLayout {
-                    x: 8px;
-                    y: 26px;
-                    width: parent.width - 16px;
-                    height: 18px;
-                    spacing: 6px;
-
-                    Text { text: "Mid:"; color: mid_text_color; font-size: 12px; }
-                    ZeroPadText { main: root.mid_price_main; pad: root.mid_price_pad; main_color: mid_text_color; pad_color: #7aa8ff; font_size: 12px; }
-                    Text { text: mid_move_symbol; color: mid_text_color; font-size: 12px; }
-                    Text { text: "Bid:"; color: mid_text_color; font-size: 12px; }
-                    ZeroPadText { main: root.best_bid_main; pad: root.best_bid_pad; main_color: mid_text_color; pad_color: #7aa8ff; font_size: 12px; }
-                    Text { text: "Ask:"; color: mid_text_color; font-size: 12px; }
-                    ZeroPadText { main: root.best_ask_main; pad: root.best_ask_pad; main_color: mid_text_color; pad_color: #7aa8ff; font_size: 12px; }
-                    Text { text: "Spread:"; color: mid_text_color; font-size: 12px; }
-                    ZeroPadText { main: root.spread_main; pad: root.spread_pad; main_color: mid_text_color; pad_color: #7aa8ff; font_size: 12px; }
-                    Text { text: "Imb:"; color: mid_text_color; font-size: 12px; }
-                    Text { text: imbalance; color: mid_text_color; font-size: 12px; }
+                Text {
+                    x: col_w * 1;
+                    y: row1_y;
+                    width: col_w * 18;
+                    height: row_h;
+                    text: "Balances  USDC: " + balance_usdc + "   PnL: " + balance_pnl;
+                    color: #d0e080;
+                    vertical-alignment: center;
                 }
 
                 Text {
-                    x: parent.width - 520px;
-                    y: 8px;
-                    width: 150px;
-                    height: 18px;
+                    x: col_w * 36;
+                    y: row1_y;
+                    width: col_w * 6;
+                    height: row_h;
                     text: daemon_status;
                     color: daemon_active ? #86ff86 : #ffb0b0;
                     font-size: 9px;
                     horizontal-alignment: right;
+                    vertical-alignment: center;
                 }
 
                 Rectangle {
-                    x: parent.width - 360px;
-                    y: 8px;
-                    width: 180px;
-                    height: 18px;
+                    x: col_w * 42;
+                    y: row1_y;
+                    width: col_w * 6;
+                    height: row_h;
                     background: #151821;
                     border-radius: 3px;
                     border-width: 1px;
@@ -1735,89 +2129,109 @@ export component AppWindow inherits Window {
 
                     Text {
                         x: 6px;
-                        y: 2px;
+                        y: 0px;
                         width: parent.width - 12px;
-                        height: parent.height - 4px;
+                        height: parent.height;
                         text: perf_status;
                         color: perf_healthy ? #86ff86 : #ffb0b0;
                         font-size: 10px;
+                        vertical-alignment: center;
                     }
 
                     Rectangle {
                         x: 4px;
-                        y: 14px;
+                        y: parent.height - 4px;
                         width: (parent.width - 8px) * perf_load;
                         height: 2px;
                         background: perf_healthy ? #3aa24b : #c44b4b;
                     }
                 }
 
-                PnLSparkline { x: parent.width - 170px; y: 10px; width: 160px; height: 40px; points <=> root.candle_points; }
+                PnLSparkline {
+                    x: col_w * 48;
+                    y: row1_y;
+                    width: col_w * 4;
+                    height: row_h;
+                    points <=> root.candle_points;
+                }
+
+                Text { x: col_w * 1; y: row2_y; width: col_w * 2; height: row_h; text: "Mid:"; color: mid_text_color; font-size: 12px; vertical-alignment: center; }
+                ZeroPadText { x: col_w * 3; y: row2_y; height: row_h; main: root.mid_price_main; pad: root.mid_price_pad; main_color: mid_text_color; pad_color: #7aa8ff; font_size: 12px; }
+                Text { x: col_w * 7; y: row2_y; width: col_w * 1; height: row_h; text: mid_move_symbol; color: mid_text_color; font-size: 12px; vertical-alignment: center; }
+                Text { x: col_w * 8; y: row2_y; width: col_w * 2; height: row_h; text: "Bid:"; color: mid_text_color; font-size: 12px; vertical-alignment: center; }
+                ZeroPadText { x: col_w * 10; y: row2_y; height: row_h; main: root.best_bid_main; pad: root.best_bid_pad; main_color: mid_text_color; pad_color: #7aa8ff; font_size: 12px; }
+                Text { x: col_w * 14; y: row2_y; width: col_w * 2; height: row_h; text: "Ask:"; color: mid_text_color; font-size: 12px; vertical-alignment: center; }
+                ZeroPadText { x: col_w * 16; y: row2_y; height: row_h; main: root.best_ask_main; pad: root.best_ask_pad; main_color: mid_text_color; pad_color: #7aa8ff; font_size: 12px; }
+                Text { x: col_w * 20; y: row2_y; width: col_w * 3; height: row_h; text: "Spread:"; color: mid_text_color; font-size: 12px; vertical-alignment: center; }
+                ZeroPadText { x: col_w * 23; y: row2_y; height: row_h; main: root.spread_main; pad: root.spread_pad; main_color: mid_text_color; pad_color: #7aa8ff; font_size: 12px; }
+                Text { x: col_w * 27; y: row2_y; width: col_w * 2; height: row_h; text: "Imb:"; color: mid_text_color; font-size: 12px; vertical-alignment: center; }
+                Text { x: col_w * 29; y: row2_y; width: col_w * 3; height: row_h; text: imbalance; color: mid_text_color; font-size: 12px; vertical-alignment: center; }
             }
 
             Rectangle {
-                x: 0px;
+                x: root.topbar_x;
                 y: root.topbar_y;
                 width: parent.width;
                 height: root.topbar_h;
                 background: #181b24;
 
-                property <length> row1_y: 4px * root.topbar_scale;
-                property <length> row1_text_y: 6px * root.topbar_scale;
-                property <length> row2_y: 30px * root.topbar_scale;
-                property <length> row2_text_y: 32px * root.topbar_scale;
-                property <length> btn_h: 20px * root.topbar_scale;
-                property <length> zoom_btn_h: 18px * root.topbar_scale;
-                property <length> slider_h: 10px * root.topbar_scale;
-                property <length> slider_y: row2_y + 4px * root.topbar_scale;
+                property <length> col_w: root.grid_col_w;
+                property <length> row_h: root.grid_row_h;
+                property <length> row1_y: 0px;
+                property <length> row2_y: row_h;
+                property <length> row3_y: row_h * 2;
+                property <length> btn_h: row_h;
+                property <length> zoom_btn_h: row_h;
+                property <length> slider_h: row_h;
+                property <length> slider_y: row2_y;
                 property <length> font_main: root.topbar_font_size;
                 property <length> font_small: root.topbar_font_size_small;
 
-                TopBarLabel { x: 8px; y: row1_text_y; text: "Ticker:"; color: #cccccc; label_font_size: font_main; label_font_family: root.topbar_font; }
+                TopBarLabel { x: col_w * 1; y: row1_y; width: col_w * 2; height: row_h; text: "Ticker:"; color: #cccccc; label_font_size: font_main; label_font_family: root.topbar_font; vertical-alignment: center; }
 
                 TopBarButton {
-                    x: 70px; y: row1_y; width: 70px; height: btn_h;
+                    x: col_w * 3; y: row1_y; width: col_w * 3; height: btn_h;
                     text: root.tickers_dropdown_open ? "List ▲" : "List ▼";
                     font_size: font_main; font_family: root.topbar_font;
                     clicked => { root.tickers_dropdown_open = !root.tickers_dropdown_open; }
                 }
 
                 TickerBadge {
-                    x: 146px;
+                    x: col_w * 6;
                     y: row1_y;
-                    width: 220px;
+                    width: col_w * 6;
                     height: btn_h;
                     value: root.ticker_input;
                     font_size: font_main;
                     font_family: root.topbar_font;
                 }
 
-                TopBarLabel { x: 518px; y: row1_text_y; text: "Mode:"; color: #cccccc; label_font_size: font_main; label_font_family: root.topbar_font; }
+                TopBarLabel { x: col_w * 13; y: row1_y; width: col_w * 2; height: row_h; text: "Mode:"; color: #cccccc; label_font_size: font_main; label_font_family: root.topbar_font; vertical-alignment: center; }
                 TopBarButton {
-                    x: 568px; y: row1_y; width: 56px; height: btn_h;
+                    x: col_w * 15; y: row1_y; width: col_w * 2; height: btn_h;
                     text: "Live";
                     active: root.mode == "Live";
                     font_size: font_main; font_family: root.topbar_font;
                     clicked => { root.mode_changed("Live"); }
                 }
                 TopBarButton {
-                    x: 628px; y: row1_y; width: 76px; height: btn_h;
+                    x: col_w * 17; y: row1_y; width: col_w * 3; height: btn_h;
                     text: "Replay";
                     active: root.mode == "Replay";
                     font_size: font_main; font_family: root.topbar_font;
                     clicked => { root.mode_changed("Replay"); }
                 }
 
-                TopBarLabel { x: 718px; y: row1_text_y; text: "Time:"; color: #cccccc; label_font_size: font_main; label_font_family: root.topbar_font; }
+                TopBarLabel { x: col_w * 21; y: row1_y; width: col_w * 2; height: row_h; text: "Time:"; color: #cccccc; label_font_size: font_main; label_font_family: root.topbar_font; vertical-alignment: center; }
                 TopBarButton {
-                    x: 768px; y: row1_y; width: 60px; height: btn_h;
+                    x: col_w * 23; y: row1_y; width: col_w * 2; height: btn_h;
                     text: "Local";
                     active: root.time_mode == "Local";
                     font_size: font_main; font_family: root.topbar_font;
                     clicked => { root.time_mode_changed("Local"); }
                 }
                 TopBarButton {
-                    x: 838px; y: row1_y; width: 50px; height: btn_h;
+                    x: col_w * 25; y: row1_y; width: col_w * 2; height: btn_h;
                     text: "UTC";
                     active: root.time_mode == "UTC";
                     font_size: font_main; font_family: root.topbar_font;
@@ -1825,13 +2239,13 @@ export component AppWindow inherits Window {
                 }
 
                 TopBarButton {
-                    x: 898px; y: row1_y; width: 70px; height: btn_h;
+                    x: col_w * 27; y: row1_y; width: col_w * 3; height: btn_h;
                     text: "Stretch";
                     font_size: font_main; font_family: root.topbar_font;
                     clicked => { root.stretch_to_viewport(); }
                 }
                 TopBarButton {
-                    x: 972px; y: row1_y; width: 98px; height: btn_h;
+                    x: col_w * 30; y: row1_y; width: col_w * 4; height: btn_h;
                     text: root.is_fullscreen ? "Exit Full" : "Fullscreen";
                     active: root.is_fullscreen;
                     font_size: font_main; font_family: root.topbar_font;
@@ -1841,7 +2255,7 @@ export component AppWindow inherits Window {
                     }
                 }
                 TopBarButton {
-                    x: 1078px; y: row1_y; width: 120px; height: btn_h;
+                    x: col_w * 34; y: row1_y; width: col_w * 4; height: btn_h;
                     text: root.render_all_candles ? "Render: Full" : "Render: Cond";
                     active: root.render_all_candles;
                     font_size: font_main; font_family: root.topbar_font;
@@ -1851,7 +2265,7 @@ export component AppWindow inherits Window {
                     }
                 }
                 TopBarButton {
-                    x: 1206px; y: row1_y; width: 78px; height: btn_h;
+                    x: col_w * 38; y: row1_y; width: col_w * 3; height: btn_h;
                     text: root.feed_enabled ? "Feed: On" : "Feed: Off";
                     active: root.feed_enabled;
                     font_size: font_main; font_family: root.topbar_font;
@@ -1861,7 +2275,7 @@ export component AppWindow inherits Window {
                     }
                 }
                 TopBarButton {
-                    x: 1288px; y: row1_y; width: 78px; height: btn_h;
+                    x: col_w * 41; y: row1_y; width: col_w * 3; height: btn_h;
                     text: root.chart_enabled ? "Chart: On" : "Chart: Off";
                     active: root.chart_enabled;
                     font_size: font_main; font_family: root.topbar_font;
@@ -1872,44 +2286,45 @@ export component AppWindow inherits Window {
                 }
 
                 TopBarButton {
-                    x: 1350px; y: row1_y; width: 70px; height: btn_h;
+                    x: col_w * 44; y: row1_y; width: col_w * 3; height: btn_h;
                     text: root.chart_popout_open ? "Popout ✓" : "Popout";
                     active: root.chart_popout_open;
                     font_size: font_main; font_family: root.topbar_font;
                     clicked => {
                         if !root.chart_popout_open {
-                            root.chart_popout_x = 80px;
-                            root.chart_popout_y = 240px;
-                            root.chart_popout_w = 760px;
-                            root.chart_popout_h = 440px;
+                            root.chart_popout_x = root.grid_col_w * 5;
+                            root.chart_popout_y = root.grid_row_h * 6;
+                            root.chart_popout_w = root.grid_col_w * 24;
+                            root.chart_popout_h = root.grid_row_h * 11;
                         }
                         root.chart_popout_open = !root.chart_popout_open;
                     }
                 }
 
                 TopBarButton {
-                    x: 1426px; y: row1_y; width: 48px; height: btn_h;
+                    x: col_w * 47; y: row1_y; width: col_w * 2; height: btn_h;
                     text: "Chart-";
                     font_size: font_main; font_family: root.topbar_font;
-                    clicked => { root.inline_chart_height = Math.max(120px, root.inline_chart_height - 40px); }
+                    clicked => { root.inline_chart_height = Math.max(root.grid_row_h * 3, root.inline_chart_height - root.grid_row_h); }
                 }
                 TopBarButton {
-                    x: 1480px; y: row1_y; width: 48px; height: btn_h;
+                    x: col_w * 49; y: row1_y; width: col_w * 2; height: btn_h;
                     text: "Chart+";
                     font_size: font_main; font_family: root.topbar_font;
-                    clicked => { root.inline_chart_height = Math.min(600px, root.inline_chart_height + 40px); }
+                    clicked => { root.inline_chart_height = Math.min(root.grid_row_h * 12, root.inline_chart_height + root.grid_row_h); }
                 }
 
                 TopBarLabel {
-                    x: 8px; y: row2_text_y;
+                    x: col_w * 1; y: row2_y; width: col_w * 4; height: row_h;
                     text: "TF / Window:"; color: #aaaaaa;
                     label_font_size: font_main; label_font_family: root.topbar_font;
+                    vertical-alignment: center;
                 }
 
                 TopBarSelect {
-                    x: 110px;
+                    x: col_w * 5;
                     y: row2_y;
-                    width: 90px;
+                    width: col_w * 3;
                     height: btn_h;
                     model: root.tf_labels;
                     current_index <=> root.tf_selected;
@@ -1941,21 +2356,21 @@ export component AppWindow inherits Window {
                 }
 
                 TopBarButton {
-                    x: 230px; y: row2_y; width: 80px; height: btn_h;
+                    x: col_w * 8; y: row2_y; width: col_w * 3; height: btn_h;
                     text: "Win 60m";
                     font_size: font_main; font_family: root.topbar_font;
                     clicked => { root.candle_window_changed(60); }
                 }
                 TopBarButton {
-                    x: 310px; y: row2_y; width: 90px; height: btn_h;
+                    x: col_w * 11; y: row2_y; width: col_w * 3; height: btn_h;
                     text: "Win 240m";
                     font_size: font_main; font_family: root.topbar_font;
                     clicked => { root.candle_window_changed(240); }
                 }
 
-                TopBarLabel { x: 400px; y: row2_text_y; text: "Price:"; color: #aaaaaa; label_font_size: font_main; label_font_family: root.topbar_font; }
+                TopBarLabel { x: col_w * 14; y: row2_y; width: col_w * 2; height: row_h; text: "Price:"; color: #aaaaaa; label_font_size: font_main; label_font_family: root.topbar_font; vertical-alignment: center; }
                 TopBarButton {
-                    x: 450px; y: row2_y; width: 52px; height: btn_h;
+                    x: col_w * 16; y: row2_y; width: col_w * 2; height: btn_h;
                     text: "Bid";
                     active: root.candle_price_mode == "Bid";
                     font_size: font_main; font_family: root.topbar_font;
@@ -1965,7 +2380,7 @@ export component AppWindow inherits Window {
                     }
                 }
                 TopBarButton {
-                    x: 506px; y: row2_y; width: 52px; height: btn_h;
+                    x: col_w * 18; y: row2_y; width: col_w * 2; height: btn_h;
                     text: "Mid";
                     active: root.candle_price_mode == "Mid";
                     font_size: font_main; font_family: root.topbar_font;
@@ -1975,7 +2390,7 @@ export component AppWindow inherits Window {
                     }
                 }
                 TopBarButton {
-                    x: 562px; y: row2_y; width: 52px; height: btn_h;
+                    x: col_w * 20; y: row2_y; width: col_w * 2; height: btn_h;
                     text: "Ask";
                     active: root.candle_price_mode == "Ask";
                     font_size: font_main; font_family: root.topbar_font;
@@ -1985,9 +2400,9 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                TopBarLabel { x: 630px; y: row2_text_y; text: "Panels:"; color: #aaaaaa; label_font_size: font_main; label_font_family: root.topbar_font; }
+                TopBarLabel { x: col_w * 22; y: row2_y; width: col_w * 2; height: row_h; text: "Panels:"; color: #aaaaaa; label_font_size: font_main; label_font_family: root.topbar_font; vertical-alignment: center; }
                 TopBarCheck {
-                    x: 690px; y: row2_y; width: 70px; height: btn_h;
+                    x: col_w * 24; y: row2_y; width: col_w * 3; height: btn_h;
                     text: "Depth";
                     checked <=> show_depth;
                     font_size: font_main; font_family: root.topbar_font;
@@ -1995,7 +2410,7 @@ export component AppWindow inherits Window {
                     toggled => { root.depth_panel_changed(self.checked); }
                 }
                 TopBarCheck {
-                    x: 770px; y: row2_y; width: 74px; height: btn_h;
+                    x: col_w * 27; y: row2_y; width: col_w * 3; height: btn_h;
                     text: "Trades";
                     checked <=> show_trades;
                     font_size: font_main; font_family: root.topbar_font;
@@ -2003,7 +2418,7 @@ export component AppWindow inherits Window {
                     toggled => { root.trades_panel_changed(self.checked); }
                 }
                 TopBarCheck {
-                    x: 860px; y: row2_y; width: 80px; height: btn_h;
+                    x: col_w * 30; y: row2_y; width: col_w * 3; height: btn_h;
                     text: "Volume";
                     checked <=> show_volume;
                     font_size: font_main; font_family: root.topbar_font;
@@ -2011,15 +2426,15 @@ export component AppWindow inherits Window {
                     toggled => { root.volume_panel_changed(self.checked); }
                 }
 
-                TopBarLabel { x: 940px; y: row2_text_y; text: "DOM depth:"; color: #aaaaaa; label_font_size: font_main; label_font_family: root.topbar_font; }
+                TopBarLabel { x: col_w * 33; y: row2_y; width: col_w * 3; height: row_h; text: "DOM depth:"; color: #aaaaaa; label_font_size: font_main; label_font_family: root.topbar_font; vertical-alignment: center; }
 
                 Rectangle {
-                    x: 1020px; y: slider_y; width: 180px; height: slider_h;
+                    x: col_w * 36; y: slider_y; width: col_w * 6; height: slider_h;
                     background: #202633; border-radius: 5px;
 
                     property <length> knob_x: (root.dom_depth_levels - 5) * (parent.width - 12px) / 45;
 
-                    Rectangle { x: knob_x; y: -2px; width: 12px; height: parent.height + 4px; border-radius: 6px; background: #7070ff; }
+                    Rectangle { x: knob_x; y: 0px; width: 12px; height: parent.height; border-radius: 6px; background: #7070ff; }
 
                     TouchArea {
                         x: 0px; y: -4px; width: parent.width; height: parent.height + 8px;
@@ -2064,41 +2479,44 @@ export component AppWindow inherits Window {
                 }
 
                 TopBarLabel {
-                    x: 1210px; y: row2_text_y;
+                    x: col_w * 42; y: row2_y; width: col_w * 2; height: row_h;
                     text: dom_depth_levels + " lvls";
                     color: #cccccc;
                     label_font_size: font_small; label_font_family: root.topbar_font;
+                    vertical-alignment: center;
                 }
 
-                TopBarLabel { x: 1500px; y: row2_text_y; text: "Poll:"; color: #aaaaaa; label_font_size: font_main; label_font_family: root.topbar_font; }
+                TopBarLabel { x: col_w * 44; y: row2_y; width: col_w * 2; height: row_h; text: "Poll:"; color: #aaaaaa; label_font_size: font_main; label_font_family: root.topbar_font; vertical-alignment: center; }
                 TopBarButton {
-                    x: 1540px; y: row2_y; width: 26px; height: btn_h;
+                    x: col_w * 46; y: row2_y; width: col_w * 1; height: btn_h;
                     text: "-";
                     font_size: font_main; font_family: root.topbar_font;
                     clicked => { root.market_poll_adjust(-1); }
                 }
                 TopBarLabel {
-                    x: 1570px; y: row2_text_y;
+                    x: col_w * 47; y: row2_y; width: col_w * 2; height: row_h;
                     text: root.market_poll_secs + "s";
                     color: #cccccc;
                     label_font_size: font_small; label_font_family: root.topbar_font;
+                    vertical-alignment: center;
                 }
                 TopBarButton {
-                    x: 1610px; y: row2_y; width: 26px; height: btn_h;
+                    x: col_w * 49; y: row2_y; width: col_w * 1; height: btn_h;
                     text: "+";
                     font_size: font_main; font_family: root.topbar_font;
                     clicked => { root.market_poll_adjust(1); }
                 }
 
                 TopBarLabel {
-                    x: 1644px; y: row2_text_y;
+                    x: col_w * 44; y: row3_y; width: col_w * 2; height: row_h;
                     text: "Zoom:";
                     color: #aaaaaa;
                     label_font_size: font_small; label_font_family: root.topbar_font;
+                    vertical-alignment: center;
                 }
                 TopBarButton {
-                    x: 1644px; y: row2_y + (btn_h + 2px);
-                    width: 36px; height: zoom_btn_h;
+                    x: col_w * 46; y: row3_y;
+                    width: col_w * 1; height: zoom_btn_h;
                     text: "X-";
                     font_size: font_small; font_family: root.topbar_font;
                     clicked => {
@@ -2115,8 +2533,8 @@ export component AppWindow inherits Window {
                     }
                 }
                 TopBarButton {
-                    x: 1684px; y: row2_y + (btn_h + 2px);
-                    width: 36px; height: zoom_btn_h;
+                    x: col_w * 47; y: row3_y;
+                    width: col_w * 1; height: zoom_btn_h;
                     text: "X+";
                     font_size: font_small; font_family: root.topbar_font;
                     clicked => {
@@ -2133,8 +2551,8 @@ export component AppWindow inherits Window {
                     }
                 }
                 TopBarButton {
-                    x: 1724px; y: row2_y + (btn_h + 2px);
-                    width: 36px; height: zoom_btn_h;
+                    x: col_w * 48; y: row3_y;
+                    width: col_w * 1; height: zoom_btn_h;
                     text: "Y-";
                     font_size: font_small; font_family: root.topbar_font;
                     clicked => {
@@ -2152,8 +2570,8 @@ export component AppWindow inherits Window {
                     }
                 }
                 TopBarButton {
-                    x: 1764px; y: row2_y + (btn_h + 2px);
-                    width: 36px; height: zoom_btn_h;
+                    x: col_w * 49; y: row3_y;
+                    width: col_w * 1; height: zoom_btn_h;
                     text: "Y+";
                     font_size: font_small; font_family: root.topbar_font;
                     clicked => {
@@ -2172,109 +2590,127 @@ export component AppWindow inherits Window {
                 }
 
                 TopBarLabel {
-                    x: 1320px; y: row2_text_y;
+                    x: col_w * 41; y: row3_y; width: col_w * 3; height: row_h;
                     text: (root.inline_chart_height / 1px) + "px";
                     color: #c0c0c0;
                     label_font_size: font_small; label_font_family: root.topbar_font;
+                    vertical-alignment: center;
                 }
             }
 
             Rectangle {
-                x: 0px;
+                x: root.secondbar_x;
                 y: root.secondbar_y;
                 width: parent.width;
                 height: root.secondbar_h;
                 background: #181b24;
 
-                Button { x: 8px; y: 8px; text: "Buy";  clicked => { root.trade_side = "Buy"; } }
-                Button { x: 80px; y: 8px; text: "Sell"; clicked => { root.trade_side = "Sell"; } }
+                property <length> col_w: root.grid_col_w;
+                property <length> row_h: root.grid_row_h;
+                property <length> row1_y: 0px;
+                property <length> row2_y: row_h;
+
+                Button { x: col_w * 1; y: row1_y; width: col_w * 2; height: row_h; text: "Buy";  clicked => { root.trade_side = "Buy"; } }
+                Button { x: col_w * 3; y: row1_y; width: col_w * 2; height: row_h; text: "Sell"; clicked => { root.trade_side = "Sell"; } }
 
                 Button {
-                    x: 152px; y: 8px;
+                    x: col_w * 5; y: row1_y;
+                    width: col_w * 4; height: row_h;
                     text: "Send Order";
                     enabled: !root.trade_real_mode || root.trade_real_armed;
                     clicked => { root.send_order(); }
                 }
 
                 CheckBox {
-                    x: 260px; y: 10px;
+                    x: col_w * 9; y: row1_y;
+                    width: col_w * 3; height: row_h;
                     text: "REAL";
                     checked <=> root.trade_real_mode;
                     toggled => { root.trade_real_mode_toggled(self.checked); }
                 }
 
                 Text {
-                    x: 340px; y: 12px;
+                    x: col_w * 12; y: row1_y;
+                    width: col_w * 1; height: row_h;
                     text: "ARM:";
                     color: #cccccc;
+                    vertical-alignment: center;
                     visible: root.trade_real_mode;
                 }
 
                 LineEdit {
-                    x: 380px; y: 8px;
-                    width: 60px; height: 22px;
+                    x: col_w * 13; y: row1_y;
+                    width: col_w * 2; height: row_h;
                     text <=> root.trade_real_arm_phrase;
                     visible: root.trade_real_mode;
                 }
 
                 Button {
-                    x: 448px; y: 8px;
+                    x: col_w * 15; y: row1_y;
+                    width: col_w * 3; height: row_h;
                     text: "ARM (60s)";
                     visible: root.trade_real_mode;
                     clicked => { root.arm_real_request(root.trade_real_arm_phrase); }
                 }
 
                 Button {
-                    x: 540px; y: 8px;
+                    x: col_w * 18; y: row1_y;
+                    width: col_w * 2; height: row_h;
                     text: "Disarm";
                     visible: root.trade_real_mode;
                     clicked => { root.disarm_real(); }
                 }
 
                 Text {
-                    x: 620px; y: 12px;
+                    x: col_w * 20; y: row1_y;
+                    width: col_w * 6; height: row_h;
                     text: root.trade_real_arm_status;
                     color: root.trade_real_armed ? #80ff80 : #ff8080;
+                    vertical-alignment: center;
                     visible: root.trade_real_mode;
                 }
 
                 Text {
-                    x: 8px;
-                    y: 40px;
+                    x: col_w * 1;
+                    y: row2_y;
+                    width: col_w * 12;
+                    height: row_h;
                     text: "Side: " + trade_side + "  Size: " + trade_size + "  Lev: " + trade_leverage;
                     color: #aaaaaa;
+                    vertical-alignment: center;
                 }
 
-                CheckBox { x: 350px; y: 8px; text: "Bot auto trade"; checked <=> bot_auto_trade; }
+                CheckBox { x: col_w * 26; y: row1_y; width: col_w * 4; height: row_h; text: "Bot auto trade"; checked <=> bot_auto_trade; }
 
-                Button { x: 520px; y: 8px; text: "Deposit 100";  clicked => { root.deposit(100.0); } }
-                Button { x: 620px; y: 8px; text: "Withdraw 100"; clicked => { root.withdraw(100.0); } }
-                Button { x: 740px; y: 8px; text: "Reload data";  clicked => { root.reload_data(); } }
+                Button { x: col_w * 30; y: row1_y; width: col_w * 3; height: row_h; text: "Deposit 100";  clicked => { root.deposit(100.0); } }
+                Button { x: col_w * 33; y: row1_y; width: col_w * 3; height: row_h; text: "Withdraw 100"; clicked => { root.withdraw(100.0); } }
+                Button { x: col_w * 36; y: row1_y; width: col_w * 3; height: row_h; text: "Reload data";  clicked => { root.reload_data(); } }
             }
 
             Rectangle {
-                x: 0px;
-                y: root.chart_top_y;
-                width: parent.width * 0.5;
-                height: parent.height - 320px;
+                x: root.chart_left_x;
+                y: root.chart_left_y;
+                width: root.grid_col_w * 26;
+                height: root.grid_row_h * 16;
                 background: root.chart_view_mode == "Advanced" ? #0b0f17 : #11151d;
 
-                property <length> header_h: 40px;
-                property <length> gap: root.chart_sidebar_open ? 6px : 0px;
+                property <length> header_h: root.grid_row_h;
+                property <length> h_gap: root.grid_col_w;
+                property <length> v_gap: root.grid_row_h;
                 property <length> chart_h: root.inline_chart_height;
-                property <length> tools_w: root.chart_sidebar_open ? 140px : 0px;
-                property <length> chart_x: 8px + tools_w + gap;
-                property <length> chart_w: parent.width - chart_x - 8px;
-                property <length> list_y: header_h + gap + chart_h + gap;
-                property <length> toggle_w: 32px;
-                property <length> header_text_x: 8px + toggle_w + 6px;
-                property <length> price_w: 220px;
-                property <length> price_x: parent.width - price_w - 8px;
-                property <length> auto_x: parent.width - 180px;
+                property <length> tools_w: root.chart_sidebar_open ? (root.grid_col_w * 4) : 0px;
+                property <length> chart_x: h_gap + tools_w + (root.chart_sidebar_open ? h_gap : 0px);
+                property <length> chart_w: parent.width - chart_x - h_gap;
+                property <length> list_y: header_h + v_gap + chart_h + v_gap;
+                property <length> toggle_w: root.grid_col_w;
+                property <length> header_text_x: h_gap + toggle_w + h_gap;
+                property <length> price_w: root.grid_col_w * 7;
+                property <length> price_x: parent.width - price_w - h_gap;
+                property <length> auto_x: parent.width - (root.grid_col_w * 4) - h_gap;
 
                 Text {
                     x: header_text_x;
-                    y: 6px;
+                    y: 0px;
                     width: parent.width - price_w - 100px;
                     text:
                         "Candles  tf=" + candle_tf_secs
@@ -2282,13 +2718,15 @@ export component AppWindow inherits Window {
                         + "   | X=" + chart_x_zoom + "  Y=" + chart_y_zoom
                         + "   | H=" + (root.inline_chart_height / 1px) + "px";
                     color: root.chart_view_mode == "Advanced" ? #f5e9ff : #ffffff;
+                    height: header_h;
+                    vertical-alignment: center;
                 }
 
                 Rectangle {
-                    x: 8px;
-                    y: 7px;
+                    x: h_gap;
+                    y: 0px;
                     width: toggle_w;
-                    height: 26px;
+                    height: header_h;
                     background: root.chart_view_mode == "Advanced" ? #12162a : #151b26;
                     border-width: 1px;
                     border-color: root.chart_view_mode == "Advanced" ? #343a52 : #2a3040;
@@ -2317,9 +2755,9 @@ export component AppWindow inherits Window {
 
                 Button {
                     x: auto_x;
-                    y: 10px;
-                    width: 72px;
-                    height: 20px;
+                    y: 0px;
+                    width: root.grid_col_w * 4;
+                    height: header_h;
                     text: "Auto: center";
                     clicked => {
                         root.chart_pan_x = 0.0;
@@ -2330,8 +2768,8 @@ export component AppWindow inherits Window {
                 }
 
                 Rectangle {
-                    x: 8px;
-                    y: header_h + gap;
+                    x: h_gap;
+                    y: header_h + v_gap;
                     width: tools_w;
                     height: chart_h;
                     visible: root.chart_sidebar_open;
@@ -2450,7 +2888,7 @@ export component AppWindow inherits Window {
 
                 CandleChart {
                     x: chart_x;
-                    y: header_h + gap;
+                    y: header_h + v_gap;
                     width: chart_w;
                     height: chart_h;
 
@@ -2482,7 +2920,7 @@ export component AppWindow inherits Window {
                 // Price axis ticks (left)
                 for t in root.price_ticks : Rectangle {
                     x: chart_x;
-                    y: header_h + gap + chart_h * t.pos - 8px;
+                    y: header_h + v_gap + chart_h * t.pos - 8px;
                     width: chart_w;
                     height: 16px;
                     background: #00000000;
@@ -2507,7 +2945,7 @@ export component AppWindow inherits Window {
                 // Time axis ticks (bottom)
                 for t in root.time_ticks : Rectangle {
                     x: chart_x + chart_w * t.pos;
-                    y: header_h + gap + chart_h + 2px;
+                    y: header_h + v_gap + chart_h + 2px;
                     width: 1px;
                     height: 16px;
                     background: #4a5970;
@@ -2537,27 +2975,38 @@ export component AppWindow inherits Window {
             }
 
             Rectangle {
-                x: parent.width * 0.5;
-                y: root.chart_top_y;
-                width: parent.width * 0.5;
-                height: parent.height - 320px;
+                x: root.chart_right_x;
+                y: root.chart_right_y;
+                width: root.grid_col_w * 26;
+                height: root.grid_row_h * 16;
                 background: root.chart_view_mode == "Advanced" ? #141726 : #181b24;
 
+                property <length> col_w: root.grid_col_w;
+                property <length> row_h: root.grid_row_h;
+
                 Rectangle {
-                    x: 4px;
-                    y: 4px;
-                    width: parent.width - 8px;
-                    height: 110px;
+                    x: col_w;
+                    y: row_h * 0;
+                    width: parent.width - (col_w * 2);
+                    height: row_h * 4;
                     background: #10131a;
                     visible: root.show_trades;
 
-                    Text { x: 4px; y: 4px; text: "Recent trades"; color: #ffffff; }
+                    Text {
+                        x: 0px;
+                        y: 0px;
+                        width: parent.width;
+                        height: row_h;
+                        text: "Recent trades";
+                        color: #ffffff;
+                        vertical-alignment: center;
+                    }
 
                     ListView {
-                        x: 4px;
-                        y: 22px;
-                        width: parent.width - 8px;
-                        height: parent.height - 26px;
+                        x: 0px;
+                        y: row_h;
+                        width: parent.width;
+                        height: parent.height - row_h;
 
                         for t in root.recent_trades : Rectangle {
                             width: parent.width;
@@ -2575,19 +3024,27 @@ export component AppWindow inherits Window {
                 }
 
                 Rectangle {
-                    x: 4px;
-                    y: 120px;
-                    width: parent.width - 8px;
-                    height: 130px;
+                    x: col_w;
+                    y: row_h * 4;
+                    width: parent.width - (col_w * 2);
+                    height: row_h * 4;
                     background: #10131a;
 
-                    Text { x: 4px; y: 4px; text: "Receipts"; color: #ffffff; }
+                    Text {
+                        x: 0px;
+                        y: 0px;
+                        width: parent.width;
+                        height: row_h;
+                        text: "Receipts";
+                        color: #ffffff;
+                        vertical-alignment: center;
+                    }
 
                     ListView {
-                        x: 4px;
-                        y: 22px;
-                        width: parent.width - 8px;
-                        height: parent.height - 26px;
+                        x: 0px;
+                        y: row_h;
+                        width: parent.width;
+                        height: parent.height - row_h;
 
                         for r in root.receipts : Text {
                             text: r.ts + "  " + r.ticker + "  " + r.side + " " + r.kind + " " + r.size + " " + r.status;
@@ -2597,34 +3054,34 @@ export component AppWindow inherits Window {
                 }
 
                 Rectangle {
-                    x: 4px;
-                    y: 254px;
-                    width: parent.width - 8px;
-                    height: parent.height - 262px;
+                    x: col_w;
+                    y: row_h * 8;
+                    width: parent.width - (col_w * 2);
+                    height: row_h * 8;
                     background: #10131a;
 
-                    Text { x: 4px; y: 4px; text: "Bot: " + bot_signal + "  size=" + bot_size; color: #ffffff; }
-                    Text { x: 4px; y: 24px; text: "Comment: " + bot_comment; color: #cccccc; }
+                    Text { x: 0px; y: 0px; width: parent.width; height: row_h; text: "Bot: " + bot_signal + "  size=" + bot_size; color: #ffffff; vertical-alignment: center; }
+                    Text { x: 0px; y: row_h; width: parent.width; height: row_h; text: "Comment: " + bot_comment; color: #cccccc; vertical-alignment: center; }
 
                     TextEdit {
-                        x: 4px;
-                        y: 44px;
-                        width: parent.width - 8px;
-                        height: parent.height - 120px;
+                        x: 0px;
+                        y: row_h * 2;
+                        width: parent.width;
+                        height: row_h * 3;
                         text <=> root.script_text;
                     }
 
-                    Button { x: 4px; y: parent.height - 68px; text: "Run Script"; clicked => { root.run_script(); } }
-                    Text { x: 4px; y: parent.height - 44px; text: script_error; color: #ff8080; }
-                    Text { x: 4px; y: parent.height - 24px; text: order_message; color: #80ff80; }
+                    Button { x: 0px; y: row_h * 5; width: col_w * 4; height: row_h; text: "Run Script"; clicked => { root.run_script(); } }
+                    Text { x: 0px; y: row_h * 6; width: parent.width; height: row_h; text: script_error; color: #ff8080; vertical-alignment: center; }
+                    Text { x: 0px; y: row_h * 7; width: parent.width; height: row_h; text: order_message; color: #80ff80; vertical-alignment: center; }
                 }
             }
 
-            OrderbookPanel {
-                x <=> root.orderbook_x;
-                y <=> root.orderbook_y;
-                width: 360px;
-                height: 260px;
+            if (root.show_depth || root.show_ladders) && root.orderbook_layer == 0 : OrderbookPanel {
+                x: root.orderbook_x;
+                y: root.orderbook_y;
+                width: root.grid_col_w * 11;
+                height: root.grid_row_h * 6;
                 title: "Orderbook";
                 bids <=> root.bids;
                 asks <=> root.asks;
@@ -2632,14 +3089,121 @@ export component AppWindow inherits Window {
                 spread: root.spread;
                 spread_main: root.spread_main;
                 spread_pad: root.spread_pad;
-                visible: root.show_depth || root.show_ladders;
+                grid_col_w: root.grid_col_w;
+                grid_row_h: root.grid_row_h;
+                allow_drag: false;
+                z: 0;
+            }
+            if (root.show_depth || root.show_ladders) && root.orderbook_layer == 1 : OrderbookPanel {
+                x: root.orderbook_x;
+                y: root.orderbook_y;
+                width: root.grid_col_w * 11;
+                height: root.grid_row_h * 6;
+                title: "Orderbook";
+                bids <=> root.bids;
+                asks <=> root.asks;
+                mid: root.mid_price;
+                spread: root.spread;
+                spread_main: root.spread_main;
+                spread_pad: root.spread_pad;
+                grid_col_w: root.grid_col_w;
+                grid_row_h: root.grid_row_h;
+                allow_drag: false;
+                z: 1;
+            }
+            if (root.show_depth || root.show_ladders) && root.orderbook_layer == 2 : OrderbookPanel {
+                x: root.orderbook_x;
+                y: root.orderbook_y;
+                width: root.grid_col_w * 11;
+                height: root.grid_row_h * 6;
+                title: "Orderbook";
+                bids <=> root.bids;
+                asks <=> root.asks;
+                mid: root.mid_price;
+                spread: root.spread;
+                spread_main: root.spread_main;
+                spread_pad: root.spread_pad;
+                grid_col_w: root.grid_col_w;
+                grid_row_h: root.grid_row_h;
+                allow_drag: false;
+                z: 2;
             }
 
-            SettingsPanel {
-                x <=> root.settings_x;
-                y <=> root.settings_y;
-                width: 380px;
-                height: 320px;
+            if root.settings_panel_open && root.settings_layer == 0 : SettingsPanel {
+                x: root.settings_x;
+                y: root.settings_y;
+                width: root.grid_col_w * 12;
+                height: root.grid_row_h * 8;
+                grid_col_w: root.grid_col_w;
+                grid_row_h: root.grid_row_h;
+                allow_drag: false;
+                z: 0;
+
+                wallet_address <=> root.settings_wallet_address;
+                wallet_status  <=> root.settings_wallet_status;
+
+                network      <=> root.settings_network;
+                rpc_endpoint <=> root.settings_rpc_endpoint;
+
+                auto_sign           <=> root.settings_auto_sign;
+                session_ttl_minutes <=> root.settings_session_ttl_minutes;
+                signer_status       <=> root.settings_signer_status;
+
+                last_error <=> root.settings_last_error;
+
+                connect_wallet => { root.settings_connect_wallet(); }
+                disconnect_wallet => { root.settings_disconnect_wallet(); }
+                refresh_status => { root.settings_refresh_status(); }
+
+                select_network(net) => { root.settings_select_network(net); }
+                apply_rpc(endpoint) => { root.settings_apply_rpc(endpoint); }
+
+                toggle_auto_sign(enabled) => { root.settings_toggle_auto_sign(enabled); }
+                create_session(ttl_minutes) => { root.settings_create_session(ttl_minutes); }
+                revoke_session => { root.settings_revoke_session(); }
+            }
+            if root.settings_panel_open && root.settings_layer == 1 : SettingsPanel {
+                x: root.settings_x;
+                y: root.settings_y;
+                width: root.grid_col_w * 12;
+                height: root.grid_row_h * 8;
+                grid_col_w: root.grid_col_w;
+                grid_row_h: root.grid_row_h;
+                allow_drag: false;
+                z: 1;
+
+                wallet_address <=> root.settings_wallet_address;
+                wallet_status  <=> root.settings_wallet_status;
+
+                network      <=> root.settings_network;
+                rpc_endpoint <=> root.settings_rpc_endpoint;
+
+                auto_sign           <=> root.settings_auto_sign;
+                session_ttl_minutes <=> root.settings_session_ttl_minutes;
+                signer_status       <=> root.settings_signer_status;
+
+                last_error <=> root.settings_last_error;
+
+                connect_wallet => { root.settings_connect_wallet(); }
+                disconnect_wallet => { root.settings_disconnect_wallet(); }
+                refresh_status => { root.settings_refresh_status(); }
+
+                select_network(net) => { root.settings_select_network(net); }
+                apply_rpc(endpoint) => { root.settings_apply_rpc(endpoint); }
+
+                toggle_auto_sign(enabled) => { root.settings_toggle_auto_sign(enabled); }
+                create_session(ttl_minutes) => { root.settings_create_session(ttl_minutes); }
+                revoke_session => { root.settings_revoke_session(); }
+            }
+            if root.settings_panel_open && root.settings_layer == 2 : SettingsPanel {
+                x: root.settings_x;
+                y: root.settings_y;
+                width: root.grid_col_w * 12;
+                height: root.grid_row_h * 8;
+                grid_col_w: root.grid_col_w;
+                grid_row_h: root.grid_row_h;
+                allow_drag: false;
+                z: 2;
 
                 wallet_address <=> root.settings_wallet_address;
                 wallet_status  <=> root.settings_wallet_status;
@@ -2665,29 +3229,55 @@ export component AppWindow inherits Window {
                 revoke_session => { root.settings_revoke_session(); }
             }
 
-            MicroDepthPanel {
-                x: parent.width - 260px;
-                y: 48px;
-                width: 240px;
-                height: 72px;
+            if root.show_depth && root.microdepth_layer == 0 : MicroDepthPanel {
+                x: root.microdepth_x;
+                y: root.microdepth_y;
+                width: root.grid_col_w * 8;
+                height: root.grid_row_h * 2;
                 bids <=> root.bids;
                 asks <=> root.asks;
                 imbalance: root.imbalance;
-                visible: root.show_depth;
+                grid_col_w: root.grid_col_w;
+                grid_row_h: root.grid_row_h;
+                z: 0;
+            }
+            if root.show_depth && root.microdepth_layer == 1 : MicroDepthPanel {
+                x: root.microdepth_x;
+                y: root.microdepth_y;
+                width: root.grid_col_w * 8;
+                height: root.grid_row_h * 2;
+                bids <=> root.bids;
+                asks <=> root.asks;
+                imbalance: root.imbalance;
+                grid_col_w: root.grid_col_w;
+                grid_row_h: root.grid_row_h;
+                z: 1;
+            }
+            if root.show_depth && root.microdepth_layer == 2 : MicroDepthPanel {
+                x: root.microdepth_x;
+                y: root.microdepth_y;
+                width: root.grid_col_w * 8;
+                height: root.grid_row_h * 2;
+                bids <=> root.bids;
+                asks <=> root.asks;
+                imbalance: root.imbalance;
+                grid_col_w: root.grid_col_w;
+                grid_row_h: root.grid_row_h;
+                z: 2;
             }
 
             Rectangle {
-                property <length> chart_left: 0px;
-                property <length> chart_top: 244px;
-                property <length> chart_w: parent.width * 0.5;
-                property <length> price_w: 240px;
-                property <length> price_h: 36px;
-                property <length> meta_w: 220px;
-                property <length> meta_h: 74px;
+                property <length> chart_left: root.chart_left_x;
+                property <length> chart_top: root.chart_left_y;
+                property <length> chart_w: root.grid_col_w * 26;
+                property <length> price_w: root.grid_col_w * 7;
+                property <length> price_h: root.grid_row_h;
+                property <length> meta_w: root.grid_col_w * 7;
+                property <length> meta_h: root.grid_row_h * 3;
 
                 Rectangle {
-                    x: -meta_w - 12px;
-                    y: -4px;
+                    x: -meta_w - root.grid_col_w;
+                    y: 0px;
                     width: meta_w;
                     height: meta_h;
                     background: root.chart_view_mode == "Advanced" ? #0f1324cc : #0e1422cc;
@@ -2696,11 +3286,14 @@ export component AppWindow inherits Window {
                     border-radius: 4px;
 
                     Text {
-                        x: 8px;
-                        y: 6px;
+                        x: 0px;
+                        y: 0px;
+                        width: parent.width;
+                        height: root.grid_row_h;
                         text: "Mark:";
                         color: #b8c5ff;
                         font-size: 20px;
+                        vertical-alignment: center;
                     }
                     ZeroPadText {
                         main: root.mark_price_main == "" ? "--" : root.mark_price_main;
@@ -2708,16 +3301,19 @@ export component AppWindow inherits Window {
                         main_color: #e8f6ff;
                         pad_color: #7aa8ff;
                         font_size: 20px;
-                        x: 70px;
-                        y: 6px;
+                        x: root.grid_col_w * 2;
+                        y: 0px;
                     }
 
                     Text {
-                        x: 8px;
-                        y: 28px;
+                        x: 0px;
+                        y: root.grid_row_h;
+                        width: parent.width;
+                        height: root.grid_row_h;
                         text: "Oracle:";
                         color: #b8c5ff;
                         font-size: 20px;
+                        vertical-alignment: center;
                     }
                     ZeroPadText {
                         main: root.oracle_price_main == "" ? "--" : root.oracle_price_main;
@@ -2725,16 +3321,19 @@ export component AppWindow inherits Window {
                         main_color: #e8f6ff;
                         pad_color: #7aa8ff;
                         font_size: 20px;
-                        x: 70px;
-                        y: 28px;
+                        x: root.grid_col_w * 2;
+                        y: root.grid_row_h;
                     }
 
                     Text {
-                        x: 8px;
-                        y: 50px;
+                        x: 0px;
+                        y: root.grid_row_h * 2;
+                        width: parent.width;
+                        height: root.grid_row_h;
                         text: "Last:";
                         color: #b8c5ff;
                         font-size: 20px;
+                        vertical-alignment: center;
                     }
                     ZeroPadText {
                         main: root.last_price_main == "" ? "--" : root.last_price_main;
@@ -2742,13 +3341,13 @@ export component AppWindow inherits Window {
                         main_color: #e8f6ff;
                         pad_color: #7aa8ff;
                         font_size: 20px;
-                        x: 70px;
-                        y: 50px;
+                        x: root.grid_col_w * 2;
+                        y: root.grid_row_h * 2;
                     }
                 }
 
-                x: chart_left + chart_w - price_w - 12px;
-                y: chart_top + 4px;
+                x: chart_left + chart_w - price_w - root.grid_col_w;
+                y: chart_top + root.grid_row_h;
                 width: price_w;
                 height: price_h;
                 background: root.chart_view_mode == "Advanced" ? #0f1324cc : #0e1422cc;
@@ -2767,16 +3366,16 @@ export component AppWindow inherits Window {
                     y: (parent.height - self.height) / 2;
                 }
             }
-        Rectangle {
-            x: 70px;
-            y: root.topbar_y + root.topbar_h;
-            width: 260px;
-            height: 280px;
+        if root.tickers_dropdown_open && root.ticker_dropdown_layer == 0 : Rectangle {
+            x: root.ticker_dropdown_x;
+            y: root.ticker_dropdown_y;
+            width: root.grid_col_w * 8;
+            height: root.grid_row_h * 7;
             background: #0f1320;
             border-radius: 4px;
             border-width: 1px;
             border-color: #2a3346;
-            visible: root.tickers_dropdown_open;
+            z: 0;
 
             Text { x: 8px; y: 6px; text: "Tickers"; color: #c7d2ff; font-size: 12px; }
 
@@ -2793,8 +3392,17 @@ export component AppWindow inherits Window {
                         ? (row.active ? #1b2438 : #242835)
                         : (row.active ? #111725 : #0b0f1a);
 
+                    Button {
+                        x: 4px;
+                        y: 2px;
+                        width: 18px;
+                        height: 18px;
+                        text: row.favorite ? "★" : "☆";
+                        clicked => { root.ticker_favorite_toggled(row.ticker, !row.favorite); }
+                    }
+
                     Text {
-                        x: 6px;
+                        x: 26px;
                         y: 3px;
                         text: row.ticker;
                         color: row.active ? #d6dcff : #6f778a;
@@ -2822,9 +3430,9 @@ export component AppWindow inherits Window {
                     }
 
                     TouchArea {
-                        x: 0px;
+                        x: 24px;
                         y: 0px;
-                        width: parent.width - 78px;
+                        width: parent.width - 102px;
                         height: parent.height;
                         clicked => {
                             if row.active {
@@ -2835,6 +3443,354 @@ export component AppWindow inherits Window {
                         }
                     }
                 }
+            }
+        }
+        if root.tickers_dropdown_open && root.ticker_dropdown_layer == 1 : Rectangle {
+            x: root.ticker_dropdown_x;
+            y: root.ticker_dropdown_y;
+            width: root.grid_col_w * 8;
+            height: root.grid_row_h * 7;
+            background: #0f1320;
+            border-radius: 4px;
+            border-width: 1px;
+            border-color: #2a3346;
+            z: 1;
+
+            Text { x: 8px; y: 6px; text: "Tickers"; color: #c7d2ff; font-size: 12px; }
+
+            ListView {
+                x: 6px;
+                y: 26px;
+                width: parent.width - 12px;
+                height: parent.height - 32px;
+
+                for row in root.ticker_feed_rows : Rectangle {
+                    width: parent.width;
+                    height: 22px;
+                    background: row.ticker == root.current_ticker
+                        ? (row.active ? #1b2438 : #242835)
+                        : (row.active ? #111725 : #0b0f1a);
+
+                    Button {
+                        x: 4px;
+                        y: 2px;
+                        width: 18px;
+                        height: 18px;
+                        text: row.favorite ? "★" : "☆";
+                        clicked => { root.ticker_favorite_toggled(row.ticker, !row.favorite); }
+                    }
+
+                    Text {
+                        x: 26px;
+                        y: 3px;
+                        text: row.ticker;
+                        color: row.active ? #d6dcff : #6f778a;
+                        font-size: 12px;
+                    }
+
+                    Button {
+                        x: parent.width - 74px;
+                        y: 2px;
+                        width: 70px;
+                        height: 18px;
+                        text: row.feed_on ? "Feed: On" : "Feed: Off";
+                        enabled: row.active;
+                        clicked => { root.ticker_feed_toggled(row.ticker, !row.feed_on); }
+                    }
+                    Text {
+                        x: parent.width - 150px;
+                        y: 4px;
+                        width: 70px;
+                        text: "Inactive";
+                        color: #6f778a;
+                        font-size: 10px;
+                        horizontal-alignment: right;
+                        visible: !row.active;
+                    }
+
+                    TouchArea {
+                        x: 24px;
+                        y: 0px;
+                        width: parent.width - 102px;
+                        height: parent.height;
+                        clicked => {
+                            if row.active {
+                                root.ticker_input = row.ticker;
+                                root.ticker_changed(row.ticker);
+                                root.tickers_dropdown_open = false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if root.tickers_dropdown_open && root.ticker_dropdown_layer == 2 : Rectangle {
+            x: root.ticker_dropdown_x;
+            y: root.ticker_dropdown_y;
+            width: root.grid_col_w * 8;
+            height: root.grid_row_h * 7;
+            background: #0f1320;
+            border-radius: 4px;
+            border-width: 1px;
+            border-color: #2a3346;
+            z: 2;
+
+            Text { x: 8px; y: 6px; text: "Tickers"; color: #c7d2ff; font-size: 12px; }
+
+            ListView {
+                x: 6px;
+                y: 26px;
+                width: parent.width - 12px;
+                height: parent.height - 32px;
+
+                for row in root.ticker_feed_rows : Rectangle {
+                    width: parent.width;
+                    height: 22px;
+                    background: row.ticker == root.current_ticker
+                        ? (row.active ? #1b2438 : #242835)
+                        : (row.active ? #111725 : #0b0f1a);
+
+                    Button {
+                        x: 4px;
+                        y: 2px;
+                        width: 18px;
+                        height: 18px;
+                        text: row.favorite ? "★" : "☆";
+                        clicked => { root.ticker_favorite_toggled(row.ticker, !row.favorite); }
+                    }
+
+                    Text {
+                        x: 26px;
+                        y: 3px;
+                        text: row.ticker;
+                        color: row.active ? #d6dcff : #6f778a;
+                        font-size: 12px;
+                    }
+
+                    Button {
+                        x: parent.width - 74px;
+                        y: 2px;
+                        width: 70px;
+                        height: 18px;
+                        text: row.feed_on ? "Feed: On" : "Feed: Off";
+                        enabled: row.active;
+                        clicked => { root.ticker_feed_toggled(row.ticker, !row.feed_on); }
+                    }
+                    Text {
+                        x: parent.width - 150px;
+                        y: 4px;
+                        width: 70px;
+                        text: "Inactive";
+                        color: #6f778a;
+                        font-size: 10px;
+                        horizontal-alignment: right;
+                        visible: !row.active;
+                    }
+
+                    TouchArea {
+                        x: 24px;
+                        y: 0px;
+                        width: parent.width - 102px;
+                        height: parent.height;
+                        clicked => {
+                            if row.active {
+                                root.ticker_input = row.ticker;
+                                root.ticker_changed(row.ticker);
+                                root.tickers_dropdown_open = false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        GridOverlay {
+            x: 0px;
+            y: 0px;
+            width: root.ui_content_w_px * 1px;
+            height: root.ui_content_h_px * 1px;
+            enabled: root.grid_enabled;
+            col_labels: root.grid_col_labels;
+            row_labels: root.grid_row_labels;
+            cursor_col <=> root.grid_cursor_col;
+            cursor_row <=> root.grid_cursor_row;
+            label_font_size: root.topbar_font_size_small;
+            label_font_family: root.topbar_font;
+            line_color: #3a4660;
+            line_opacity: 0.25;
+        }
+
+        if root.layout_edit_mode : Rectangle {
+            x: 0px;
+            y: 0px;
+            width: root.ui_content_w_px * 1px;
+            height: root.ui_content_h_px * 1px;
+            background: #00000000;
+
+            TouchArea {
+                x: 0px;
+                y: 0px;
+                width: parent.width;
+                height: parent.height;
+                pointer-event(event) => { EventResult.accept }
+            }
+
+            LayoutHandle {
+                enabled: root.layout_edit_mode;
+                label: "Header";
+                target_x <=> root.header_x;
+                target_y <=> root.header_y;
+                target_w: parent.width;
+                target_h: root.header_h;
+                grid_col_w: root.grid_col_w;
+                grid_row_h: root.grid_row_h;
+                pass1_x: root.grid_col_w * 28;
+                pass1_y: 0px;
+                pass1_w: root.grid_col_w * 2;
+                pass1_h: root.grid_row_h;
+                pass2_x: root.grid_col_w * 30;
+                pass2_y: 0px;
+                pass2_w: root.grid_col_w * 3;
+                pass2_h: root.grid_row_h;
+                pass3_x: root.grid_col_w * 33;
+                pass3_y: 0px;
+                pass3_w: root.grid_col_w * 3;
+                pass3_h: root.grid_row_h;
+            }
+            LayoutHandle {
+                enabled: root.layout_edit_mode;
+                label: "Midbar";
+                target_x <=> root.midbar_x;
+                target_y <=> root.midbar_y;
+                target_w: parent.width;
+                target_h: root.midbar_h;
+                grid_col_w: root.grid_col_w;
+                grid_row_h: root.grid_row_h;
+            }
+            LayoutHandle {
+                enabled: root.layout_edit_mode;
+                label: "Topbar";
+                target_x <=> root.topbar_x;
+                target_y <=> root.topbar_y;
+                target_w: parent.width;
+                target_h: root.topbar_h;
+                grid_col_w: root.grid_col_w;
+                grid_row_h: root.grid_row_h;
+            }
+            LayoutHandle {
+                enabled: root.layout_edit_mode;
+                label: "Tradebar";
+                target_x <=> root.secondbar_x;
+                target_y <=> root.secondbar_y;
+                target_w: parent.width;
+                target_h: root.secondbar_h;
+                grid_col_w: root.grid_col_w;
+                grid_row_h: root.grid_row_h;
+            }
+            LayoutHandle {
+                enabled: root.layout_edit_mode;
+                label: "Chart";
+                target_x <=> root.chart_left_x;
+                target_y <=> root.chart_left_y;
+                target_w: root.grid_col_w * 26;
+                target_h: root.grid_row_h * 16;
+                grid_col_w: root.grid_col_w;
+                grid_row_h: root.grid_row_h;
+            }
+            LayoutHandle {
+                enabled: root.layout_edit_mode;
+                label: "Right Panel";
+                target_x <=> root.chart_right_x;
+                target_y <=> root.chart_right_y;
+                target_w: root.grid_col_w * 26;
+                target_h: root.grid_row_h * 16;
+                grid_col_w: root.grid_col_w;
+                grid_row_h: root.grid_row_h;
+            }
+            LayoutHandle {
+                enabled: root.layout_edit_mode;
+                label: "Orderbook";
+                target_x <=> root.orderbook_x;
+                target_y <=> root.orderbook_y;
+                target_w: root.grid_col_w * 11;
+                target_h: root.grid_row_h * 6;
+                grid_col_w: root.grid_col_w;
+                grid_row_h: root.grid_row_h;
+                show_layer: true;
+                layer <=> root.orderbook_layer;
+            }
+            LayoutHandle {
+                enabled: root.layout_edit_mode;
+                label: "Settings";
+                target_x <=> root.settings_x;
+                target_y <=> root.settings_y;
+                target_w: root.grid_col_w * 12;
+                target_h: root.grid_row_h * 8;
+                grid_col_w: root.grid_col_w;
+                grid_row_h: root.grid_row_h;
+                show_layer: true;
+                layer <=> root.settings_layer;
+            }
+            LayoutHandle {
+                enabled: root.layout_edit_mode;
+                label: "MicroDepth";
+                target_x <=> root.microdepth_x;
+                target_y <=> root.microdepth_y;
+                target_w: root.grid_col_w * 8;
+                target_h: root.grid_row_h * 2;
+                grid_col_w: root.grid_col_w;
+                grid_row_h: root.grid_row_h;
+                show_layer: true;
+                layer <=> root.microdepth_layer;
+            }
+            LayoutHandle {
+                enabled: root.layout_edit_mode;
+                label: "Ticker List";
+                target_x <=> root.ticker_dropdown_x;
+                target_y <=> root.ticker_dropdown_y;
+                target_w: root.grid_col_w * 8;
+                target_h: root.grid_row_h * 7;
+                grid_col_w: root.grid_col_w;
+                grid_row_h: root.grid_row_h;
+                show_layer: true;
+                layer <=> root.ticker_dropdown_layer;
+            }
+            LayoutHandle {
+                enabled: root.layout_edit_mode && root.chart_popout_open;
+                label: "Chart Popout";
+                target_x <=> root.chart_popout_x;
+                target_y <=> root.chart_popout_y;
+                target_w: root.chart_popout_w;
+                target_h: root.chart_popout_h;
+                grid_col_w: root.grid_col_w;
+                grid_row_h: root.grid_row_h;
+                show_layer: true;
+                layer <=> root.chart_popout_layer;
+            }
+
+            Button {
+                x: root.header_x + root.grid_col_w * 28;
+                y: root.header_y;
+                width: root.grid_col_w * 2;
+                height: root.grid_row_h;
+                text: "Close";
+                clicked => { root.close_and_save_requested(); }
+            }
+            Button {
+                x: root.header_x + root.grid_col_w * 30;
+                y: root.header_y;
+                width: root.grid_col_w * 3;
+                height: root.grid_row_h;
+                text: root.grid_enabled ? "Grid: On" : "Grid: Off";
+                clicked => { root.grid_enabled = !root.grid_enabled; }
+            }
+            Button {
+                x: root.header_x + root.grid_col_w * 33;
+                y: root.header_y;
+                width: root.grid_col_w * 3;
+                height: root.grid_row_h;
+                text: root.layout_edit_mode ? "Edit ✓" : "Edit";
+                clicked => { root.layout_edit_mode = !root.layout_edit_mode; }
             }
         }
         }
@@ -2938,12 +3894,84 @@ export component AppWindow inherits Window {
         }
 
         // Popout drawn LAST so it sits on top, and NOT scrolled
-        ChartPopoutPanel {
+        if root.chart_popout_open && root.chart_popout_layer == 0 : ChartPopoutPanel {
+            open <=> root.chart_popout_open;
+            px: root.chart_popout_x;
+            py: root.chart_popout_y;
+            pw: root.chart_popout_w;
+            ph: root.chart_popout_h;
+            grid_col_w: root.grid_col_w;
+            grid_row_h: root.grid_row_h;
+            z: 0;
+            allow_drag: false;
+
+            title: "Chart Popout (wheel: zoom, drag: pan)";
+
+            points <=> root.candle_points;
+            mid_line_y: root.candle_midline;
+            drawings <=> root.drawings;
+            draw_ticks <=> root.draw_ticks;
+            heatmap_cells <=> root.heatmap_cells;
+            heatmap_enabled: root.heatmap_enabled;
+            advanced_mode: root.chart_view_mode == "Advanced";
+            draw_tool: root.draw_tool;
+
+            x_zoom <=> root.chart_x_zoom;
+            y_zoom <=> root.chart_y_zoom;
+            pan_x  <=> root.chart_pan_x;
+            pan_y  <=> root.chart_pan_y;
+            cursor_x <=> root.chart_cursor_x;
+            cursor_y <=> root.chart_cursor_y;
+
+            draw_begin(x, y) => { root.draw_begin(x, y); }
+            draw_update(x, y) => { root.draw_update(x, y); }
+            draw_end(x, y) => { root.draw_end(x, y); }
+            draw_poly_sides_delta(delta) => { root.draw_poly_sides_delta(delta); }
+        }
+        if root.chart_popout_open && root.chart_popout_layer == 1 : ChartPopoutPanel {
             open <=> root.chart_popout_open;
             px <=> root.chart_popout_x;
             py <=> root.chart_popout_y;
             pw <=> root.chart_popout_w;
             ph <=> root.chart_popout_h;
+            grid_col_w: root.grid_col_w;
+            grid_row_h: root.grid_row_h;
+            z: 1;
+            allow_drag: !root.layout_edit_mode;
+
+            title: "Chart Popout (wheel: zoom, drag: pan)";
+
+            points <=> root.candle_points;
+            mid_line_y: root.candle_midline;
+            drawings <=> root.drawings;
+            draw_ticks <=> root.draw_ticks;
+            heatmap_cells <=> root.heatmap_cells;
+            heatmap_enabled: root.heatmap_enabled;
+            advanced_mode: root.chart_view_mode == "Advanced";
+            draw_tool: root.draw_tool;
+
+            x_zoom <=> root.chart_x_zoom;
+            y_zoom <=> root.chart_y_zoom;
+            pan_x  <=> root.chart_pan_x;
+            pan_y  <=> root.chart_pan_y;
+            cursor_x <=> root.chart_cursor_x;
+            cursor_y <=> root.chart_cursor_y;
+
+            draw_begin(x, y) => { root.draw_begin(x, y); }
+            draw_update(x, y) => { root.draw_update(x, y); }
+            draw_end(x, y) => { root.draw_end(x, y); }
+            draw_poly_sides_delta(delta) => { root.draw_poly_sides_delta(delta); }
+        }
+        if root.chart_popout_open && root.chart_popout_layer == 2 : ChartPopoutPanel {
+            open <=> root.chart_popout_open;
+            px: root.chart_popout_x;
+            py: root.chart_popout_y;
+            pw: root.chart_popout_w;
+            ph: root.chart_popout_h;
+            grid_col_w: root.grid_col_w;
+            grid_row_h: root.grid_row_h;
+            z: 2;
+            allow_drag: false;
 
             title: "Chart Popout (wheel: zoom, drag: pan)";
 

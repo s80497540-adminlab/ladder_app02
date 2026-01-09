@@ -49,6 +49,10 @@ fn reduce_ui(state: &mut AppState, ev: UiEvent) -> bool {
                 return false;
             }
             state.current_ticker = ticker;
+            // Selecting a ticker auto-enables its feed; only the per-ticker toggle can turn it off.
+            state
+                .ticker_feed_enabled
+                .insert(state.current_ticker.clone(), true);
             state.order_message = if state.history_valve_open {
                 "Ticker changed; loading history.".to_string()
             } else {
@@ -106,6 +110,17 @@ fn reduce_ui(state: &mut AppState, ev: UiEvent) -> bool {
                     ticker,
                     if enabled { "On" } else { "Off" }
                 );
+            }
+            true
+        }
+        UiEvent::TickerFavoriteToggled { ticker, favorite } => {
+            if !ticker.is_empty() {
+                state.ticker_favorites.insert(ticker.clone(), favorite);
+                state.order_message = if favorite {
+                    format!("Pinned {} to top.", ticker)
+                } else {
+                    format!("Unpinned {}.", ticker)
+                };
             }
             true
         }
@@ -780,6 +795,10 @@ fn reduce_feed(state: &mut AppState, ev: FeedEvent) -> bool {
                 state
                     .ticker_active
                     .insert(market.ticker.clone(), market.active);
+                state
+                    .ticker_favorites
+                    .entry(market.ticker.clone())
+                    .or_insert(false);
                 let entry = state
                     .ticker_feed_enabled
                     .entry(market.ticker.clone())
@@ -800,6 +819,10 @@ fn reduce_feed(state: &mut AppState, ev: FeedEvent) -> bool {
                 .or_insert(true);
             state
                 .ticker_feed_enabled
+                .entry(state.current_ticker.clone())
+                .or_insert(false);
+            state
+                .ticker_favorites
                 .entry(state.current_ticker.clone())
                 .or_insert(false);
             true
