@@ -4,6 +4,57 @@ use crate::debug_hooks;
 use std::cmp::min;
 use std::sync::atomic::Ordering;
 
+fn margin_price(state: &AppState) -> Option<f64> {
+    if !state.mark_price_raw.trim().is_empty() {
+        if let Ok(price) = state.mark_price_raw.trim().parse::<f64>() {
+            if price.is_finite() && price > 0.0 {
+                return Some(price);
+            }
+        }
+    }
+    if state.metrics.mid.is_finite() && state.metrics.mid > 0.0 {
+        return Some(state.metrics.mid);
+    }
+    None
+}
+
+fn trade_notional(state: &AppState) -> Option<f64> {
+    let price = margin_price(state)?;
+    let size = state.trade_size as f64;
+    if !size.is_finite() || size <= 0.0 {
+        return None;
+    }
+    Some(price * size)
+}
+
+fn sync_margin_from_leverage(state: &mut AppState) {
+    let notional = match trade_notional(state) {
+        Some(value) => value,
+        None => return,
+    };
+    let lev = state.trade_leverage as f64;
+    if !lev.is_finite() || lev <= 0.0 {
+        return;
+    }
+    let margin = clamp_trade_margin((notional / lev) as f32);
+    state.trade_margin = margin;
+    state.trade_margin_text = format_trade_margin(margin);
+}
+
+fn sync_leverage_from_margin(state: &mut AppState) {
+    let notional = match trade_notional(state) {
+        Some(value) => value,
+        None => return,
+    };
+    let margin = state.trade_margin as f64;
+    if !margin.is_finite() || margin <= 0.0 {
+        return;
+    }
+    let leverage = clamp_trade_leverage((notional / margin) as f32);
+    state.trade_leverage = leverage;
+    state.trade_leverage_text = format_trade_leverage(leverage);
+}
+
 pub fn reduce(state: &mut AppState, ev: AppEvent) -> bool {
     match ev {
         AppEvent::Ui(u) => reduce_ui(state, u),
@@ -122,6 +173,78 @@ fn reduce_ui(state: &mut AppState, ev: UiEvent) -> bool {
                     format!("Unpinned {}.", ticker)
                 };
             }
+            true
+        }
+        UiEvent::SettingsConnectWallet => {
+            state.settings_last_error.clear();
+            state.settings_wallet_status = "awaiting Keplr".to_string();
+            state.settings_signer_status = "inactive".to_string();
+            state.order_message = "Open Keplr bridge to connect.".to_string();
+            true
+        }
+        UiEvent::SettingsDisconnectWallet => {
+            state.settings_wallet_address.clear();
+            state.settings_wallet_status = "disconnected".to_string();
+            state.settings_signer_status = "inactive".to_string();
+            state.settings_last_error.clear();
+            state.session_mnemonic.clear();
+            state.session_master_address.clear();
+            state.session_address.clear();
+            state.session_authenticator_id = None;
+            state.session_expires_at_unix = None;
+            state.account_equity_usdc = 0.0;
+            state.account_free_collateral_usdc = 0.0;
+            state.account_equity_text = "0".to_string();
+            state.account_free_collateral_text = "0".to_string();
+            state.account_status = "account disconnected".to_string();
+            state.open_orders.clear();
+            state.open_orders_total = 0;
+            state.open_orders_ticker = 0;
+            state.open_orders_text = "Open orders: 0".to_string();
+            state.order_message = "Wallet disconnected.".to_string();
+            true
+        }
+        UiEvent::SettingsRefreshStatus => {
+            state.order_message = "Settings refreshed.".to_string();
+            true
+        }
+        UiEvent::SettingsSelectNetwork { net } => {
+            state.settings_network = net;
+            state.order_message = "Network updated.".to_string();
+            true
+        }
+        UiEvent::SettingsApplyRpc { endpoint } => {
+            state.settings_rpc_endpoint = endpoint;
+            state.order_message = "RPC endpoint updated.".to_string();
+            true
+        }
+        UiEvent::SettingsToggleAutoSign { enabled } => {
+            state.settings_auto_sign = enabled;
+            state.settings_signer_status = if enabled {
+                "auto-sign enabled".to_string()
+            } else {
+                "auto-sign disabled".to_string()
+            };
+            true
+        }
+        UiEvent::SettingsCreateSession { ttl_minutes } => {
+            state.settings_session_ttl_minutes = ttl_minutes;
+            state.settings_last_error.clear();
+            state.order_message = "Create session requested.".to_string();
+            true
+        }
+        UiEvent::SettingsRevokeSession => {
+            state.session_mnemonic.clear();
+            state.session_master_address.clear();
+            state.session_address.clear();
+            state.session_authenticator_id = None;
+            state.session_expires_at_unix = None;
+            state.settings_signer_status = "session revoked".to_string();
+            state.order_message = "Session revoked.".to_string();
+            true
+        }
+        UiEvent::SettingsCopyError => {
+            state.order_message = "Error copied to clipboard.".to_string();
             true
         }
         UiEvent::ModeChanged { mode } => {
@@ -436,6 +559,100 @@ fn reduce_ui(state: &mut AppState, ev: UiEvent) -> bool {
             state.order_message = format!("Withdrew {:.2}", a);
             true
         }
+        UiEvent::TradeSizeTextChanged { text } => {
+            state.trade_size_text = text.clone();
+            if let Ok(value) = text.trim().parse::<f32>() {
+                if value.is_finite() && value > 0.0 {
+                    state.trade_size = value;
+                }
+            }
+            if state.trade_margin_linked {
+                sync_margin_from_leverage(state);
+            }
+            true
+        }
+        UiEvent::TradeSizeChanged { value } => {
+            let next = clamp_trade_size(value);
+            state.trade_size = next;
+            state.trade_size_text = format_trade_size(next);
+            if state.trade_margin_linked {
+                sync_margin_from_leverage(state);
+            }
+            true
+        }
+        UiEvent::TradeLeverageTextChanged { text } => {
+            state.trade_leverage_text = text.clone();
+            if let Ok(value) = text.trim().parse::<f32>() {
+                if value.is_finite() && value > 0.0 {
+                    state.trade_leverage = value;
+                }
+            }
+            if state.trade_margin_linked {
+                sync_margin_from_leverage(state);
+            }
+            true
+        }
+        UiEvent::TradeLeverageChanged { value } => {
+            let next = clamp_trade_leverage(value);
+            state.trade_leverage = next;
+            state.trade_leverage_text = format_trade_leverage(next);
+            if state.trade_margin_linked {
+                sync_margin_from_leverage(state);
+            }
+            true
+        }
+        UiEvent::TradeMarginTextChanged { text } => {
+            state.trade_margin_text = text.clone();
+            if let Ok(value) = text.trim().parse::<f32>() {
+                if value.is_finite() && value >= 0.0 {
+                    state.trade_margin = value;
+                }
+            }
+            if state.trade_margin_linked {
+                sync_leverage_from_margin(state);
+            }
+            true
+        }
+        UiEvent::TradeMarginChanged { value } => {
+            let next = clamp_trade_margin(value);
+            state.trade_margin = next;
+            state.trade_margin_text = format_trade_margin(next);
+            if state.trade_margin_linked {
+                sync_leverage_from_margin(state);
+            }
+            true
+        }
+        UiEvent::TradeMarginLinkToggled { linked } => {
+            state.trade_margin_linked = linked;
+            if linked {
+                sync_margin_from_leverage(state);
+            }
+            true
+        }
+        UiEvent::ClosePositionRequested => {
+            if state.position_size <= 0.0 || state.position_side.eq_ignore_ascii_case("flat") {
+                state.order_message = "No open position.".to_string();
+            } else {
+                state.order_message = format!(
+                    "Close requested: {} {}",
+                    state.position_side, state.position_size
+                );
+            }
+            true
+        }
+        UiEvent::CancelOpenOrdersRequested => {
+            if state.open_orders_total == 0 {
+                state.order_message = "No open orders.".to_string();
+                state.last_order_status_text = "Last order: no open orders".to_string();
+            } else {
+                state.order_message = format!(
+                    "Cancel requested for {} open orders.",
+                    state.open_orders_ticker
+                );
+                state.last_order_status_text = "Last order: cancel requested".to_string();
+            }
+            true
+        }
 
         UiEvent::TradeRealModeToggled { enabled } => {
             state.trade_real_mode = enabled;
@@ -511,7 +728,13 @@ fn reduce_ui(state: &mut AppState, ev: UiEvent) -> bool {
             }
 
             let kind = if is_real { "ManualReal" } else { "ManualSim" }.to_string();
-            state.order_message = "Order submitted (scaffold).".to_string();
+            if is_real && state.session_authenticator_id.is_some() {
+                state.order_message = "Order queued (broadcast in background).".to_string();
+                state.last_order_status_text = "Last order: queued".to_string();
+            } else {
+                state.order_message = "Order submitted (scaffold).".to_string();
+                state.last_order_status_text = "Last order: submitted (sim)".to_string();
+            }
             push_receipt(
                 state,
                 ReceiptRow {
@@ -743,6 +966,9 @@ fn reduce_feed(state: &mut AppState, ev: FeedEvent) -> bool {
                     state.oracle_price_raw = format_num_compact(oracle_price, PRICE_DECIMALS);
                 }
             }
+            if state.trade_margin_linked {
+                sync_margin_from_leverage(state);
+            }
             true
         }
         FeedEvent::BookLevels {
@@ -853,6 +1079,141 @@ fn reduce_exec(state: &mut AppState, ev: ExecEvent) -> bool {
                     comment,
                 },
             );
+            true
+        }
+        ExecEvent::KeplrBridgeReady { url } => {
+            state.settings_last_error = format!("Open Keplr bridge: {}", url);
+            state.settings_wallet_status = "awaiting Keplr".to_string();
+            true
+        }
+        ExecEvent::KeplrWalletConnected { address } => {
+            state.settings_wallet_address = address;
+            state.settings_wallet_status = "connected (Keplr)".to_string();
+            true
+        }
+        ExecEvent::KeplrSessionCreated {
+            session_address,
+            session_mnemonic,
+            master_address,
+            authenticator_id,
+            expires_at_unix,
+        } => {
+            state.session_address = session_address;
+            state.session_mnemonic = session_mnemonic;
+            state.session_master_address = master_address;
+            state.session_authenticator_id = Some(authenticator_id);
+            state.session_expires_at_unix = Some(expires_at_unix);
+            state.settings_signer_status = format!("session active (id {})", authenticator_id);
+            state.settings_last_error.clear();
+            true
+        }
+        ExecEvent::KeplrSessionFailed { message } => {
+            state.settings_last_error = message;
+            state.settings_signer_status = "session failed".to_string();
+            true
+        }
+        ExecEvent::OrderSent { tx_hash } => {
+            state.order_message = format!("Order broadcast: {}", tx_hash);
+            state.last_order_status_text = format!("Last order: broadcast {}", tx_hash);
+            true
+        }
+        ExecEvent::OrderFailed { message } => {
+            state.order_message = format!("Order failed: {}", message);
+            state.last_order_status_text = format!("Last order: failed {}", message);
+            true
+        }
+        ExecEvent::OrderCancelStatus { ok, message } => {
+            if ok {
+                state.order_message = message.clone();
+                state.last_order_status_text = format!("Last order: {message}");
+            } else {
+                state.order_message = format!("Cancel failed: {message}");
+                state.last_order_status_text = format!("Last order: cancel failed {message}");
+            }
+            true
+        }
+        ExecEvent::OpenOrdersSnapshot {
+            total,
+            ticker,
+            ticker_count,
+            orders,
+        } => {
+            state.open_orders_total = total;
+            state.open_orders_ticker = ticker_count;
+            state.open_orders = orders;
+            state.open_orders_text = format!(
+                "Open orders: {} ({}: {})",
+                total, ticker, ticker_count
+            );
+            true
+        }
+        ExecEvent::OpenOrdersError { message } => {
+            state.open_orders_text = format!("Open orders: error ({})", message);
+            true
+        }
+        ExecEvent::AccountSnapshot {
+            equity,
+            free_collateral,
+            margin_enabled,
+        } => {
+            let equity_val = if equity.is_finite() { equity } else { 0.0 };
+            let free_val = if free_collateral.is_finite() {
+                free_collateral
+            } else {
+                0.0
+            };
+            state.account_equity_usdc = equity_val as f32;
+            state.account_free_collateral_usdc = free_val as f32;
+            state.account_equity_text = format_num_compact(equity_val, 2);
+            state.account_free_collateral_text = format_num_compact(free_val, 2);
+            state.account_status = if margin_enabled {
+                "account live".to_string()
+            } else {
+                "account (margin off)".to_string()
+            };
+            true
+        }
+        ExecEvent::AccountSnapshotError { message } => {
+            state.account_status = format!("account error: {}", message);
+            true
+        }
+        ExecEvent::PositionSnapshot {
+            ticker,
+            side,
+            size,
+            entry_price,
+            unrealized_pnl,
+            status,
+        } => {
+            state.position_ticker = ticker.clone();
+            state.position_side = side.clone();
+            state.position_size = if size.is_finite() { size as f32 } else { 0.0 };
+            state.position_entry = if entry_price.is_finite() {
+                entry_price as f32
+            } else {
+                0.0
+            };
+            state.position_unrealized = if unrealized_pnl.is_finite() {
+                unrealized_pnl as f32
+            } else {
+                0.0
+            };
+            let size_txt = format_num_compact(size, SIZE_DECIMALS);
+            let entry_txt = format_num_compact(entry_price, PRICE_DECIMALS);
+            let pnl_txt = format_num_compact(unrealized_pnl, 2);
+            state.position_status_text = if side.eq_ignore_ascii_case("flat") || size <= 0.0 {
+                "Pos: Flat".to_string()
+            } else {
+                format!(
+                    "Pos: {side} {size_txt} @ {entry_txt} PnL {pnl_txt}"
+                )
+            };
+            state.account_status = format!("account ok ({status})");
+            true
+        }
+        ExecEvent::PositionSnapshotError { message } => {
+            state.position_status_text = "Pos: unavailable".to_string();
+            state.account_status = format!("position error: {}", message);
             true
         }
     }

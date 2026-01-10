@@ -4,7 +4,7 @@ use crate::{
     TickerFeedRow,
 };
 use chrono::{DateTime, NaiveDateTime, Utc};
-use slint::{ModelRc, SharedString, VecModel};
+use slint::{Color, ModelRc, SharedString, VecModel};
 
 const MAX_CONDENSED_POINTS: usize = 600;
 
@@ -29,17 +29,31 @@ pub fn render(state: &AppState, ui: &crate::AppWindow) {
     ui.set_trade_side(SharedString::from(state.trade_side.clone()));
     ui.set_trade_size(state.trade_size);
     ui.set_trade_leverage(state.trade_leverage);
+    ui.set_trade_size_text(SharedString::from(state.trade_size_text.clone()));
+    ui.set_trade_leverage_text(SharedString::from(state.trade_leverage_text.clone()));
+    ui.set_trade_margin(state.trade_margin);
+    ui.set_trade_margin_text(SharedString::from(state.trade_margin_text.clone()));
+    ui.set_trade_margin_linked(state.trade_margin_linked);
 
     ui.set_trade_real_mode(state.trade_real_mode);
     ui.set_trade_real_armed(state.trade_real_armed);
-    ui.set_trade_real_arm_phrase(SharedString::from(state.trade_real_arm_phrase.clone()));
     ui.set_trade_real_arm_status(SharedString::from(state.trade_real_arm_status.clone()));
 
     ui.set_balance_usdc(state.balance_usdc);
     ui.set_balance_pnl(state.balance_pnl);
+    ui.set_account_equity_text(SharedString::from(state.account_equity_text.clone()));
+    ui.set_account_free_collateral_text(SharedString::from(
+        state.account_free_collateral_text.clone(),
+    ));
+    ui.set_account_status(SharedString::from(state.account_status.clone()));
+    ui.set_position_status_text(SharedString::from(state.position_status_text.clone()));
+    ui.set_open_orders_text(SharedString::from(state.open_orders_text.clone()));
 
     ui.set_current_time(SharedString::from(state.current_time.clone()));
     ui.set_order_message(SharedString::from(state.order_message.clone()));
+    ui.set_last_order_status_text(SharedString::from(
+        state.last_order_status_text.clone(),
+    ));
     ui.set_axis_price_unit(SharedString::from(state.current_ticker.clone()));
     ui.set_candle_feed_status(SharedString::from(state.candle_feed_status()));
     ui.set_history_status(SharedString::from(state.history_status()));
@@ -50,6 +64,24 @@ pub fn render(state: &AppState, ui: &crate::AppWindow) {
     ui.set_daemon_active(state.daemon_active);
     ui.set_draw_tool(SharedString::from(state.draw_tool.clone()));
     ui.set_draw_selected_id(state.draw_selected_id.map(|id| id as i32).unwrap_or(-1));
+    ui.set_settings_wallet_address(SharedString::from(
+        state.settings_wallet_address.clone(),
+    ));
+    ui.set_settings_wallet_status(SharedString::from(
+        state.settings_wallet_status.clone(),
+    ));
+    ui.set_settings_network(SharedString::from(state.settings_network.clone()));
+    ui.set_settings_rpc_endpoint(SharedString::from(
+        state.settings_rpc_endpoint.clone(),
+    ));
+    ui.set_settings_auto_sign(state.settings_auto_sign);
+    ui.set_settings_session_ttl_minutes(SharedString::from(
+        state.settings_session_ttl_minutes.clone(),
+    ));
+    ui.set_settings_signer_status(SharedString::from(
+        state.settings_signer_status.clone(),
+    ));
+    ui.set_settings_last_error(SharedString::from(state.settings_last_error.clone()));
 
     let mut rows: Vec<TickerFeedRow> = Vec::new();
     let mut tickers = state.available_tickers.clone();
@@ -239,6 +271,10 @@ pub fn render(state: &AppState, ui: &crate::AppWindow) {
         0.5
     };
     ui.set_candle_midline(candle_midline);
+    let (entry_visible, entry_y, entry_color) = entry_line_state(state, candles_for_view);
+    ui.set_position_entry_visible(entry_visible);
+    ui.set_position_entry_y(entry_y);
+    ui.set_position_entry_color(entry_color);
 
     let chart_x_zoom = ui.get_chart_x_zoom() as f64;
     let chart_y_zoom = ui.get_chart_y_zoom() as f64;
@@ -433,6 +469,60 @@ fn build_candle_points_from_candles(candles: &[Candle]) -> Vec<CandlePoint> {
             },
         })
         .collect()
+}
+
+fn padded_price_range(candles: &[Candle]) -> Option<(f64, f64, f64)> {
+    if candles.is_empty() {
+        return None;
+    }
+    let mut lo = f64::INFINITY;
+    let mut hi = f64::NEG_INFINITY;
+    for c in candles {
+        lo = lo.min(c.low);
+        hi = hi.max(c.high);
+    }
+    if !lo.is_finite() || !hi.is_finite() {
+        return None;
+    }
+    let mut span = hi - lo;
+    if !span.is_finite() || span <= 0.0 {
+        span = hi.abs().max(1.0);
+        lo = hi - span;
+    }
+    let pad = span * 0.02;
+    lo -= pad;
+    hi += pad;
+    let span = (hi - lo).max(1e-9);
+    Some((lo, hi, span))
+}
+
+fn entry_line_state(state: &AppState, candles: &[Candle]) -> (bool, f32, Color) {
+    let mut color = Color::from_rgb_u8(102, 204, 136);
+    let side = state.position_side.to_ascii_lowercase();
+    if side == "short" {
+        color = Color::from_rgb_u8(204, 102, 119);
+    } else if side != "long" {
+        color = Color::from_rgb_u8(160, 170, 190);
+    }
+
+    let entry = state.position_entry as f64;
+    if state.position_size <= 0.0
+        || entry <= 0.0
+        || !entry.is_finite()
+        || side == "flat"
+        || (!state.position_ticker.is_empty()
+            && !state
+                .position_ticker
+                .eq_ignore_ascii_case(&state.current_ticker))
+    {
+        return (false, 0.0, color);
+    }
+
+    let Some((_lo, hi, span)) = padded_price_range(candles) else {
+        return (false, 0.0, color);
+    };
+    let y = ((hi - entry) / span).clamp(0.0, 1.0) as f32;
+    (true, y, color)
 }
 
 fn parse_unix_ts(ts: &str) -> Option<u64> {

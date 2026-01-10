@@ -1,4 +1,4 @@
-use super::state::MidTick;
+use super::state::{MidTick, OpenOrderInfo};
 use crate::feed_shared::BookLevel;
 
 #[derive(Debug, Clone)]
@@ -47,12 +47,30 @@ pub enum UiEvent {
     MarketPollAdjust { delta: i32 },
     TickerFeedToggled { ticker: String, enabled: bool },
     TickerFavoriteToggled { ticker: String, favorite: bool },
+    SettingsConnectWallet,
+    SettingsDisconnectWallet,
+    SettingsRefreshStatus,
+    SettingsSelectNetwork { net: String },
+    SettingsApplyRpc { endpoint: String },
+    SettingsToggleAutoSign { enabled: bool },
+    SettingsCreateSession { ttl_minutes: String },
+    SettingsRevokeSession,
+    SettingsCopyError,
 
     SendOrder,
     ReloadData,
     RunScript,
     Deposit { amount: f32 },
     Withdraw { amount: f32 },
+    TradeSizeTextChanged { text: String },
+    TradeSizeChanged { value: f32 },
+    TradeLeverageTextChanged { text: String },
+    TradeLeverageChanged { value: f32 },
+    TradeMarginTextChanged { text: String },
+    TradeMarginChanged { value: f32 },
+    TradeMarginLinkToggled { linked: bool },
+    ClosePositionRequested,
+    CancelOpenOrdersRequested,
 
     TradeRealModeToggled { enabled: bool },
     ArmRealRequest { phrase: String },
@@ -118,6 +136,41 @@ pub enum ExecEvent {
         status: String,
         comment: String,
     },
+    KeplrBridgeReady { url: String },
+    KeplrWalletConnected { address: String },
+    KeplrSessionCreated {
+        session_address: String,
+        session_mnemonic: String,
+        master_address: String,
+        authenticator_id: u64,
+        expires_at_unix: u64,
+    },
+    KeplrSessionFailed { message: String },
+    OrderSent { tx_hash: String },
+    OrderFailed { message: String },
+    OrderCancelStatus { ok: bool, message: String },
+    OpenOrdersSnapshot {
+        total: usize,
+        ticker: String,
+        ticker_count: usize,
+        orders: Vec<OpenOrderInfo>,
+    },
+    OpenOrdersError { message: String },
+    AccountSnapshot {
+        equity: f64,
+        free_collateral: f64,
+        margin_enabled: bool,
+    },
+    AccountSnapshotError { message: String },
+    PositionSnapshot {
+        ticker: String,
+        side: String,
+        size: f64,
+        entry_price: f64,
+        unrealized_pnl: f64,
+        status: String,
+    },
+    PositionSnapshotError { message: String },
 }
 
 #[derive(Debug, Clone)]

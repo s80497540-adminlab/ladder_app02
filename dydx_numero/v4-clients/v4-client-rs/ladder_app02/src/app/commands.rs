@@ -189,6 +189,79 @@ pub fn wire_ui(ui: &crate::AppWindow, tx: std::sync::mpsc::Sender<AppEvent>) {
     }
     {
         let tx = tx.clone();
+        ui.on_settings_connect_wallet(move || {
+            let _ = tx.send(AppEvent::Ui(UiEvent::SettingsConnectWallet));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_settings_disconnect_wallet(move || {
+            let _ = tx.send(AppEvent::Ui(UiEvent::SettingsDisconnectWallet));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_settings_refresh_status(move || {
+            let _ = tx.send(AppEvent::Ui(UiEvent::SettingsRefreshStatus));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_settings_select_network(move |net| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::SettingsSelectNetwork {
+                net: net.to_string(),
+            }));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_settings_apply_rpc(move |endpoint| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::SettingsApplyRpc {
+                endpoint: endpoint.to_string(),
+            }));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_settings_toggle_auto_sign(move |enabled| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::SettingsToggleAutoSign { enabled }));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_settings_create_session(move |ttl_minutes| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::SettingsCreateSession {
+                ttl_minutes: ttl_minutes.to_string(),
+            }));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_settings_revoke_session(move || {
+            let _ = tx.send(AppEvent::Ui(UiEvent::SettingsRevokeSession));
+        });
+    }
+    {
+        let tx = tx.clone();
+        let ui_handle = ui.as_weak();
+        ui.on_settings_copy_error(move || {
+            if let Some(ui) = ui_handle.upgrade() {
+                let text = ui.get_settings_last_error().to_string();
+                if !text.trim().is_empty() {
+                    let _ = i_slint_backend_selector::with_platform(|platform| {
+                        platform.set_clipboard_text(
+                            &text,
+                            slint::platform::Clipboard::DefaultClipboard,
+                        );
+                        Ok(())
+                    });
+                }
+            }
+            let _ = tx.send(AppEvent::Ui(UiEvent::SettingsCopyError));
+        });
+    }
+    {
+        let tx = tx.clone();
         ui.on_ticker_favorite_toggled(move |ticker, favorite| {
             let _ = tx.send(AppEvent::Ui(UiEvent::TickerFavoriteToggled {
                 ticker: ticker.to_string(),
@@ -226,6 +299,66 @@ pub fn wire_ui(ui: &crate::AppWindow, tx: std::sync::mpsc::Sender<AppEvent>) {
         let tx = tx.clone();
         ui.on_withdraw(move |amt| {
             let _ = tx.send(AppEvent::Ui(UiEvent::Withdraw { amount: amt }));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_trade_size_text_changed(move |text| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::TradeSizeTextChanged {
+                text: text.to_string(),
+            }));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_trade_size_changed(move |value| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::TradeSizeChanged { value }));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_trade_leverage_text_changed(move |text| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::TradeLeverageTextChanged {
+                text: text.to_string(),
+            }));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_trade_leverage_changed(move |value| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::TradeLeverageChanged { value }));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_trade_margin_text_changed(move |text| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::TradeMarginTextChanged {
+                text: text.to_string(),
+            }));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_trade_margin_changed(move |value| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::TradeMarginChanged { value }));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_trade_margin_link_toggled(move |linked| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::TradeMarginLinkToggled { linked }));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_close_position_requested(move || {
+            let _ = tx.send(AppEvent::Ui(UiEvent::ClosePositionRequested));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_cancel_open_orders(move || {
+            let _ = tx.send(AppEvent::Ui(UiEvent::CancelOpenOrdersRequested));
         });
     }
     {
