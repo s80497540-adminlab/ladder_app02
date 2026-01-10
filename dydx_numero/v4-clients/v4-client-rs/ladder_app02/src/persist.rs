@@ -119,7 +119,7 @@ impl Default for AppConfig {
             chart_popout_w_px: 760.0,
             chart_popout_h_px: 440.0,
 
-            settings_network: "Testnet".to_string(),
+            settings_network: "Mainnet".to_string(),
             settings_rpc_endpoint: "".to_string(),
             settings_auto_sign: false,
             settings_session_ttl_minutes: "30".to_string(),

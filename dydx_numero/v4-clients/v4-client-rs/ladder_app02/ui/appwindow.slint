@@ -1,4 +1,4 @@
-import { Button, CheckBox, ComboBox, LineEdit, ListView, TextEdit } from "std-widgets.slint";
+import { Button, CheckBox, ComboBox, LineEdit, ListView, Slider, TextEdit } from "std-widgets.slint";
 
 // ---------- Data structs exposed to Rust ----------------------------
 
@@ -840,6 +840,7 @@ component SettingsPanel inherits Rectangle {
     callback toggle_auto_sign(enabled: bool);
     callback create_session(ttl_minutes: string);
     callback revoke_session();
+    callback copy_error();
 
     background: #202533;
     border-radius: 4px;
@@ -969,6 +970,15 @@ component SettingsPanel inherits Rectangle {
             text: root.last_error;
             color: #ff8080; font-size: 10px;
         }
+        Button {
+            x: parent.width - 60px;
+            y: 264px;
+            width: 54px;
+            height: 18px;
+            text: "Copy";
+            enabled: root.last_error != "";
+            clicked => { root.copy_error(); }
+        }
     }
 }
 
@@ -1053,6 +1063,9 @@ component CandleChart inherits Rectangle {
     in property <bool> show_volume_bars;
     in property <[CandlePoint]> points;
     in property <float> mid_line_y;
+    in property <float> position_entry_y;
+    in property <bool> position_entry_visible;
+    in property <color> position_entry_color;
     in property <[DrawShape]> drawings;
     in property <[DrawTick]> draw_ticks;
     in property <[HeatmapCell]> heatmap_cells;
@@ -1178,6 +1191,19 @@ component CandleChart inherits Rectangle {
             background: cp.is_up ? #44aa66 : #aa4455;
             opacity: 0.95;
         }
+    }
+
+    Rectangle {
+        visible: root.position_entry_visible;
+        property <float> zy: Math.max(0.25, Math.min(8.0, root.y_zoom));
+        property <float> y_norm: 0.5 + (root.position_entry_y - 0.5) * zy + root.pan_y;
+        property <float> y_clamped: Math.max(-0.2, Math.min(1.2, y_norm));
+        x: 0px;
+        y: y_clamped * parent.height;
+        width: parent.width;
+        height: 1px;
+        background: root.position_entry_color;
+        opacity: 0.85;
     }
 
     // Drawn rectangles (zones)
@@ -1445,6 +1471,9 @@ component ChartPopoutPanel inherits Rectangle {
 
     in property <[CandlePoint]> points;
     in property <float> mid_line_y;
+    in property <float> position_entry_y;
+    in property <bool> position_entry_visible;
+    in property <color> position_entry_color;
     in property <[DrawShape]> drawings;
     in property <[DrawTick]> draw_ticks;
     in property <[HeatmapCell]> heatmap_cells;
@@ -1544,6 +1573,9 @@ component ChartPopoutPanel inherits Rectangle {
 
             points: root.points;
             mid_line_y: root.mid_line_y;
+            position_entry_y: root.position_entry_y;
+            position_entry_visible: root.position_entry_visible;
+            position_entry_color: root.position_entry_color;
             drawings: root.drawings;
             draw_ticks: root.draw_ticks;
             heatmap_cells: root.heatmap_cells;
@@ -1726,8 +1758,13 @@ export component AppWindow inherits Window {
     in-out property <bool> show_volume;
 
     in-out property <string> trade_side;
-    in-out property <float> trade_size;
-    in-out property <float> trade_leverage;
+    in-out property <float> trade_size: 0.01;
+    in-out property <float> trade_leverage: 5.0;
+    in-out property <float> trade_margin: 0.0;
+    in-out property <string> trade_size_text: "0.01";
+    in-out property <string> trade_leverage_text: "5";
+    in-out property <string> trade_margin_text: "0";
+    in-out property <bool> trade_margin_linked: true;
 
     in-out property <bool> trade_real_mode: false;
 
@@ -1742,6 +1779,14 @@ export component AppWindow inherits Window {
 
     in-out property <float> balance_usdc;
     in-out property <float> balance_pnl;
+    in-out property <string> account_equity_text: "0";
+    in-out property <string> account_free_collateral_text: "0";
+    in-out property <string> account_status: "account idle";
+    in-out property <string> position_status_text: "Pos: Flat";
+    in-out property <float> position_entry_y: 0.0;
+    in-out property <bool> position_entry_visible: false;
+    in-out property <color> position_entry_color: #66cc88;
+    in-out property <string> open_orders_text: "Open orders: 0";
 
     in-out property <int> candle_tf_secs;
     in-out property <int> candle_window_minutes;
@@ -1834,12 +1879,13 @@ export component AppWindow inherits Window {
 
     in-out property <string> current_time;
     in-out property <string> order_message;
+    in-out property <string> last_order_status_text: "Last order: -";
 
     in-out property <bool> settings_panel_open: true;
 
     in-out property <string> settings_wallet_address;
     in-out property <string> settings_wallet_status;
-    in-out property <string> settings_network: "Testnet";
+    in-out property <string> settings_network: "Mainnet";
     in-out property <string> settings_rpc_endpoint;
     in-out property <bool>   settings_auto_sign: false;
     in-out property <string> settings_session_ttl_minutes: "30";
@@ -1881,6 +1927,15 @@ export component AppWindow inherits Window {
     callback run_script();
     callback deposit(amount: float);
     callback withdraw(amount: float);
+    callback trade_size_text_changed(text: string);
+    callback trade_size_changed(value: float);
+    callback trade_leverage_text_changed(text: string);
+    callback trade_leverage_changed(value: float);
+    callback trade_margin_text_changed(text: string);
+    callback trade_margin_changed(value: float);
+    callback trade_margin_link_toggled(linked: bool);
+    callback close_position_requested();
+    callback cancel_open_orders();
     callback stretch_to_viewport();
     callback fullscreen_toggle(state: bool);
 
@@ -1892,6 +1947,7 @@ export component AppWindow inherits Window {
     callback settings_toggle_auto_sign(enabled: bool);
     callback settings_create_session(ttl_minutes: string);
     callback settings_revoke_session();
+    callback settings_copy_error();
 
     callback trade_real_mode_toggled(enabled: bool);
 
@@ -2098,10 +2154,21 @@ export component AppWindow inherits Window {
                 Text {
                     x: col_w * 1;
                     y: row1_y;
-                    width: col_w * 18;
+                    width: col_w * 24;
                     height: row_h;
-                    text: "Balances  USDC: " + balance_usdc + "   PnL: " + balance_pnl;
+                    text: "Account  Equity: " + account_equity_text + "   Free: " + account_free_collateral_text;
                     color: #d0e080;
+                    vertical-alignment: center;
+                }
+
+                Text {
+                    x: col_w * 25;
+                    y: row1_y;
+                    width: col_w * 10;
+                    height: row_h;
+                    text: account_status;
+                    color: #c0c0c0;
+                    font-size: 9px;
                     vertical-alignment: center;
                 }
 
@@ -2673,11 +2740,188 @@ export component AppWindow inherits Window {
                 Text {
                     x: col_w * 1;
                     y: row2_y;
-                    width: col_w * 12;
+                    width: col_w * 4;
                     height: row_h;
-                    text: "Side: " + trade_side + "  Size: " + trade_size + "  Lev: " + trade_leverage;
+                    text: "Side: " + trade_side;
                     color: #aaaaaa;
+                    font-size: root.topbar_font_size_small;
+                    font-family: root.topbar_font;
                     vertical-alignment: center;
+                }
+
+                Text {
+                    x: col_w * 6;
+                    y: row2_y;
+                    width: col_w * 1;
+                    height: row_h;
+                    text: "Size";
+                    color: #c0c0c0;
+                    font-size: root.topbar_font_size_small;
+                    font-family: root.topbar_font;
+                    vertical-alignment: center;
+                }
+
+                LineEdit {
+                    x: col_w * 7; y: row2_y;
+                    width: col_w * 3; height: row_h;
+                    text <=> root.trade_size_text;
+                    input-type: InputType.decimal;
+                    font-size: root.topbar_font_size_small;
+                    edited => { root.trade_size_text_changed(self.text); }
+                }
+
+                Button {
+                    x: col_w * 10; y: row2_y;
+                    width: col_w * 1; height: row_h;
+                    text: "-";
+                    clicked => {
+                        let next = Math.max(0.0001, root.trade_size - 0.001);
+                        root.trade_size_changed(next);
+                    }
+                }
+
+                Button {
+                    x: col_w * 11; y: row2_y;
+                    width: col_w * 1; height: row_h;
+                    text: "+";
+                    clicked => {
+                        let next = root.trade_size + 0.001;
+                        root.trade_size_changed(next);
+                    }
+                }
+
+                Slider {
+                    x: col_w * 12; y: row2_y + 6px;
+                    width: col_w * 8; height: row_h - 12px;
+                    minimum: 0.0001; maximum: 1000.0;
+                    step: 0.001;
+                    value: root.trade_size;
+                    changed => { root.trade_size_changed(self.value); }
+                }
+
+                Text {
+                    x: col_w * 20;
+                    y: row2_y;
+                    width: col_w * 1;
+                    height: row_h;
+                    text: "Lev";
+                    color: #c0c0c0;
+                    font-size: root.topbar_font_size_small;
+                    font-family: root.topbar_font;
+                    vertical-alignment: center;
+                }
+
+                LineEdit {
+                    x: col_w * 21; y: row2_y;
+                    width: col_w * 2; height: row_h;
+                    text <=> root.trade_leverage_text;
+                    input-type: InputType.decimal;
+                    font-size: root.topbar_font_size_small;
+                    edited => { root.trade_leverage_text_changed(self.text); }
+                }
+
+                Button {
+                    x: col_w * 23; y: row2_y;
+                    width: col_w * 1; height: row_h;
+                    text: "-";
+                    clicked => {
+                        let next = Math.max(1.0, root.trade_leverage - 0.5);
+                        root.trade_leverage_changed(next);
+                    }
+                }
+
+                Button {
+                    x: col_w * 24; y: row2_y;
+                    width: col_w * 1; height: row_h;
+                    text: "+";
+                    clicked => {
+                        let next = root.trade_leverage + 0.5;
+                        root.trade_leverage_changed(next);
+                    }
+                }
+
+                Slider {
+                    x: col_w * 25; y: row2_y + 6px;
+                    width: col_w * 7; height: row_h - 12px;
+                    minimum: 1.0; maximum: 50.0;
+                    step: 0.5;
+                    value: root.trade_leverage;
+                    changed => { root.trade_leverage_changed(self.value); }
+                }
+
+                Rectangle {
+                    x: col_w * 32; y: row2_y;
+                    width: col_w * 1; height: row_h;
+                    background: root.trade_margin_linked ? #1b2432 : #121722;
+                    border-width: 1px;
+                    border-color: root.trade_margin_linked ? #5fb7ff : #2c3446;
+                    border-radius: 3px;
+
+                    Text {
+                        x: 0px; y: 0px;
+                        width: parent.width; height: parent.height;
+                        text: "∞";
+                        color: root.trade_margin_linked ? #b9f5ff : #808899;
+                        font-size: root.topbar_font_size_small;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    TouchArea {
+                        x: 0px; y: 0px;
+                        width: parent.width; height: parent.height;
+                        clicked => { root.trade_margin_link_toggled(!root.trade_margin_linked); }
+                    }
+                }
+
+                Text {
+                    x: col_w * 33;
+                    y: row2_y;
+                    width: col_w * 2;
+                    height: row_h;
+                    text: "Margin";
+                    color: #c0c0c0;
+                    font-size: root.topbar_font_size_small;
+                    font-family: root.topbar_font;
+                    vertical-alignment: center;
+                }
+
+                LineEdit {
+                    x: col_w * 35; y: row2_y;
+                    width: col_w * 3; height: row_h;
+                    text <=> root.trade_margin_text;
+                    input-type: InputType.decimal;
+                    font-size: root.topbar_font_size_small;
+                    edited => { root.trade_margin_text_changed(self.text); }
+                }
+
+                Button {
+                    x: col_w * 38; y: row2_y;
+                    width: col_w * 1; height: row_h;
+                    text: "-";
+                    clicked => {
+                        let next = Math.max(0.0, root.trade_margin - 1.0);
+                        root.trade_margin_changed(next);
+                    }
+                }
+
+                Button {
+                    x: col_w * 39; y: row2_y;
+                    width: col_w * 1; height: row_h;
+                    text: "+";
+                    clicked => {
+                        let next = root.trade_margin + 1.0;
+                        root.trade_margin_changed(next);
+                    }
+                }
+
+                Slider {
+                    x: col_w * 40; y: row2_y + 6px;
+                    width: col_w * 11; height: row_h - 12px;
+                    minimum: 0.0; maximum: 1000000.0;
+                    step: 1.0;
+                    value: root.trade_margin;
+                    changed => { root.trade_margin_changed(self.value); }
                 }
 
                 CheckBox { x: col_w * 26; y: row1_y; width: col_w * 4; height: row_h; text: "Bot auto trade"; checked <=> bot_auto_trade; }
@@ -2685,6 +2929,24 @@ export component AppWindow inherits Window {
                 Button { x: col_w * 30; y: row1_y; width: col_w * 3; height: row_h; text: "Deposit 100";  clicked => { root.deposit(100.0); } }
                 Button { x: col_w * 33; y: row1_y; width: col_w * 3; height: row_h; text: "Withdraw 100"; clicked => { root.withdraw(100.0); } }
                 Button { x: col_w * 36; y: row1_y; width: col_w * 3; height: row_h; text: "Reload data";  clicked => { root.reload_data(); } }
+
+                Text {
+                    x: col_w * 40;
+                    y: row1_y;
+                    width: col_w * 7;
+                    height: row_h;
+                    text: root.position_status_text;
+                    color: #c0c0c0;
+                    font-size: root.topbar_font_size_small;
+                    vertical-alignment: center;
+                }
+
+                Button {
+                    x: col_w * 48; y: row1_y;
+                    width: col_w * 3; height: row_h;
+                    text: "Close";
+                    clicked => { root.close_position_requested(); }
+                }
             }
 
             Rectangle {
@@ -2894,6 +3156,9 @@ export component AppWindow inherits Window {
 
                     points <=> root.candle_points;
                     mid_line_y: root.candle_midline;
+                    position_entry_y: root.position_entry_y;
+                    position_entry_visible: root.position_entry_visible;
+                    position_entry_color: root.position_entry_color;
                     drawings: root.drawings;
                     draw_ticks: root.draw_ticks;
                     heatmap_cells: root.heatmap_cells;
@@ -3033,11 +3298,20 @@ export component AppWindow inherits Window {
                     Text {
                         x: 0px;
                         y: 0px;
-                        width: parent.width;
+                        width: parent.width - (col_w * 6);
                         height: row_h;
-                        text: "Receipts";
-                        color: #ffffff;
+                        text: "Receipts  |  " + root.open_orders_text;
+                        color: #d9e2ff;
                         vertical-alignment: center;
+                    }
+
+                    Button {
+                        x: parent.width - (col_w * 5);
+                        y: 0px;
+                        width: col_w * 5;
+                        height: row_h;
+                        text: "Cancel Open";
+                        clicked => { root.cancel_open_orders(); }
                     }
 
                     ListView {
@@ -3060,7 +3334,7 @@ export component AppWindow inherits Window {
                     height: row_h * 8;
                     background: #10131a;
 
-                    Text { x: 0px; y: 0px; width: parent.width; height: row_h; text: "Bot: " + bot_signal + "  size=" + bot_size; color: #ffffff; vertical-alignment: center; }
+                    Text { x: 0px; y: 0px; width: parent.width; height: row_h; text: "Bot: " + bot_signal + "  size=" + bot_size + "  |  " + root.last_order_status_text; color: #ffffff; vertical-alignment: center; }
                     Text { x: 0px; y: row_h; width: parent.width; height: row_h; text: "Comment: " + bot_comment; color: #cccccc; vertical-alignment: center; }
 
                     TextEdit {
@@ -3161,6 +3435,7 @@ export component AppWindow inherits Window {
                 toggle_auto_sign(enabled) => { root.settings_toggle_auto_sign(enabled); }
                 create_session(ttl_minutes) => { root.settings_create_session(ttl_minutes); }
                 revoke_session => { root.settings_revoke_session(); }
+                copy_error => { root.settings_copy_error(); }
             }
             if root.settings_panel_open && root.settings_layer == 1 : SettingsPanel {
                 x: root.settings_x;
@@ -3194,6 +3469,7 @@ export component AppWindow inherits Window {
                 toggle_auto_sign(enabled) => { root.settings_toggle_auto_sign(enabled); }
                 create_session(ttl_minutes) => { root.settings_create_session(ttl_minutes); }
                 revoke_session => { root.settings_revoke_session(); }
+                copy_error => { root.settings_copy_error(); }
             }
             if root.settings_panel_open && root.settings_layer == 2 : SettingsPanel {
                 x: root.settings_x;
@@ -3227,6 +3503,7 @@ export component AppWindow inherits Window {
                 toggle_auto_sign(enabled) => { root.settings_toggle_auto_sign(enabled); }
                 create_session(ttl_minutes) => { root.settings_create_session(ttl_minutes); }
                 revoke_session => { root.settings_revoke_session(); }
+                copy_error => { root.settings_copy_error(); }
             }
 
             if root.show_depth && root.microdepth_layer == 0 : MicroDepthPanel {
@@ -3909,6 +4186,9 @@ export component AppWindow inherits Window {
 
             points <=> root.candle_points;
             mid_line_y: root.candle_midline;
+            position_entry_y: root.position_entry_y;
+            position_entry_visible: root.position_entry_visible;
+            position_entry_color: root.position_entry_color;
             drawings <=> root.drawings;
             draw_ticks <=> root.draw_ticks;
             heatmap_cells <=> root.heatmap_cells;
@@ -3943,6 +4223,9 @@ export component AppWindow inherits Window {
 
             points <=> root.candle_points;
             mid_line_y: root.candle_midline;
+            position_entry_y: root.position_entry_y;
+            position_entry_visible: root.position_entry_visible;
+            position_entry_color: root.position_entry_color;
             drawings <=> root.drawings;
             draw_ticks <=> root.draw_ticks;
             heatmap_cells <=> root.heatmap_cells;
@@ -3977,6 +4260,9 @@ export component AppWindow inherits Window {
 
             points <=> root.candle_points;
             mid_line_y: root.candle_midline;
+            position_entry_y: root.position_entry_y;
+            position_entry_visible: root.position_entry_visible;
+            position_entry_color: root.position_entry_color;
             drawings <=> root.drawings;
             draw_ticks <=> root.draw_ticks;
             heatmap_cells <=> root.heatmap_cells;

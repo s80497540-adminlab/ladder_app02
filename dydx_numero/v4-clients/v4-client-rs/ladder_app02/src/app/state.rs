@@ -15,6 +15,7 @@ const MAX_CONDENSED_MID_TICKS: usize = 200_000;
 const CONDENSED_HISTORY_WINDOW_SECS: u64 = 24 * 60 * 60;
 const TAIL_READ_CHUNK_BYTES: usize = 64 * 1024;
 const DEFAULT_MARKET_POLL_SECS: u64 = 5;
+pub(crate) const KEPLR_SESSION_VERSION: u32 = 1;
 
 #[derive(Debug, Clone)]
 pub struct ReceiptRow {
@@ -125,6 +126,16 @@ pub struct HeatmapSnapshot {
     pub levels: Vec<HeatmapLevel>,
 }
 
+#[derive(Clone, Debug)]
+pub struct OpenOrderInfo {
+    pub ticker: String,
+    pub client_id: u32,
+    pub clob_pair_id: u32,
+    pub order_flags: u32,
+    pub good_til_block: Option<u32>,
+    pub good_til_block_time: Option<String>,
+}
+
 // -------------------- AppState --------------------
 
 #[derive(Debug, Clone)]
@@ -162,6 +173,11 @@ pub struct AppState {
     pub trade_side: String,
     pub trade_size: f32,
     pub trade_leverage: f32,
+    pub trade_size_text: String,
+    pub trade_leverage_text: String,
+    pub trade_margin: f32,
+    pub trade_margin_text: String,
+    pub trade_margin_linked: bool,
 
     pub trade_real_mode: bool,
     pub trade_real_armed: bool,
@@ -171,9 +187,25 @@ pub struct AppState {
 
     pub balance_usdc: f32,
     pub balance_pnl: f32,
+    pub account_equity_usdc: f32,
+    pub account_free_collateral_usdc: f32,
+    pub account_equity_text: String,
+    pub account_free_collateral_text: String,
+    pub account_status: String,
+    pub position_ticker: String,
+    pub position_side: String,
+    pub position_size: f32,
+    pub position_entry: f32,
+    pub position_unrealized: f32,
+    pub position_status_text: String,
+    pub open_orders: Vec<OpenOrderInfo>,
+    pub open_orders_total: usize,
+    pub open_orders_ticker: usize,
+    pub open_orders_text: String,
 
     pub current_time: String,
     pub order_message: String,
+    pub last_order_status_text: String,
 
     // Phase-2 “normalized” view models
     pub bids: Vec<BookLevelRow>,
@@ -218,6 +250,21 @@ pub struct AppState {
     pub perf_events_ema: f32,
     pub perf_load: f32,
     pub perf_healthy: bool,
+
+    pub settings_wallet_address: String,
+    pub settings_wallet_status: String,
+    pub settings_network: String,
+    pub settings_rpc_endpoint: String,
+    pub settings_auto_sign: bool,
+    pub settings_session_ttl_minutes: String,
+    pub settings_signer_status: String,
+    pub settings_last_error: String,
+
+    pub session_mnemonic: String,
+    pub session_master_address: String,
+    pub session_address: String,
+    pub session_authenticator_id: Option<u64>,
+    pub session_expires_at_unix: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -256,6 +303,41 @@ struct SessionSummary {
     start_unix: u64,
     end_unix: u64,
     tickers: Vec<SessionTickerSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeplrSessionRecord {
+    pub version: u32,
+    pub created_at_unix: u64,
+    pub expires_at_unix: u64,
+    pub network: String,
+    pub rpc_endpoint: String,
+    pub master_address: String,
+    pub session_mnemonic: String,
+    pub session_address: String,
+    pub authenticator_id: u64,
+}
+
+impl KeplrSessionRecord {
+    pub fn path() -> PathBuf {
+        PathBuf::from(feed_shared::DATA_DIR)
+            .join("sessions")
+            .join("keplr_session.json")
+    }
+
+    pub fn load() -> Option<Self> {
+        let path = Self::path();
+        let raw = fs::read_to_string(path).ok()?;
+        serde_json::from_str(&raw).ok()
+    }
+
+    pub fn save(&self) -> std::io::Result<()> {
+        if let Some(dir) = Self::path().parent() {
+            let _ = fs::create_dir_all(dir);
+        }
+        let raw = serde_json::to_string_pretty(self).unwrap_or_default();
+        fs::write(Self::path(), raw)
+    }
 }
 
 impl Default for AppState {
@@ -307,6 +389,11 @@ impl Default for AppState {
             trade_side: "Buy".to_string(),
             trade_size: 0.01,
             trade_leverage: 5.0,
+            trade_size_text: format_trade_size(0.01),
+            trade_leverage_text: format_trade_leverage(5.0),
+            trade_margin: 0.0,
+            trade_margin_text: format_trade_margin(0.0),
+            trade_margin_linked: true,
 
             trade_real_mode: false,
             trade_real_armed: false,
@@ -316,9 +403,25 @@ impl Default for AppState {
 
             balance_usdc: 1000.0,
             balance_pnl: 0.0,
+            account_equity_usdc: 0.0,
+            account_free_collateral_usdc: 0.0,
+            account_equity_text: "0".to_string(),
+            account_free_collateral_text: "0".to_string(),
+            account_status: "account idle".to_string(),
+            position_ticker: String::new(),
+            position_side: "Flat".to_string(),
+            position_size: 0.0,
+            position_entry: 0.0,
+            position_unrealized: 0.0,
+            position_status_text: "Pos: Flat".to_string(),
+            open_orders: Vec::new(),
+            open_orders_total: 0,
+            open_orders_ticker: 0,
+            open_orders_text: "Open orders: 0".to_string(),
 
             current_time: String::new(),
             order_message: String::new(),
+            last_order_status_text: "Last order: -".to_string(),
 
             bids: Vec::new(),
             asks: Vec::new(),
@@ -359,6 +462,21 @@ impl Default for AppState {
             perf_events_ema: 0.0,
             perf_load: 0.0,
             perf_healthy: true,
+
+            settings_wallet_address: String::new(),
+            settings_wallet_status: "disconnected".to_string(),
+            settings_network: "Mainnet".to_string(),
+            settings_rpc_endpoint: String::new(),
+            settings_auto_sign: false,
+            settings_session_ttl_minutes: "30".to_string(),
+            settings_signer_status: "inactive".to_string(),
+            settings_last_error: String::new(),
+
+            session_mnemonic: String::new(),
+            session_master_address: String::new(),
+            session_address: String::new(),
+            session_authenticator_id: None,
+            session_expires_at_unix: None,
         }
     }
 }
@@ -388,6 +506,27 @@ impl AppState {
         ticker_feed_enabled.insert(current_ticker.clone(), false);
         ticker_active.insert(current_ticker.clone(), true);
         ticker_favorites.insert(current_ticker.clone(), false);
+        let trade_size = ui.get_trade_size();
+        let trade_leverage = ui.get_trade_leverage();
+        let trade_size_text_raw = ui.get_trade_size_text().to_string();
+        let trade_leverage_text_raw = ui.get_trade_leverage_text().to_string();
+        let trade_margin = ui.get_trade_margin();
+        let trade_margin_text_raw = ui.get_trade_margin_text().to_string();
+        let trade_size_text = if trade_size_text_raw.trim().is_empty() {
+            format_trade_size(trade_size)
+        } else {
+            trade_size_text_raw
+        };
+        let trade_leverage_text = if trade_leverage_text_raw.trim().is_empty() {
+            format_trade_leverage(trade_leverage)
+        } else {
+            trade_leverage_text_raw
+        };
+        let trade_margin_text = if trade_margin_text_raw.trim().is_empty() {
+            format_trade_margin(trade_margin)
+        } else {
+            trade_margin_text_raw
+        };
         let mut state = Self {
             current_ticker,
             mode: ui.get_mode().to_string(),
@@ -420,8 +559,13 @@ impl AppState {
             ticker_favorites,
 
             trade_side: ui.get_trade_side().to_string(),
-            trade_size: ui.get_trade_size(),
-            trade_leverage: ui.get_trade_leverage(),
+            trade_size,
+            trade_leverage,
+            trade_size_text,
+            trade_leverage_text,
+            trade_margin,
+            trade_margin_text,
+            trade_margin_linked: ui.get_trade_margin_linked(),
 
             trade_real_mode: ui.get_trade_real_mode(),
             trade_real_armed: ui.get_trade_real_armed(),
@@ -431,9 +575,31 @@ impl AppState {
 
             balance_usdc: ui.get_balance_usdc(),
             balance_pnl: ui.get_balance_pnl(),
+            account_equity_usdc: ui
+                .get_account_equity_text()
+                .parse::<f32>()
+                .unwrap_or(0.0),
+            account_free_collateral_usdc: ui
+                .get_account_free_collateral_text()
+                .parse::<f32>()
+                .unwrap_or(0.0),
+            account_equity_text: ui.get_account_equity_text().to_string(),
+            account_free_collateral_text: ui.get_account_free_collateral_text().to_string(),
+            account_status: ui.get_account_status().to_string(),
+            position_ticker: String::new(),
+            position_side: "Flat".to_string(),
+            position_size: 0.0,
+            position_entry: 0.0,
+            position_unrealized: 0.0,
+            position_status_text: ui.get_position_status_text().to_string(),
+            open_orders: Vec::new(),
+            open_orders_total: 0,
+            open_orders_ticker: 0,
+            open_orders_text: ui.get_open_orders_text().to_string(),
 
             current_time: ui.get_current_time().to_string(),
             order_message: ui.get_order_message().to_string(),
+            last_order_status_text: ui.get_last_order_status_text().to_string(),
 
             bids: Vec::new(),
             asks: Vec::new(),
@@ -474,9 +640,25 @@ impl AppState {
             perf_events_ema: 0.0,
             perf_load: 0.0,
             perf_healthy: true,
+
+            settings_wallet_address: ui.get_settings_wallet_address().to_string(),
+            settings_wallet_status: ui.get_settings_wallet_status().to_string(),
+            settings_network: ui.get_settings_network().to_string(),
+            settings_rpc_endpoint: ui.get_settings_rpc_endpoint().to_string(),
+            settings_auto_sign: ui.get_settings_auto_sign(),
+            settings_session_ttl_minutes: ui.get_settings_session_ttl_minutes().to_string(),
+            settings_signer_status: ui.get_settings_signer_status().to_string(),
+            settings_last_error: ui.get_settings_last_error().to_string(),
+
+            session_mnemonic: String::new(),
+            session_master_address: String::new(),
+            session_address: String::new(),
+            session_authenticator_id: None,
+            session_expires_at_unix: None,
         };
         state.ensure_session_dir();
         state.load_session_drawings();
+        state.load_keplr_session();
         state
     }
 
@@ -828,6 +1010,36 @@ impl AppState {
                 }
             }
         }
+    }
+
+    pub fn load_keplr_session(&mut self) -> bool {
+        let Some(record) = KeplrSessionRecord::load() else {
+            return false;
+        };
+        if record.version != KEPLR_SESSION_VERSION {
+            return false;
+        }
+        self.session_mnemonic = record.session_mnemonic;
+        self.session_master_address = record.master_address.clone();
+        self.session_address = record.session_address;
+        self.session_authenticator_id = Some(record.authenticator_id);
+        self.session_expires_at_unix = Some(record.expires_at_unix);
+        if !record.network.is_empty() {
+            self.settings_network = record.network;
+        }
+        if !record.rpc_endpoint.is_empty() {
+            self.settings_rpc_endpoint = record.rpc_endpoint;
+        }
+        self.settings_wallet_address = record.master_address;
+        let now = now_unix();
+        if now < record.expires_at_unix {
+            self.settings_wallet_status = "connected (Keplr)".to_string();
+            self.settings_signer_status =
+                format!("session active (id {})", record.authenticator_id);
+        } else {
+            self.settings_signer_status = "session expired".to_string();
+        }
+        true
     }
 
     fn session_log_path(&self, ticker: &str) -> Option<PathBuf> {
@@ -1465,6 +1677,38 @@ pub fn format_num_compact(value: f64, max_decimals: usize) -> String {
 
 pub const PRICE_DECIMALS: usize = 10;
 pub const SIZE_DECIMALS: usize = 6;
+pub const TRADE_LEVERAGE_DECIMALS: usize = 2;
+pub const TRADE_MARGIN_DECIMALS: usize = 2;
+pub const TRADE_SIZE_MIN: f32 = 0.0001;
+pub const TRADE_SIZE_MAX: f32 = 1000.0;
+pub const TRADE_LEVERAGE_MIN: f32 = 1.0;
+pub const TRADE_LEVERAGE_MAX: f32 = 50.0;
+pub const TRADE_MARGIN_MIN: f32 = 0.0;
+pub const TRADE_MARGIN_MAX: f32 = 1000000.0;
+
+pub fn clamp_trade_size(value: f32) -> f32 {
+    value.clamp(TRADE_SIZE_MIN, TRADE_SIZE_MAX)
+}
+
+pub fn clamp_trade_leverage(value: f32) -> f32 {
+    value.clamp(TRADE_LEVERAGE_MIN, TRADE_LEVERAGE_MAX)
+}
+
+pub fn clamp_trade_margin(value: f32) -> f32 {
+    value.clamp(TRADE_MARGIN_MIN, TRADE_MARGIN_MAX)
+}
+
+pub fn format_trade_size(value: f32) -> String {
+    format_num_compact(value as f64, SIZE_DECIMALS)
+}
+
+pub fn format_trade_leverage(value: f32) -> String {
+    format_num_compact(value as f64, TRADE_LEVERAGE_DECIMALS)
+}
+
+pub fn format_trade_margin(value: f32) -> String {
+    format_num_compact(value as f64, TRADE_MARGIN_DECIMALS)
+}
 
 pub fn split_number_raw(raw: &str, max_decimals: usize) -> (String, String) {
     let trimmed = raw.trim();
