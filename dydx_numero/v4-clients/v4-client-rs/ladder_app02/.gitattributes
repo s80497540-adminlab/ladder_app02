@@ -1,0 +1,4 @@
+# Track release artifacts with Git LFS to avoid large blobs in git history
+releases/** filter=lfs diff=lfs merge=lfs -text
+*.exe filter=lfs diff=lfs merge=lfs -text
+*.zip filter=lfs diff=lfs merge=lfs -text
