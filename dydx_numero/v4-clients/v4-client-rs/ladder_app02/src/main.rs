@@ -154,9 +154,13 @@ fn main() -> Result<()> {
                                 trade_engine::OrderRequest {
                                     ticker: rt.state.current_ticker.clone(),
                                     side: rt.state.trade_side.clone(),
+                                    order_type: "market".to_string(),  // TODO: expose in UI
                                     size: rt.state.trade_size as f64,
                                     leverage: rt.state.trade_leverage as f64,
                                     price_hint: rt.state.metrics.mid,
+                                    trigger_price: None,  // TODO: expose in UI for stop/take-profit
+                                    post_only: false,  // TODO: expose in UI
+                                    time_in_force: None,  // TODO: expose in UI
                                     master_address: rt.state.session_master_address.clone(),
                                     session_mnemonic: rt.state.session_mnemonic.clone(),
                                     authenticator_id: rt.state.session_authenticator_id.unwrap(),
@@ -201,9 +205,13 @@ fn main() -> Result<()> {
                                 trade_engine::OrderRequest {
                                     ticker: rt.state.current_ticker.clone(),
                                     side: close_side,
+                                    order_type: "market".to_string(),  // Always market for close
                                     size: rt.state.position_size as f64,
                                     leverage: rt.state.trade_leverage as f64,
                                     price_hint: rt.state.metrics.mid,
+                                    trigger_price: None,
+                                    post_only: false,
+                                    time_in_force: None,
                                     master_address: rt.state.session_master_address.clone(),
                                     session_mnemonic: rt.state.session_mnemonic.clone(),
                                     authenticator_id: rt.state.session_authenticator_id.unwrap(),

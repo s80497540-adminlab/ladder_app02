@@ -3,9 +3,8 @@ use crate::app::state::OpenOrderInfo;
 use anyhow::{anyhow, Context, Result};
 use bigdecimal::BigDecimal;
 use dydx::indexer::{IndexerClient, IndexerConfig, RestConfig, SockConfig};
-use dydx::indexer::{Denom, Height, PerpetualMarket, Subaccount};
-use dydx::node::{Address, ChainId, NodeClient, NodeConfig, OrderBuilder, OrderSide, PublicAccount, Wallet};
-use dydx_proto::dydxprotocol::clob::order::TimeInForce;
+use dydx::indexer::{Denom, Height, OrderExecution, PerpetualMarket, Subaccount};
+use dydx::node::{Address, ChainId, NodeClient, NodeConfig, OrderBuilder, OrderSide, OrderTimeInForce, PublicAccount, Wallet};
 use dydx_proto::dydxprotocol::clob::OrderBatch;
 use rustls::crypto::ring;
 use std::collections::HashMap;
@@ -31,9 +30,13 @@ const DEFAULT_FEE_DENOM: &str =
 pub struct OrderRequest {
     pub ticker: String,
     pub side: String,
+    pub order_type: String,  // "market", "limit", "stop_limit", "stop_market", "take_profit_limit", "take_profit_market"
     pub size: f64,
     pub leverage: f64,
     pub price_hint: f64,
+    pub trigger_price: Option<f64>,  // For stop and take-profit orders
+    pub post_only: bool,  // For limit orders to only add liquidity
+    pub time_in_force: Option<String>,  // "gtc", "ioc", "fok", "post_only"
     pub master_address: String,
     pub session_mnemonic: String,
     pub authenticator_id: u64,
@@ -143,14 +146,94 @@ fn place_order(req: OrderRequest) -> Result<String> {
             .map_err(|_| anyhow!("invalid subaccount number"))?,
     };
 
-    let (_id, order) = OrderBuilder::new(market, subaccount)
-        .market(side, size)
-        .reduce_only(req.reduce_only)
-        .price(price)
-        .time_in_force(TimeInForce::Unspecified)
-        .until(height.ahead(10))
-        .build(client_id)
-        .context("build order")?;
+    let mut builder = OrderBuilder::new(market, subaccount);
+    
+    // Configure order based on type
+    builder = match req.order_type.to_lowercase().as_str() {
+        "market" => builder.market(side, size).price(price),
+        "limit" => {
+            if req.price_hint <= 0.0 || !req.price_hint.is_finite() {
+                return Err(anyhow!("limit orders require a valid price"));
+            }
+            let limit_price = BigDecimal::from_str(&format!("{:.10}", req.price_hint))
+                .context("parse limit price")?;
+            builder.limit(side, limit_price, size)
+        },
+        "stop_limit" => {
+            let trigger = req.trigger_price.ok_or_else(|| anyhow!("stop_limit requires trigger_price"))?;
+            if req.price_hint <= 0.0 || !req.price_hint.is_finite() {
+                return Err(anyhow!("stop_limit orders require a valid limit price"));
+            }
+            let limit_price = BigDecimal::from_str(&format!("{:.10}", req.price_hint))
+                .context("parse limit price")?;
+            let trigger_price = BigDecimal::from_str(&format!("{:.10}", trigger))
+                .context("parse trigger price")?;
+            builder.stop_limit(side, limit_price, trigger_price, size).long_term()
+        },
+        "stop_market" => {
+            let trigger = req.trigger_price.ok_or_else(|| anyhow!("stop_market requires trigger_price"))?;
+            let trigger_price = BigDecimal::from_str(&format!("{:.10}", trigger))
+                .context("parse trigger price")?;
+            builder.stop_market(side, trigger_price, size)
+                .price(price)  // Slippage protection
+                .execution(OrderExecution::Ioc)
+                .long_term()
+        },
+        "take_profit_limit" => {
+            let trigger = req.trigger_price.ok_or_else(|| anyhow!("take_profit_limit requires trigger_price"))?;
+            if req.price_hint <= 0.0 || !req.price_hint.is_finite() {
+                return Err(anyhow!("take_profit_limit orders require a valid limit price"));
+            }
+            let limit_price = BigDecimal::from_str(&format!("{:.10}", req.price_hint))
+                .context("parse limit price")?;
+            let trigger_price = BigDecimal::from_str(&format!("{:.10}", trigger))
+                .context("parse trigger price")?;
+            builder.take_profit_limit(side, limit_price, trigger_price, size).long_term()
+        },
+        "take_profit_market" => {
+            let trigger = req.trigger_price.ok_or_else(|| anyhow!("take_profit_market requires trigger_price"))?;
+            let trigger_price = BigDecimal::from_str(&format!("{:.10}", trigger))
+                .context("parse trigger price")?;
+            builder.take_profit_market(side, trigger_price, size)
+                .price(price)  // Slippage protection
+                .execution(OrderExecution::Ioc)
+                .long_term()
+        },
+        _ => return Err(anyhow!("unsupported order type: {}", req.order_type)),
+    };
+
+    // Apply common settings
+    builder = builder.reduce_only(req.reduce_only);
+    
+    // Handle time in force for non-market orders
+    if req.order_type.to_lowercase() != "market" {
+        if let Some(ref tif) = req.time_in_force {
+            builder = match tif.to_lowercase().as_str() {
+                "gtc" | "unspecified" => builder.time_in_force(OrderTimeInForce::Unspecified),
+                "ioc" => builder.time_in_force(OrderTimeInForce::Ioc).execution(OrderExecution::Ioc),
+                "fok" => builder.time_in_force(OrderTimeInForce::FillOrKill).execution(OrderExecution::Fok),
+                "post_only" => builder.time_in_force(OrderTimeInForce::PostOnly),
+                _ => builder,
+            };
+        }
+        
+        // Handle post_only flag for limit orders
+        if req.post_only && req.order_type.to_lowercase() == "limit" {
+            builder = builder.time_in_force(OrderTimeInForce::PostOnly);
+        }
+    }
+    
+    // Set expiration based on order type
+    let expiration_blocks = if req.order_type.to_lowercase() == "limit" && 
+                               req.time_in_force.as_ref().map_or(false, |t| t.to_lowercase() == "gtc") {
+        1000  // Long-term order: ~1 hour at 3.6s per block
+    } else {
+        10  // Short-term order
+    };
+    
+    builder = builder.until(height.ahead(expiration_blocks));
+
+    let (_id, order) = builder.build(client_id).context("build order")?;
 
     let tx_hash = rt
         .block_on(client.place_order(&mut account, order))
