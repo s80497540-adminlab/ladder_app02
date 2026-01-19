@@ -351,6 +351,38 @@ pub fn wire_ui(ui: &crate::AppWindow, tx: std::sync::mpsc::Sender<AppEvent>) {
     }
     {
         let tx = tx.clone();
+        ui.on_trade_limit_price_changed(move |text| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::TradeLimitPriceChanged {
+                text: text.to_string(),
+            }));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_trade_trigger_price_changed(move |text| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::TradeTriggerPriceChanged {
+                text: text.to_string(),
+            }));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_trade_order_type_changed(move |order_type| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::TradeOrderTypeChanged {
+                order_type: order_type.to_string(),
+            }));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_trade_time_in_force_changed(move |tif| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::TradeTimeInForceChanged {
+                tif: tif.to_string(),
+            }));
+        });
+    }
+    {
+        let tx = tx.clone();
         ui.on_close_position_requested(move || {
             let _ = tx.send(AppEvent::Ui(UiEvent::ClosePositionRequested));
         });

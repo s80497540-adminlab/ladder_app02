@@ -154,13 +154,25 @@ fn main() -> Result<()> {
                                 trade_engine::OrderRequest {
                                     ticker: rt.state.current_ticker.clone(),
                                     side: rt.state.trade_side.clone(),
-                                    order_type: "market".to_string(),  // TODO: expose in UI
+                                    order_type: rt.state.trade_order_type.to_lowercase(),
                                     size: rt.state.trade_size as f64,
                                     leverage: rt.state.trade_leverage as f64,
-                                    price_hint: rt.state.metrics.mid,
-                                    trigger_price: None,  // TODO: expose in UI for stop/take-profit
-                                    post_only: false,  // TODO: expose in UI
-                                    time_in_force: None,  // TODO: expose in UI
+                                    price_hint: if rt.state.trade_limit_price > 0.0 {
+                                        rt.state.trade_limit_price as f64
+                                    } else {
+                                        rt.state.metrics.mid
+                                    },
+                                    trigger_price: if rt.state.trade_trigger_price > 0.0 {
+                                        Some(rt.state.trade_trigger_price as f64)
+                                    } else {
+                                        None
+                                    },
+                                    post_only: rt.state.trade_post_only,
+                                    time_in_force: if rt.state.trade_time_in_force.is_empty() {
+                                        None
+                                    } else {
+                                        Some(rt.state.trade_time_in_force.to_lowercase())
+                                    },
                                     master_address: rt.state.session_master_address.clone(),
                                     session_mnemonic: rt.state.session_mnemonic.clone(),
                                     authenticator_id: rt.state.session_authenticator_id.unwrap(),

@@ -171,6 +171,7 @@ pub struct AppState {
     pub ticker_favorites: HashMap<String, bool>,
 
     pub trade_side: String,
+    pub trade_order_type: String,
     pub trade_size: f32,
     pub trade_leverage: f32,
     pub trade_size_text: String,
@@ -178,6 +179,12 @@ pub struct AppState {
     pub trade_margin: f32,
     pub trade_margin_text: String,
     pub trade_margin_linked: bool,
+    pub trade_limit_price: f32,
+    pub trade_limit_price_text: String,
+    pub trade_trigger_price: f32,
+    pub trade_trigger_price_text: String,
+    pub trade_post_only: bool,
+    pub trade_time_in_force: String,
 
     pub trade_real_mode: bool,
     pub trade_real_armed: bool,
@@ -387,6 +394,7 @@ impl Default for AppState {
             ticker_favorites,
 
             trade_side: "Buy".to_string(),
+            trade_order_type: "Market".to_string(),
             trade_size: 0.01,
             trade_leverage: 5.0,
             trade_size_text: format_trade_size(0.01),
@@ -394,6 +402,12 @@ impl Default for AppState {
             trade_margin: 0.0,
             trade_margin_text: format_trade_margin(0.0),
             trade_margin_linked: true,
+            trade_limit_price: 0.0,
+            trade_limit_price_text: String::new(),
+            trade_trigger_price: 0.0,
+            trade_trigger_price_text: String::new(),
+            trade_post_only: false,
+            trade_time_in_force: "GTC".to_string(),
 
             trade_real_mode: false,
             trade_real_armed: false,
@@ -559,6 +573,7 @@ impl AppState {
             ticker_favorites,
 
             trade_side: ui.get_trade_side().to_string(),
+            trade_order_type: ui.get_trade_order_type().to_string(),
             trade_size,
             trade_leverage,
             trade_size_text,
@@ -566,6 +581,12 @@ impl AppState {
             trade_margin,
             trade_margin_text,
             trade_margin_linked: ui.get_trade_margin_linked(),
+            trade_limit_price: ui.get_trade_limit_price(),
+            trade_limit_price_text: ui.get_trade_limit_price_text().to_string(),
+            trade_trigger_price: ui.get_trade_trigger_price(),
+            trade_trigger_price_text: ui.get_trade_trigger_price_text().to_string(),
+            trade_post_only: ui.get_trade_post_only(),
+            trade_time_in_force: ui.get_trade_time_in_force().to_string(),
 
             trade_real_mode: ui.get_trade_real_mode(),
             trade_real_armed: ui.get_trade_real_armed(),

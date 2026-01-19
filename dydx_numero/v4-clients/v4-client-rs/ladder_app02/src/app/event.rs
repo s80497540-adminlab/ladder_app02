@@ -69,6 +69,10 @@ pub enum UiEvent {
     TradeMarginTextChanged { text: String },
     TradeMarginChanged { value: f32 },
     TradeMarginLinkToggled { linked: bool },
+    TradeLimitPriceChanged { text: String },
+    TradeTriggerPriceChanged { text: String },
+    TradeOrderTypeChanged { order_type: String },
+    TradeTimeInForceChanged { tif: String },
     ClosePositionRequested,
     CancelOpenOrdersRequested,
 

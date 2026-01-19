@@ -1758,6 +1758,7 @@ export component AppWindow inherits Window {
     in-out property <bool> show_volume;
 
     in-out property <string> trade_side;
+    in-out property <string> trade_order_type: "Market";  // Market, Limit, Stop-Limit, Stop-Market, Take-Profit Limit, Take-Profit Market
     in-out property <float> trade_size: 0.01;
     in-out property <float> trade_leverage: 5.0;
     in-out property <float> trade_margin: 0.0;
@@ -1765,6 +1766,12 @@ export component AppWindow inherits Window {
     in-out property <string> trade_leverage_text: "5";
     in-out property <string> trade_margin_text: "0";
     in-out property <bool> trade_margin_linked: true;
+    in-out property <string> trade_limit_price_text: "";
+    in-out property <float> trade_limit_price: 0.0;
+    in-out property <string> trade_trigger_price_text: "";
+    in-out property <float> trade_trigger_price: 0.0;
+    in-out property <bool> trade_post_only: false;
+    in-out property <string> trade_time_in_force: "GTC";  // GTC, IOC, FOK, POST_ONLY
 
     in-out property <bool> trade_real_mode: false;
 
@@ -1929,6 +1936,10 @@ export component AppWindow inherits Window {
     callback withdraw(amount: float);
     callback trade_size_text_changed(text: string);
     callback trade_size_changed(value: float);
+    callback trade_limit_price_changed(text: string);
+    callback trade_trigger_price_changed(text: string);
+    callback trade_order_type_changed(order_type: string);
+    callback trade_time_in_force_changed(tif: string);
     callback trade_leverage_text_changed(text: string);
     callback trade_leverage_changed(value: float);
     callback trade_margin_text_changed(text: string);
@@ -2740,17 +2751,78 @@ export component AppWindow inherits Window {
                 Text {
                     x: col_w * 1;
                     y: row2_y;
-                    width: col_w * 4;
+                    width: col_w * 1;
                     height: row_h;
-                    text: "Side: " + trade_side;
-                    color: #aaaaaa;
+                    text: "Type";
+                    color: #c0c0c0;
                     font-size: root.topbar_font_size_small;
                     font-family: root.topbar_font;
                     vertical-alignment: center;
                 }
 
+                ComboBox {
+                    x: col_w * 2; y: row2_y;
+                    width: col_w * 4; height: row_h;
+                    model: ["Market", "Limit", "Stop-Limit", "Stop-Market", "Take-Profit Limit", "Take-Profit Market"];
+                    current-value: root.trade_order_type;
+                    selected => {
+                        root.trade_order_type_changed(self.current-value);
+                    }
+                }
+
+                // Limit Price (for Limit and Stop-Limit orders)
                 Text {
                     x: col_w * 6;
+                    y: row2_y;
+                    width: col_w * 2;
+                    height: row_h;
+                    text: "Limit";
+                    color: #c0c0c0;
+                    font-size: root.topbar_font_size_small;
+                    font-family: root.topbar_font;
+                    vertical-alignment: center;
+                    visible: root.trade_order_type == "Limit" || root.trade_order_type == "Stop-Limit" || root.trade_order_type == "Take-Profit Limit";
+                }
+
+                LineEdit {
+                    x: col_w * 8; y: row2_y;
+                    width: col_w * 3; height: row_h;
+                    text <=> root.trade_limit_price_text;
+                    input-type: InputType.decimal;
+                    placeholder-text: "Price";
+                    font-size: root.topbar_font_size_small;
+                    visible: root.trade_order_type == "Limit" || root.trade_order_type == "Stop-Limit" || root.trade_order_type == "Take-Profit Limit";
+                    edited => { root.trade_limit_price_changed(self.text); }
+                }
+
+                // Trigger Price (for Stop and Take-Profit orders)
+                Text {
+                    x: col_w * 11;
+                    y: row2_y;
+                    width: col_w * 2;
+                    height: row_h;
+                    text: "Trigger";
+                    color: #c0c0c0;
+                    font-size: root.topbar_font_size_small;
+                    font-family: root.topbar_font;
+                    vertical-alignment: center;
+                    visible: root.trade_order_type == "Stop-Limit" || root.trade_order_type == "Stop-Market" || root.trade_order_type == "Take-Profit Limit" || root.trade_order_type == "Take-Profit Market";
+                }
+
+                LineEdit {
+                    x: col_w * 13; y: row2_y;
+                    width: col_w * 3; height: row_h;
+                    text <=> root.trade_trigger_price_text;
+                    input-type: InputType.decimal;
+                    placeholder-text: "Trigger";
+                    font-size: root.topbar_font_size_small;
+                    visible: root.trade_order_type == "Stop-Limit" || root.trade_order_type == "Stop-Market" || root.trade_order_type == "Take-Profit Limit" || root.trade_order_type == "Take-Profit Market";
+                    edited => { root.trade_trigger_price_changed(self.text); }
+                }
+
+                // Size (always visible)
+                Text {
+                    x: col_w * 16;
                     y: row2_y;
                     width: col_w * 1;
                     height: row_h;
@@ -2762,7 +2834,7 @@ export component AppWindow inherits Window {
                 }
 
                 LineEdit {
-                    x: col_w * 7; y: row2_y;
+                    x: col_w * 17; y: row2_y;
                     width: col_w * 3; height: row_h;
                     text <=> root.trade_size_text;
                     input-type: InputType.decimal;
@@ -2770,37 +2842,41 @@ export component AppWindow inherits Window {
                     edited => { root.trade_size_text_changed(self.text); }
                 }
 
-                Button {
-                    x: col_w * 10; y: row2_y;
-                    width: col_w * 1; height: row_h;
-                    text: "-";
-                    clicked => {
-                        let next = Math.max(0.0001, root.trade_size - 0.001);
-                        root.trade_size_changed(next);
+                // Time-in-Force (for Limit orders)
+                Text {
+                    x: col_w * 20;
+                    y: row2_y;
+                    width: col_w * 1;
+                    height: row_h;
+                    text: "TIF";
+                    color: #c0c0c0;
+                    font-size: root.topbar_font_size_small;
+                    font-family: root.topbar_font;
+                    vertical-alignment: center;
+                    visible: root.trade_order_type == "Limit";
+                }
+
+                ComboBox {
+                    x: col_w * 21; y: row2_y;
+                    width: col_w * 3; height: row_h;
+                    model: ["GTC", "IOC", "FOK", "POST_ONLY"];
+                    current-value: root.trade_time_in_force;
+                    visible: root.trade_order_type == "Limit";
+                    selected => {
+                        root.trade_time_in_force_changed(self.current-value);
                     }
                 }
 
-                Button {
-                    x: col_w * 11; y: row2_y;
-                    width: col_w * 1; height: row_h;
-                    text: "+";
-                    clicked => {
-                        let next = root.trade_size + 0.001;
-                        root.trade_size_changed(next);
-                    }
-                }
-
-                Slider {
-                    x: col_w * 12; y: row2_y + 6px;
-                    width: col_w * 8; height: row_h - 12px;
-                    minimum: 0.0001; maximum: 1000.0;
-                    step: 0.001;
-                    value: root.trade_size;
-                    changed => { root.trade_size_changed(self.value); }
+                CheckBox {
+                    x: col_w * 24; y: row2_y;
+                    width: col_w * 3; height: row_h;
+                    text: "Post";
+                    checked <=> root.trade_post_only;
+                    visible: root.trade_order_type == "Limit";
                 }
 
                 Text {
-                    x: col_w * 20;
+                    x: col_w * 27;
                     y: row2_y;
                     width: col_w * 1;
                     height: row_h;
@@ -2812,41 +2888,12 @@ export component AppWindow inherits Window {
                 }
 
                 LineEdit {
-                    x: col_w * 21; y: row2_y;
+                    x: col_w * 28; y: row2_y;
                     width: col_w * 2; height: row_h;
                     text <=> root.trade_leverage_text;
                     input-type: InputType.decimal;
                     font-size: root.topbar_font_size_small;
                     edited => { root.trade_leverage_text_changed(self.text); }
-                }
-
-                Button {
-                    x: col_w * 23; y: row2_y;
-                    width: col_w * 1; height: row_h;
-                    text: "-";
-                    clicked => {
-                        let next = Math.max(1.0, root.trade_leverage - 0.5);
-                        root.trade_leverage_changed(next);
-                    }
-                }
-
-                Button {
-                    x: col_w * 24; y: row2_y;
-                    width: col_w * 1; height: row_h;
-                    text: "+";
-                    clicked => {
-                        let next = root.trade_leverage + 0.5;
-                        root.trade_leverage_changed(next);
-                    }
-                }
-
-                Slider {
-                    x: col_w * 25; y: row2_y + 6px;
-                    width: col_w * 7; height: row_h - 12px;
-                    minimum: 1.0; maximum: 50.0;
-                    step: 0.5;
-                    value: root.trade_leverage;
-                    changed => { root.trade_leverage_changed(self.value); }
                 }
 
                 Rectangle {

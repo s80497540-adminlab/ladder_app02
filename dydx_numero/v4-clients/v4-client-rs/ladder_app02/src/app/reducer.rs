@@ -629,6 +629,45 @@ fn reduce_ui(state: &mut AppState, ev: UiEvent) -> bool {
             }
             true
         }
+        UiEvent::TradeLimitPriceChanged { text } => {
+            state.trade_limit_price_text = text.clone();
+            if let Ok(value) = text.trim().parse::<f32>() {
+                if value.is_finite() && value > 0.0 {
+                    state.trade_limit_price = value;
+                }
+            }
+            true
+        }
+        UiEvent::TradeTriggerPriceChanged { text } => {
+            state.trade_trigger_price_text = text.clone();
+            if let Ok(value) = text.trim().parse::<f32>() {
+                if value.is_finite() && value > 0.0 {
+                    state.trade_trigger_price = value;
+                }
+            }
+            true
+        }
+        UiEvent::TradeOrderTypeChanged { order_type } => {
+            state.trade_order_type = order_type.clone();
+            // Auto-populate limit price with mid price when switching to limit/stop orders
+            if (order_type == "Limit" || order_type == "Stop-Limit" || order_type == "Take-Profit Limit") 
+                && state.trade_limit_price_text.is_empty() {
+                state.trade_limit_price = state.metrics.mid as f32;
+                state.trade_limit_price_text = format!("{:.2}", state.metrics.mid);
+            }
+            // Auto-populate trigger price when switching to stop/take-profit orders
+            if (order_type == "Stop-Limit" || order_type == "Stop-Market" || 
+                order_type == "Take-Profit Limit" || order_type == "Take-Profit Market")
+                && state.trade_trigger_price_text.is_empty() {
+                state.trade_trigger_price = state.metrics.mid as f32;
+                state.trade_trigger_price_text = format!("{:.2}", state.metrics.mid);
+            }
+            true
+        }
+        UiEvent::TradeTimeInForceChanged { tif } => {
+            state.trade_time_in_force = tif.clone();
+            true
+        }
         UiEvent::ClosePositionRequested => {
             if state.position_size <= 0.0 || state.position_side.eq_ignore_ascii_case("flat") {
                 state.order_message = "No open position.".to_string();
