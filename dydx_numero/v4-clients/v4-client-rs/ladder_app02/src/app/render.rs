@@ -32,6 +32,7 @@ pub fn render(state: &AppState, ui: &crate::AppWindow) {
     ui.set_trade_order_type(SharedString::from(state.trade_order_type.clone()));
     ui.set_trade_order_type(SharedString::from(state.trade_order_type.clone()));
     ui.set_trade_order_type(SharedString::from(state.trade_order_type.clone()));
+    ui.set_trade_order_type(SharedString::from(state.trade_order_type.clone()));
     ui.set_trade_size(state.trade_size);
     ui.set_trade_leverage(state.trade_leverage);
     ui.set_trade_size_text(SharedString::from(state.trade_size_text.clone()));
@@ -39,6 +40,12 @@ pub fn render(state: &AppState, ui: &crate::AppWindow) {
     ui.set_trade_margin(state.trade_margin);
     ui.set_trade_margin_text(SharedString::from(state.trade_margin_text.clone()));
     ui.set_trade_margin_linked(state.trade_margin_linked);
+    ui.set_trade_limit_price(state.trade_limit_price);
+    ui.set_trade_limit_price_text(SharedString::from(state.trade_limit_price_text.clone()));
+    ui.set_trade_trigger_price(state.trade_trigger_price);
+    ui.set_trade_trigger_price_text(SharedString::from(state.trade_trigger_price_text.clone()));
+    ui.set_trade_post_only(state.trade_post_only);
+    ui.set_trade_time_in_force(SharedString::from(state.trade_time_in_force.clone()));
     ui.set_trade_limit_price(state.trade_limit_price);
     ui.set_trade_limit_price_text(SharedString::from(state.trade_limit_price_text.clone()));
     ui.set_trade_trigger_price(state.trade_trigger_price);
