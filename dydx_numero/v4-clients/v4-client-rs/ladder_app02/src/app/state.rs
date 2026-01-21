@@ -327,7 +327,7 @@ pub struct KeplrSessionRecord {
 
 impl KeplrSessionRecord {
     pub fn path() -> PathBuf {
-        PathBuf::from(feed_shared::DATA_DIR)
+        feed_shared::data_dir()
             .join("sessions")
             .join("keplr_session.json")
     }
@@ -980,7 +980,7 @@ impl AppState {
     }
 
     fn mid_log_path(ticker: &str) -> Option<PathBuf> {
-        let dir = PathBuf::from(feed_shared::DATA_DIR);
+        let dir = feed_shared::data_dir();
         let mut safe = ticker.to_string();
         safe = safe
             .chars()
@@ -990,7 +990,7 @@ impl AppState {
     }
 
     fn mid_cache_path_json(ticker: &str) -> Option<PathBuf> {
-        let dir = PathBuf::from(feed_shared::DATA_DIR);
+        let dir = feed_shared::data_dir();
         let mut safe = ticker.to_string();
         safe = safe
             .chars()
@@ -1010,7 +1010,7 @@ impl AppState {
     }
 
     fn session_root_dir() -> PathBuf {
-        PathBuf::from(feed_shared::DATA_DIR).join("sessions")
+        feed_shared::data_dir().join("sessions")
     }
 
     fn session_dir(&self) -> PathBuf {

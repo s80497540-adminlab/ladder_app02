@@ -12,7 +12,7 @@ use ladder_app02::feed_shared::{
 use rustls::crypto::ring;
 use serde_json::{json, Value};
 use std::collections::HashSet;
-use std::fs::{create_dir_all, OpenOptions};
+use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -48,8 +48,8 @@ async fn main() -> Result<()> {
         .install_default()
         .map_err(|err| anyhow!("install rustls ring crypto provider: {err:?}"))?;
 
-    println!("[data_daemon02] starting, writing to ./data");
-    create_dir_all(feed_shared::DATA_DIR)?;
+    println!("[data_daemon02] starting, writing to {:?}", feed_shared::data_dir());
+    feed_shared::ensure_data_dir()?;
 
     let state = Arc::new(Mutex::new(SnapshotState::default()));
     let log_file = Arc::new(Mutex::new(open_log()?));

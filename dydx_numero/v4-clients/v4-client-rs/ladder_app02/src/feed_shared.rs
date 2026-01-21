@@ -1,9 +1,27 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-pub const DATA_DIR: &str = "data";
 pub const SNAPSHOT_FILE: &str = "dydx_live_snapshot.json";
 pub const EVENT_LOG_FILE: &str = "dydx_live_feed.jsonl";
+
+/// Get the data directory - uses executable directory on Windows, platform data dir on others
+fn get_data_dir() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        // On Windows, use the directory where the executable is located
+        std::env::current_exe()
+            .ok()
+            .and_then(|exe_path| exe_path.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| PathBuf::from("data"))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        // On Unix-like systems, use the proper data directory
+        directories::ProjectDirs::from("", "", "dydx_ladder")
+            .map(|dirs| dirs.data_dir().to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("data"))
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BookTopRecord {
@@ -66,9 +84,17 @@ impl SnapshotState {
 }
 
 pub fn snapshot_path() -> PathBuf {
-    PathBuf::from(DATA_DIR).join(SNAPSHOT_FILE)
+    get_data_dir().join(SNAPSHOT_FILE)
 }
 
 pub fn event_log_path() -> PathBuf {
-    PathBuf::from(DATA_DIR).join(EVENT_LOG_FILE)
+    get_data_dir().join(EVENT_LOG_FILE)
+}
+
+pub fn data_dir() -> PathBuf {
+    get_data_dir()
+}
+
+pub fn ensure_data_dir() -> std::io::Result<()> {
+    std::fs::create_dir_all(get_data_dir())
 }
