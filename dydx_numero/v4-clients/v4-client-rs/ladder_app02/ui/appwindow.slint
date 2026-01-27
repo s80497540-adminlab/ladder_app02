@@ -232,6 +232,8 @@ component LayoutHandle inherits Rectangle {
     in property <length> target_h;
     in property <length> grid_col_w: 1px;
     in property <length> grid_row_h: 1px;
+    in property <length> grid_snap_col_w: grid_col_w;
+    in property <length> grid_snap_row_h: grid_row_h;
     in property <bool> show_layer: false;
     in-out property <int> layer: 0;
     in property <length> pass1_x: 0px;
@@ -369,11 +371,11 @@ component LayoutHandle inherits Rectangle {
             } else if event.kind == PointerEventKind.up {
                 if dragging {
                     dragging = false;
-                    let col_px = grid_col_w / 1px;
-                    let row_px = grid_row_h / 1px;
+                    let col_px = grid_snap_col_w / 1px;
+                    let row_px = grid_snap_row_h / 1px;
                     if col_px > 0.0 && row_px > 0.0 {
-                        target_x = Math.round((target_x / 1px) / col_px) * grid_col_w;
-                        target_y = Math.round((target_y / 1px) / row_px) * grid_row_h;
+                        target_x = Math.round((target_x / 1px) / col_px) * grid_snap_col_w;
+                        target_y = Math.round((target_y / 1px) / row_px) * grid_snap_row_h;
                     }
                     EventResult.accept
                 } else if in_pass {
@@ -592,6 +594,8 @@ component OrderbookPanel inherits Rectangle {
     in property <string> spread_pad;
     in property <length> grid_col_w: 1px;
     in property <length> grid_row_h: 1px;
+    in property <length> grid_snap_col_w: grid_col_w;
+    in property <length> grid_snap_row_h: grid_row_h;
     in property <bool> allow_drag: false;
 
     background: #202533;
@@ -667,11 +671,11 @@ component OrderbookPanel inherits Rectangle {
                     last_y = self.mouse-y;
                 } else if event.kind == PointerEventKind.up {
                     dragging = false;
-                    let col_px = root.grid_col_w / 1px;
-                    let row_px = root.grid_row_h / 1px;
+                    let col_px = root.grid_snap_col_w / 1px;
+                    let row_px = root.grid_snap_row_h / 1px;
                     if col_px > 0.0 && row_px > 0.0 {
-                        root.x = Math.round((root.x / 1px) / col_px) * root.grid_col_w;
-                        root.y = Math.round((root.y / 1px) / row_px) * root.grid_row_h;
+                        root.x = Math.round((root.x / 1px) / col_px) * root.grid_snap_col_w;
+                        root.y = Math.round((root.y / 1px) / row_px) * root.grid_snap_row_h;
                     }
                 } else if event.kind == PointerEventKind.move && dragging {
                     let dx = self.mouse-x - last_x;
@@ -828,6 +832,8 @@ component SettingsPanel inherits Rectangle {
     in-out property <string> last_error;
     in property <length> grid_col_w: 1px;
     in property <length> grid_row_h: 1px;
+    in property <length> grid_snap_col_w: grid_col_w;
+    in property <length> grid_snap_row_h: grid_row_h;
     in property <bool> allow_drag: false;
 
     callback connect_wallet();
@@ -869,11 +875,11 @@ component SettingsPanel inherits Rectangle {
                     last_y = self.mouse-y;
                 } else if event.kind == PointerEventKind.up {
                     dragging = false;
-                    let col_px = root.grid_col_w / 1px;
-                    let row_px = root.grid_row_h / 1px;
+                    let col_px = root.grid_snap_col_w / 1px;
+                    let row_px = root.grid_snap_row_h / 1px;
                     if col_px > 0.0 && row_px > 0.0 {
-                        root.x = Math.round((root.x / 1px) / col_px) * root.grid_col_w;
-                        root.y = Math.round((root.y / 1px) / row_px) * root.grid_row_h;
+                        root.x = Math.round((root.x / 1px) / col_px) * root.grid_snap_col_w;
+                        root.y = Math.round((root.y / 1px) / row_px) * root.grid_snap_row_h;
                     }
                 } else if event.kind == PointerEventKind.move && dragging {
                     let dx = self.mouse-x - last_x;
@@ -1467,6 +1473,8 @@ component ChartPopoutPanel inherits Rectangle {
     in-out property <length> ph;
     in property <length> grid_col_w: 1px;
     in property <length> grid_row_h: 1px;
+    in property <length> grid_snap_col_w: grid_col_w;
+    in property <length> grid_snap_row_h: grid_row_h;
     in property <bool> allow_drag: true;
 
     in property <[CandlePoint]> points;
@@ -1535,11 +1543,11 @@ component ChartPopoutPanel inherits Rectangle {
                     last_y = self.mouse-y;
                 } else if event.kind == PointerEventKind.up {
                     dragging = false;
-                    let col_px = root.grid_col_w / 1px;
-                    let row_px = root.grid_row_h / 1px;
+                    let col_px = root.grid_snap_col_w / 1px;
+                    let row_px = root.grid_snap_row_h / 1px;
                     if col_px > 0.0 && row_px > 0.0 {
-                        root.px = Math.round((root.px / 1px) / col_px) * root.grid_col_w;
-                        root.py = Math.round((root.py / 1px) / row_px) * root.grid_row_h;
+                        root.px = Math.round((root.px / 1px) / col_px) * root.grid_snap_col_w;
+                        root.py = Math.round((root.py / 1px) / row_px) * root.grid_snap_row_h;
                     }
                 } else if event.kind == PointerEventKind.move && dragging {
                     let dx = self.mouse-x - last_x;
@@ -1703,6 +1711,20 @@ export component AppWindow inherits Window {
             : "-";
     property <length> grid_col_w: (ui_content_w_px / 52) * 1px;
     property <length> grid_row_h: (ui_content_h_px / 25) * 1px;
+
+    property <[string]> grid_snap_labels: ["1x", "2x", "4x"];
+    property <[int]> grid_snap_steps: [1, 2, 4];
+    in-out property <int> grid_snap_index: 0;
+    property <int> grid_snap_step:
+        (grid_snap_index >= 0 && grid_snap_index < grid_snap_steps.length)
+            ? grid_snap_steps[grid_snap_index]
+            : 1;
+    property <string> grid_snap_label:
+        (grid_snap_index >= 0 && grid_snap_index < grid_snap_labels.length)
+            ? grid_snap_labels[grid_snap_index]
+            : "1x";
+    property <length> grid_snap_col_w: grid_col_w / grid_snap_step;
+    property <length> grid_snap_row_h: grid_row_h / grid_snap_step;
 
     in-out property <bool> layout_edit_mode: false;
 
@@ -2092,11 +2114,21 @@ export component AppWindow inherits Window {
                     y: row1_y;
                     width: col_w * 3;
                     height: row_h;
+                    text: "Snap " + root.grid_snap_label;
+                    clicked => {
+                        root.grid_snap_index = Math.mod(root.grid_snap_index + 1, root.grid_snap_labels.length);
+                    }
+                }
+                Button {
+                    x: col_w * 36;
+                    y: row1_y;
+                    width: col_w * 3;
+                    height: row_h;
                     text: root.layout_edit_mode ? "Edit ✓" : "Edit";
                     clicked => { root.layout_edit_mode = !root.layout_edit_mode; }
                 }
                 Text {
-                    x: col_w * 36;
+                    x: col_w * 39;
                     y: row1_y;
                     width: col_w * 3;
                     height: row_h;
@@ -2107,7 +2139,7 @@ export component AppWindow inherits Window {
                     vertical-alignment: center;
                 }
                 Button {
-                    x: col_w * 39;
+                    x: col_w * 42;
                     y: row1_y;
                     width: col_w * 3;
                     height: row_h;
@@ -2118,9 +2150,9 @@ export component AppWindow inherits Window {
                     }
                 }
                 Text {
-                    x: col_w * 42;
+                    x: col_w * 45;
                     y: row1_y;
-                    width: col_w * 10;
+                    width: col_w * 7;
                     height: row_h;
                     text: candle_feed_status;
                     color: #a0a0a0;
@@ -3412,6 +3444,8 @@ export component AppWindow inherits Window {
                 spread_pad: root.spread_pad;
                 grid_col_w: root.grid_col_w;
                 grid_row_h: root.grid_row_h;
+                grid_snap_col_w: root.grid_snap_col_w;
+                grid_snap_row_h: root.grid_snap_row_h;
                 allow_drag: false;
                 z: 0;
             }
@@ -3429,6 +3463,8 @@ export component AppWindow inherits Window {
                 spread_pad: root.spread_pad;
                 grid_col_w: root.grid_col_w;
                 grid_row_h: root.grid_row_h;
+                grid_snap_col_w: root.grid_snap_col_w;
+                grid_snap_row_h: root.grid_snap_row_h;
                 allow_drag: false;
                 z: 1;
             }
@@ -3446,6 +3482,8 @@ export component AppWindow inherits Window {
                 spread_pad: root.spread_pad;
                 grid_col_w: root.grid_col_w;
                 grid_row_h: root.grid_row_h;
+                grid_snap_col_w: root.grid_snap_col_w;
+                grid_snap_row_h: root.grid_snap_row_h;
                 allow_drag: false;
                 z: 2;
             }
@@ -3457,6 +3495,8 @@ export component AppWindow inherits Window {
                 height: root.grid_row_h * 8;
                 grid_col_w: root.grid_col_w;
                 grid_row_h: root.grid_row_h;
+                grid_snap_col_w: root.grid_snap_col_w;
+                grid_snap_row_h: root.grid_snap_row_h;
                 allow_drag: false;
                 z: 0;
 
@@ -3491,6 +3531,8 @@ export component AppWindow inherits Window {
                 height: root.grid_row_h * 8;
                 grid_col_w: root.grid_col_w;
                 grid_row_h: root.grid_row_h;
+                grid_snap_col_w: root.grid_snap_col_w;
+                grid_snap_row_h: root.grid_snap_row_h;
                 allow_drag: false;
                 z: 1;
 
@@ -3968,6 +4010,8 @@ export component AppWindow inherits Window {
                 target_h: root.header_h;
                 grid_col_w: root.grid_col_w;
                 grid_row_h: root.grid_row_h;
+                grid_snap_col_w: root.grid_snap_col_w;
+                grid_snap_row_h: root.grid_snap_row_h;
                 pass1_x: root.grid_col_w * 28;
                 pass1_y: 0px;
                 pass1_w: root.grid_col_w * 2;
@@ -3990,6 +4034,8 @@ export component AppWindow inherits Window {
                 target_h: root.midbar_h;
                 grid_col_w: root.grid_col_w;
                 grid_row_h: root.grid_row_h;
+                grid_snap_col_w: root.grid_snap_col_w;
+                grid_snap_row_h: root.grid_snap_row_h;
             }
             LayoutHandle {
                 enabled: root.layout_edit_mode;
@@ -4000,6 +4046,8 @@ export component AppWindow inherits Window {
                 target_h: root.topbar_h;
                 grid_col_w: root.grid_col_w;
                 grid_row_h: root.grid_row_h;
+                grid_snap_col_w: root.grid_snap_col_w;
+                grid_snap_row_h: root.grid_snap_row_h;
             }
             LayoutHandle {
                 enabled: root.layout_edit_mode;
@@ -4010,6 +4058,8 @@ export component AppWindow inherits Window {
                 target_h: root.secondbar_h;
                 grid_col_w: root.grid_col_w;
                 grid_row_h: root.grid_row_h;
+                grid_snap_col_w: root.grid_snap_col_w;
+                grid_snap_row_h: root.grid_snap_row_h;
             }
             LayoutHandle {
                 enabled: root.layout_edit_mode;
@@ -4020,6 +4070,8 @@ export component AppWindow inherits Window {
                 target_h: root.grid_row_h * 16;
                 grid_col_w: root.grid_col_w;
                 grid_row_h: root.grid_row_h;
+                grid_snap_col_w: root.grid_snap_col_w;
+                grid_snap_row_h: root.grid_snap_row_h;
             }
             LayoutHandle {
                 enabled: root.layout_edit_mode;
@@ -4030,6 +4082,8 @@ export component AppWindow inherits Window {
                 target_h: root.grid_row_h * 16;
                 grid_col_w: root.grid_col_w;
                 grid_row_h: root.grid_row_h;
+                grid_snap_col_w: root.grid_snap_col_w;
+                grid_snap_row_h: root.grid_snap_row_h;
             }
             LayoutHandle {
                 enabled: root.layout_edit_mode;
@@ -4040,6 +4094,8 @@ export component AppWindow inherits Window {
                 target_h: root.grid_row_h * 6;
                 grid_col_w: root.grid_col_w;
                 grid_row_h: root.grid_row_h;
+                grid_snap_col_w: root.grid_snap_col_w;
+                grid_snap_row_h: root.grid_snap_row_h;
                 show_layer: true;
                 layer <=> root.orderbook_layer;
             }
@@ -4052,6 +4108,8 @@ export component AppWindow inherits Window {
                 target_h: root.grid_row_h * 8;
                 grid_col_w: root.grid_col_w;
                 grid_row_h: root.grid_row_h;
+                grid_snap_col_w: root.grid_snap_col_w;
+                grid_snap_row_h: root.grid_snap_row_h;
                 show_layer: true;
                 layer <=> root.settings_layer;
             }
@@ -4064,6 +4122,8 @@ export component AppWindow inherits Window {
                 target_h: root.grid_row_h * 2;
                 grid_col_w: root.grid_col_w;
                 grid_row_h: root.grid_row_h;
+                grid_snap_col_w: root.grid_snap_col_w;
+                grid_snap_row_h: root.grid_snap_row_h;
                 show_layer: true;
                 layer <=> root.microdepth_layer;
             }
@@ -4076,6 +4136,8 @@ export component AppWindow inherits Window {
                 target_h: root.grid_row_h * 7;
                 grid_col_w: root.grid_col_w;
                 grid_row_h: root.grid_row_h;
+                grid_snap_col_w: root.grid_snap_col_w;
+                grid_snap_row_h: root.grid_snap_row_h;
                 show_layer: true;
                 layer <=> root.ticker_dropdown_layer;
             }
@@ -4088,6 +4150,8 @@ export component AppWindow inherits Window {
                 target_h: root.chart_popout_h;
                 grid_col_w: root.grid_col_w;
                 grid_row_h: root.grid_row_h;
+                grid_snap_col_w: root.grid_snap_col_w;
+                grid_snap_row_h: root.grid_snap_row_h;
                 show_layer: true;
                 layer <=> root.chart_popout_layer;
             }
@@ -4226,6 +4290,8 @@ export component AppWindow inherits Window {
             ph: root.chart_popout_h;
             grid_col_w: root.grid_col_w;
             grid_row_h: root.grid_row_h;
+            grid_snap_col_w: root.grid_snap_col_w;
+            grid_snap_row_h: root.grid_snap_row_h;
             z: 0;
             allow_drag: false;
 
@@ -4300,6 +4366,8 @@ export component AppWindow inherits Window {
             ph: root.chart_popout_h;
             grid_col_w: root.grid_col_w;
             grid_row_h: root.grid_row_h;
+            grid_snap_col_w: root.grid_snap_col_w;
+            grid_snap_row_h: root.grid_snap_row_h;
             z: 2;
             allow_drag: false;
 
