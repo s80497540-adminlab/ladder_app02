@@ -34,7 +34,7 @@ jobs:
         working-directory: ./dydx_numero/v4-clients/v4-client-rs/ladder_app02
         run: |
           rustup target add x86_64-apple-darwin
-          BUILD_TARGET="${{ github.event_name == 'workflow_dispatch' && inputs.build || 'daemon' }}"
+          BUILD_TARGET="${{ github.event_name == 'workflow_dispatch' && inputs.build || 'both' }}"
           if [ "$BUILD_TARGET" = "daemon" ]; then
             cargo build --release --target x86_64-apple-darwin --bin data_daemon02
           elif [ "$BUILD_TARGET" = "gui" ]; then
