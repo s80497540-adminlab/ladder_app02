@@ -83,6 +83,29 @@ export struct HeatmapCell {
     color: color,
 }
 
+export struct VolumeProfileBar {
+    price: float,
+    volume: float,
+    normalized: float,  // 0..1
+}
+
+export struct LiquidityPoint {
+    x: float,  // time position 0..1
+    bid_liq: float,
+    ask_liq: float,
+}
+
+export struct ImbalancePoint {
+    x: float,  // time position 0..1
+    value: float,  // imbalance ratio
+}
+
+export struct SpreadPoint {
+    x: float,  // time position 0..1
+    spread: float,
+    spread_bps: float,
+}
+
 export struct Receipt {
     ts: string,
     ticker: string,
@@ -1863,6 +1886,10 @@ export component AppWindow inherits Window {
     in-out property <[DrawShape]> drawings;
     in-out property <[DrawTick]> draw_ticks;
     in-out property <[HeatmapCell]> heatmap_cells;
+    in-out property <[VolumeProfileBar]> volume_profile_bars;
+    in-out property <[LiquidityPoint]> liquidity_points;
+    in-out property <[ImbalancePoint]> imbalance_points;
+    in-out property <[SpreadPoint]> spread_points;
     in-out property <[Receipt]> receipts;
 
     in-out property <float> candle_midline;

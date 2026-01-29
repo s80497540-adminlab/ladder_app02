@@ -127,6 +127,32 @@ pub struct HeatmapSnapshot {
 }
 
 #[derive(Clone, Debug)]
+pub struct VolumeProfileLevel {
+    pub price: f64,
+    pub volume: f64,
+}
+
+#[derive(Clone, Debug)]
+pub struct LiquidityPoint {
+    pub ts_unix: u64,
+    pub bid_liq: f64,
+    pub ask_liq: f64,
+}
+
+#[derive(Clone, Debug)]
+pub struct ImbalancePoint {
+    pub ts_unix: u64,
+    pub imbalance: f64,
+}
+
+#[derive(Clone, Debug)]
+pub struct SpreadPoint {
+    pub ts_unix: u64,
+    pub spread: f64,
+    pub spread_bps: f64, // basis points
+}
+
+#[derive(Clone, Debug)]
 pub struct OpenOrderInfo {
     pub ticker: String,
     pub client_id: u32,
@@ -159,6 +185,10 @@ pub struct AppState {
     pub chart_view_mode: String,
     pub heatmap_enabled: bool,
     pub heatmap_snapshots: VecDeque<HeatmapSnapshot>,
+    pub volume_profile: Vec<VolumeProfileLevel>,
+    pub liquidity_history: VecDeque<LiquidityPoint>,
+    pub imbalance_history: VecDeque<ImbalancePoint>,
+    pub spread_history: VecDeque<SpreadPoint>,
     pub depth_enabled: bool,
     pub trades_enabled: bool,
     pub volume_enabled: bool,
@@ -382,6 +412,10 @@ impl Default for AppState {
             chart_view_mode: "Chart".to_string(),
             heatmap_enabled: false,
             heatmap_snapshots: VecDeque::new(),
+            volume_profile: Vec::new(),
+            liquidity_history: VecDeque::new(),
+            imbalance_history: VecDeque::new(),
+            spread_history: VecDeque::new(),
             depth_enabled: true,
             trades_enabled: true,
             volume_enabled: true,
