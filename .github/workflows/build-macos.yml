@@ -2,6 +2,11 @@ name: Build macOS Binary
 
 on:
   workflow_dispatch:  # Manual trigger
+    inputs:
+      build:
+        description: "Build target: daemon, gui, or both"
+        required: true
+        default: "daemon"
   push:
     branches:
       - optimization_two
@@ -25,23 +30,34 @@ jobs:
         run: |
           brew install cmake pkg-config openssl
           
-      - name: Build macOS binaries (GUI + Daemon)
+      - name: Build macOS binaries
         working-directory: ./dydx_numero/v4-clients/v4-client-rs/ladder_app02
         run: |
           rustup target add x86_64-apple-darwin
-          cargo build --release --target x86_64-apple-darwin --bin ladder_app02
-          cargo build --release --target x86_64-apple-darwin --bin data_daemon02
+          BUILD_TARGET="${{ github.event_name == 'workflow_dispatch' && inputs.build || 'daemon' }}"
+          if [ "$BUILD_TARGET" = "daemon" ]; then
+            cargo build --release --target x86_64-apple-darwin --bin data_daemon02
+          elif [ "$BUILD_TARGET" = "gui" ]; then
+            cargo build --release --target x86_64-apple-darwin --bin ladder_app02
+          else
+            cargo build --release --target x86_64-apple-darwin --bin ladder_app02
+            cargo build --release --target x86_64-apple-darwin --bin data_daemon02
+          fi
           
       - name: Create release directory
         run: |
           mkdir -p releases
-          cp ./dydx_numero/v4-clients/v4-client-rs/target/x86_64-apple-darwin/release/ladder_app02 ./releases/ladder_app02-macos-intel
-          cp ./dydx_numero/v4-clients/v4-client-rs/target/x86_64-apple-darwin/release/data_daemon02 ./releases/data_daemon02-macos-intel
+          if [ -f ./dydx_numero/v4-clients/v4-client-rs/target/x86_64-apple-darwin/release/ladder_app02 ]; then
+            cp ./dydx_numero/v4-clients/v4-client-rs/target/x86_64-apple-darwin/release/ladder_app02 ./releases/ladder_app02-macos-intel
+          fi
+          if [ -f ./dydx_numero/v4-clients/v4-client-rs/target/x86_64-apple-darwin/release/data_daemon02 ]; then
+            cp ./dydx_numero/v4-clients/v4-client-rs/target/x86_64-apple-darwin/release/data_daemon02 ./releases/data_daemon02-macos-intel
+          fi
           
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ladder_app02-macos-intel
+          name: macos-intel-${{ github.event_name == 'workflow_dispatch' && inputs.build || 'daemon' }}
           path: |
             releases/ladder_app02-macos-intel
             releases/data_daemon02-macos-intel
@@ -50,5 +66,8 @@ jobs:
       - name: Get binary info
         run: |
           ls -lh releases/
-          file releases/ladder_app02-macos-intel
-          file releases/data_daemon02-macos-intel
+          for bin in releases/*; do
+            if [ -f "$bin" ]; then
+              file "$bin"
+            fi
+          done
