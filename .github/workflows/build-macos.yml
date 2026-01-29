@@ -25,25 +25,30 @@ jobs:
         run: |
           brew install cmake pkg-config openssl
           
-      - name: Build macOS binary
+      - name: Build macOS binaries (GUI + Daemon)
         working-directory: ./dydx_numero/v4-clients/v4-client-rs/ladder_app02
         run: |
           rustup target add x86_64-apple-darwin
-          cargo build --release --target x86_64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin --bin ladder_app02
+          cargo build --release --target x86_64-apple-darwin --bin data_daemon02
           
       - name: Create release directory
         run: |
           mkdir -p releases
           cp ./dydx_numero/v4-clients/v4-client-rs/target/x86_64-apple-darwin/release/ladder_app02 ./releases/ladder_app02-macos-intel
+          cp ./dydx_numero/v4-clients/v4-client-rs/target/x86_64-apple-darwin/release/data_daemon02 ./releases/data_daemon02-macos-intel
           
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ladder_app02-macos-intel
-          path: releases/ladder_app02-macos-intel
+          path: |
+            releases/ladder_app02-macos-intel
+            releases/data_daemon02-macos-intel
           retention-days: 30
           
       - name: Get binary info
         run: |
-          ls -lh releases/ladder_app02-macos-intel
+          ls -lh releases/
           file releases/ladder_app02-macos-intel
+          file releases/data_daemon02-macos-intel
