@@ -1,0 +1,46 @@
+name: Build macOS Daemon Only
+
+on:
+  workflow_dispatch:  # Manual trigger only
+      
+jobs:
+  build-macos-daemon:
+    runs-on: macos-15-intel  # Intel x86_64 runner
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+          
+      - name: Install dependencies
+        run: |
+          brew install cmake pkg-config openssl
+          
+      - name: Build macOS daemon only
+        working-directory: ./dydx_numero/v4-clients/v4-client-rs/ladder_app02
+        run: |
+          rustup target add x86_64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin --bin data_daemon02
+          
+      - name: Create release directory
+        run: |
+          mkdir -p releases
+          cp ./dydx_numero/v4-clients/v4-client-rs/target/x86_64-apple-darwin/release/data_daemon02 ./releases/data_daemon02-macos-intel
+          
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: data_daemon02-macos-intel
+          path: releases/data_daemon02-macos-intel
+          retention-days: 30
+          
+      - name: Get binary info
+        run: |
+          ls -lh releases/data_daemon02-macos-intel
+          file releases/data_daemon02-macos-intel
