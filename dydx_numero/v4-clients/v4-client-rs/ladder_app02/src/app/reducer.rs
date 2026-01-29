@@ -1042,6 +1042,9 @@ fn reduce_feed(state: &mut AppState, ev: FeedEvent) -> bool {
                 });
             }
 
+            // Collect indicator data
+            collect_indicator_data(state, ts_unix, &bids, &asks);
+
             let is_current = ticker.is_empty() || ticker == state.current_ticker;
             if is_current && state.depth_enabled {
                 let depth = state.dom_depth_levels as usize;
@@ -1374,4 +1377,74 @@ fn build_book_rows(levels: &[crate::feed_shared::BookLevel], is_bid: bool, depth
         });
     }
     out
+}
+
+// Collect indicator data on each book update
+fn collect_indicator_data(
+    state: &mut AppState,
+    ts_unix: u64,
+    bids: &[crate::feed_shared::BookLevel],
+    asks: &[crate::feed_shared::BookLevel],
+) {
+    const MAX_HISTORY: usize = 5000;
+    const COLLECTION_INTERVAL_SECS: u64 = 5;
+
+    // Only collect every N seconds to avoid overwhelming the UI
+    if let Some(last) = state.liquidity_history.back() {
+        if ts_unix - last.ts_unix < COLLECTION_INTERVAL_SECS {
+            return;
+        }
+    }
+
+    // Calculate liquidity (sum of top 10 levels)
+    let bid_liq: f64 = bids.iter().take(10).map(|b| b.size).sum();
+    let ask_liq: f64 = asks.iter().take(10).map(|a| a.size).sum();
+
+    state.liquidity_history.push_back(LiquidityPoint {
+        ts_unix,
+        bid_liq,
+        ask_liq,
+    });
+    if state.liquidity_history.len() > MAX_HISTORY {
+        state.liquidity_history.pop_front();
+    }
+
+    // Calculate imbalance (-1 = all ask, +1 = all bid)
+    let total_liq = bid_liq + ask_liq;
+    let imbalance = if total_liq > 0.0 {
+        (bid_liq - ask_liq) / total_liq
+    } else {
+        0.0
+    };
+
+    state.imbalance_history.push_back(ImbalancePoint {
+        ts_unix,
+        imbalance,
+    });
+    if state.imbalance_history.len() > MAX_HISTORY {
+        state.imbalance_history.pop_front();
+    }
+
+    // Calculate spread
+    if let (Some(best_bid), Some(best_ask)) = (bids.first(), asks.first()) {
+        let spread = best_ask.price - best_bid.price;
+        let mid = (best_bid.price + best_ask.price) / 2.0;
+        let spread_bps = if mid > 0.0 {
+            (spread / mid) * 10000.0
+        } else {
+            0.0
+        };
+
+        state.spread_history.push_back(SpreadPoint {
+            ts_unix,
+            spread,
+            spread_bps,
+        });
+        if state.spread_history.len() > MAX_HISTORY {
+            state.spread_history.pop_front();
+        }
+    }
+
+    // Volume profile is built from trade data, not book data
+    // That will be handled separately when trade events come in
 }

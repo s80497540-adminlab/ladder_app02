@@ -84,25 +84,25 @@ export struct HeatmapCell {
 }
 
 export struct VolumeProfileBar {
-    price: float,
-    volume: float,
-    normalized: float,  // 0..1
+    norm_price: float,
+    buy_volume: float,
+    sell_volume: float,
 }
 
 export struct LiquidityPoint {
-    x: float,  // time position 0..1
+    ts_unix: int,
     bid_liq: float,
     ask_liq: float,
 }
 
 export struct ImbalancePoint {
-    x: float,  // time position 0..1
-    value: float,  // imbalance ratio
+    ts_unix: int,
+    imbalance: float,
 }
 
 export struct SpreadPoint {
-    x: float,  // time position 0..1
-    spread: float,
+    ts_unix: int,
+    spread_abs: float,
     spread_bps: float,
 }
 
@@ -1486,6 +1486,118 @@ component PnLSparkline inherits Rectangle {
     }
 }
 
+// ---------- Volume Profile Panel (horizontal bars showing volume at price levels) ----------
+
+component VolumeProfilePanel inherits Rectangle {
+    in property <[VolumeProfileBar]> bars;
+    in property <color> buy_color: #60ff6080;
+    in property <color> sell_color: #ff606080;
+    background: #00000000;
+
+    for bar in bars : Rectangle {
+        // Position vertically based on normalized price (0 = bottom, 1 = top)
+        y: (1.0 - bar.norm_price) * parent.height;
+        height: parent.height / bars.length;
+        
+        // Buy volume bar (left side, green)
+        Rectangle {
+            x: 0px;
+            width: (bar.buy_volume / (bar.buy_volume + bar.sell_volume)) * parent.width * 0.48;
+            background: buy_color;
+        }
+        
+        // Sell volume bar (right side, red)
+        Rectangle {
+            x: parent.width * 0.52 + ((1.0 - bar.sell_volume / (bar.buy_volume + bar.sell_volume)) * parent.width * 0.48);
+            width: (bar.sell_volume / (bar.buy_volume + bar.sell_volume)) * parent.width * 0.48;
+            background: sell_color;
+        }
+    }
+}
+
+// ---------- Liquidity Chart (bid/ask liquidity over time) ----------
+
+component LiquidityChart inherits Rectangle {
+    in property <[LiquidityPoint]> points;
+    in property <float> pan_x: 0.0;
+    in property <float> pan_y: 0.0;
+    in property <bool> normalize: true;
+    in property <color> bid_color: #40ff40;
+    in property <color> ask_color: #ff4040;
+    background: #00000000;
+
+    for pt[i] in points : Rectangle {
+        x: (i / points.length) * parent.width;
+        y: normalize ? parent.height * (1.0 - pt.bid_liq / 10000.0) : parent.height - (pt.bid_liq * 1px);
+        width: 3px;
+        height: 3px;
+        background: bid_color;
+        border-radius: 1.5px;
+    }
+
+    for pt[i] in points : Rectangle {
+        x: (i / points.length) * parent.width;
+        y: normalize ? parent.height * (1.0 - pt.ask_liq / 10000.0) : parent.height - (pt.ask_liq * 1px);
+        width: 3px;
+        height: 3px;
+        background: ask_color;
+        border-radius: 1.5px;
+    }
+}
+
+// ---------- Imbalance Indicator (order book imbalance ratio over time) ----------
+
+component ImbalanceChart inherits Rectangle {
+    in property <[ImbalancePoint]> points;
+    in property <bool> normalize: true;
+    in property <color> imbalance_color: #ffaa00;
+    background: #00000000;
+
+    Rectangle {
+        y: parent.height * 0.5;
+        height: 1px;
+        width: parent.width;
+        background: #808080;
+    }
+
+    for pt[i] in points : Rectangle {
+        x: (i / points.length) * parent.width;
+        y: normalize ? parent.height * (0.5 - pt.imbalance * 0.5) : parent.height * 0.5 - (pt.imbalance * 1px);
+        width: 3px;
+        height: 3px;
+        background: imbalance_color;
+        border-radius: 1.5px;
+    }
+}
+
+// ---------- Spread Chart (bid-ask spread + bps over time) ----------
+
+component SpreadChart inherits Rectangle {
+    in property <[SpreadPoint]> points;
+    in property <bool> normalize: true;
+    in property <color> spread_color: #00aaff;
+    in property <color> bps_color: #ff00aa;
+    background: #00000000;
+
+    for pt[i] in points : Rectangle {
+        x: (i / points.length) * parent.width;
+        y: normalize ? parent.height * (1.0 - pt.spread_abs / 100.0) : parent.height - (pt.spread_abs * 1px);
+        width: 3px;
+        height: 3px;
+        background: spread_color;
+        border-radius: 1.5px;
+    }
+
+    for pt[i] in points : Rectangle {
+        x: (i / points.length) * parent.width;
+        y: normalize ? parent.height * (1.0 - pt.spread_bps / 200.0) : parent.height - (pt.spread_bps * 1px);
+        width: 2px;
+        height: 2px;
+        background: bps_color;
+        border-radius: 1px;
+    }
+}
+
 // ---------- Popout chart panel (draggable + resizable) --------------
 
 component ChartPopoutPanel inherits Rectangle {
@@ -1891,6 +2003,16 @@ export component AppWindow inherits Window {
     in-out property <[ImbalancePoint]> imbalance_points;
     in-out property <[SpreadPoint]> spread_points;
     in-out property <[Receipt]> receipts;
+    
+    in-out property <bool> show_volume_profile: false;
+    in-out property <bool> show_liquidity_chart: false;
+    in-out property <bool> show_imbalance_chart: false;
+    in-out property <bool> show_spread_chart: false;
+    
+    in-out property <bool> volume_profile_normalize: true;
+    in-out property <bool> liquidity_normalize: true;
+    in-out property <bool> imbalance_normalize: true;
+    in-out property <bool> spread_normalize: true;
 
     in-out property <float> candle_midline;
     in-out property <string> axis_price_unit: "";
@@ -3286,6 +3408,55 @@ export component AppWindow inherits Window {
                     draw_update(x, y) => { root.draw_update(x, y); }
                     draw_end(x, y) => { root.draw_end(x, y); }
                     draw_poly_sides_delta(delta) => { root.draw_poly_sides_delta(delta); }
+                }
+
+                // Volume Profile Panel (right side of chart)
+                VolumeProfilePanel {
+                    x: chart_x + chart_w - 120px;
+                    y: header_h + v_gap;
+                    width: 120px;
+                    height: chart_h;
+                    bars: root.volume_profile_bars;
+                    visible: root.show_volume_profile;
+                }
+
+                // Indicator panels below main chart
+                property <length> indicator_h: 80px;
+                property <length> indicator_gap: 4px;
+
+                // Liquidity Chart
+                LiquidityChart {
+                    x: chart_x;
+                    y: header_h + v_gap + chart_h + indicator_gap + 30px;
+                    width: chart_w;
+                    height: indicator_h;
+                    points: root.liquidity_points;
+                    pan_x: root.chart_pan_x;
+                    pan_y: 0.0;
+                    normalize: root.liquidity_normalize;
+                    visible: root.show_liquidity_chart;
+                }
+
+                // Imbalance Chart
+                ImbalanceChart {
+                    x: chart_x;
+                    y: header_h + v_gap + chart_h + indicator_gap + 30px + indicator_h + indicator_gap;
+                    width: chart_w;
+                    height: indicator_h;
+                    points: root.imbalance_points;
+                    normalize: root.imbalance_normalize;
+                    visible: root.show_imbalance_chart;
+                }
+
+                // Spread Chart
+                SpreadChart {
+                    x: chart_x;
+                    y: header_h + v_gap + chart_h + indicator_gap + 30px + (indicator_h + indicator_gap) * 2;
+                    width: chart_w;
+                    height: indicator_h;
+                    points: root.spread_points;
+                    normalize: root.spread_normalize;
+                    visible: root.show_spread_chart;
                 }
 
                 // Price axis ticks (left)

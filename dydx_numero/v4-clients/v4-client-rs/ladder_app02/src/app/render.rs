@@ -1,7 +1,8 @@
 use super::state::*;
 use crate::{
-    AxisTick, BookLevel, CandlePoint, CandleRow, DrawShape, DrawTick, HeatmapCell, Receipt, Trade,
-    TickerFeedRow,
+    AxisTick, BookLevel, CandlePoint, CandleRow, DrawShape, DrawTick, HeatmapCell, 
+    ImbalancePoint, LiquidityPoint, Receipt, SpreadPoint, Trade, TickerFeedRow, 
+    VolumeProfileBar,
 };
 use chrono::{DateTime, NaiveDateTime, Utc};
 use slint::{Color, ModelRc, SharedString, VecModel};
@@ -25,6 +26,18 @@ pub fn render(state: &AppState, ui: &crate::AppWindow) {
     ui.set_chart_view_mode(SharedString::from(state.chart_view_mode.clone()));
     ui.set_heatmap_enabled(state.heatmap_enabled);
     ui.set_session_recording(state.session_recording);
+    
+    // Chart toggles
+    ui.set_show_volume_profile(state.show_volume_profile);
+    ui.set_show_liquidity_chart(state.show_liquidity_chart);
+    ui.set_show_imbalance_chart(state.show_imbalance_chart);
+    ui.set_show_spread_chart(state.show_spread_chart);
+    
+    // Normalization modes
+    ui.set_volume_profile_normalize(state.volume_profile_normalize);
+    ui.set_liquidity_normalize(state.liquidity_normalize);
+    ui.set_imbalance_normalize(state.imbalance_normalize);
+    ui.set_spread_normalize(state.spread_normalize);
 
     ui.set_trade_side(SharedString::from(state.trade_side.clone()));
     ui.set_trade_order_type(SharedString::from(state.trade_order_type.clone()));
@@ -352,6 +365,12 @@ pub fn render(state: &AppState, ui: &crate::AppWindow) {
         Vec::new()
     };
     ui.set_heatmap_cells(ModelRc::new(VecModel::from(heatmap_cells)));
+
+    // Render new indicator data
+    render_volume_profile(state, ui);
+    render_liquidity_history(state, ui);
+    render_imbalance_history(state, ui);
+    render_spread_history(state, ui);
 
     let mut drawings: Vec<DrawShape> = state
         .drawings
@@ -986,4 +1005,62 @@ fn build_pencil_commands(shape: &super::state::DrawShapeState) -> String {
         }
     }
     out
+}
+
+// Render volume profile bars
+fn render_volume_profile(state: &AppState, ui: &crate::AppWindow) {
+    use crate::VolumeProfileBar;
+
+    // Volume profile is currently empty, will be populated from trade data
+    ui.set_volume_profile_bars(ModelRc::new(VecModel::from(Vec::<VolumeProfileBar>::new())));
+}
+
+// Render liquidity history
+fn render_liquidity_history(state: &AppState, ui: &crate::AppWindow) {
+    use crate::LiquidityPoint;
+
+    let points: Vec<LiquidityPoint> = state
+        .liquidity_history
+        .iter()
+        .map(|pt| LiquidityPoint {
+            ts_unix: pt.ts_unix as i32,
+            bid_liq: pt.bid_liq as f32,
+            ask_liq: pt.ask_liq as f32,
+        })
+        .collect();
+
+    ui.set_liquidity_points(ModelRc::new(VecModel::from(points)));
+}
+
+// Render imbalance history
+fn render_imbalance_history(state: &AppState, ui: &crate::AppWindow) {
+    use crate::ImbalancePoint;
+
+    let points: Vec<ImbalancePoint> = state
+        .imbalance_history
+        .iter()
+        .map(|pt| ImbalancePoint {
+            ts_unix: pt.ts_unix as i32,
+            imbalance: pt.imbalance as f32,
+        })
+        .collect();
+
+    ui.set_imbalance_points(ModelRc::new(VecModel::from(points)));
+}
+
+// Render spread history
+fn render_spread_history(state: &AppState, ui: &crate::AppWindow) {
+    use crate::SpreadPoint;
+
+    let points: Vec<SpreadPoint> = state
+        .spread_history
+        .iter()
+        .map(|pt| SpreadPoint {
+            ts_unix: pt.ts_unix as i32,
+            spread_abs: pt.spread as f32,
+            spread_bps: pt.spread_bps as f32,
+        })
+        .collect();
+
+    ui.set_spread_points(ModelRc::new(VecModel::from(points)));
 }

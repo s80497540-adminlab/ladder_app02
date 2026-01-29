@@ -189,6 +189,19 @@ pub struct AppState {
     pub liquidity_history: VecDeque<LiquidityPoint>,
     pub imbalance_history: VecDeque<ImbalancePoint>,
     pub spread_history: VecDeque<SpreadPoint>,
+    
+    // Chart visibility toggles
+    pub show_volume_profile: bool,
+    pub show_liquidity_chart: bool,
+    pub show_imbalance_chart: bool,
+    pub show_spread_chart: bool,
+    
+    // Normalization modes
+    pub volume_profile_normalize: bool,
+    pub liquidity_normalize: bool,
+    pub imbalance_normalize: bool,
+    pub spread_normalize: bool,
+    
     pub depth_enabled: bool,
     pub trades_enabled: bool,
     pub volume_enabled: bool,
@@ -416,6 +429,17 @@ impl Default for AppState {
             liquidity_history: VecDeque::new(),
             imbalance_history: VecDeque::new(),
             spread_history: VecDeque::new(),
+            
+            show_volume_profile: false,
+            show_liquidity_chart: false,
+            show_imbalance_chart: false,
+            show_spread_chart: false,
+            
+            volume_profile_normalize: true,
+            liquidity_normalize: true,
+            imbalance_normalize: true,
+            spread_normalize: true,
+            
             depth_enabled: true,
             trades_enabled: true,
             volume_enabled: true,
@@ -595,6 +619,21 @@ impl AppState {
             chart_view_mode: ui.get_chart_view_mode().to_string(),
             heatmap_enabled: ui.get_heatmap_enabled(),
             heatmap_snapshots: VecDeque::new(),
+            volume_profile: Vec::new(),
+            liquidity_history: VecDeque::new(),
+            imbalance_history: VecDeque::new(),
+            spread_history: VecDeque::new(),
+            
+            show_volume_profile: ui.get_show_volume_profile(),
+            show_liquidity_chart: ui.get_show_liquidity_chart(),
+            show_imbalance_chart: ui.get_show_imbalance_chart(),
+            show_spread_chart: ui.get_show_spread_chart(),
+            
+            volume_profile_normalize: ui.get_volume_profile_normalize(),
+            liquidity_normalize: ui.get_liquidity_normalize(),
+            imbalance_normalize: ui.get_imbalance_normalize(),
+            spread_normalize: ui.get_spread_normalize(),
+            
             depth_enabled: ui.get_show_depth(),
             trades_enabled: ui.get_show_trades(),
             volume_enabled: ui.get_show_volume(),
