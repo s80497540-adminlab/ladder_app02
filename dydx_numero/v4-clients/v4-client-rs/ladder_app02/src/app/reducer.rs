@@ -974,6 +974,11 @@ fn reduce_feed(state: &mut AppState, ev: FeedEvent) -> bool {
             if sz > 0.0 && state.volume_enabled && state.chart_enabled {
                 state.on_trade_volume(ts_unix, sz);
             }
+            
+            // ✅ add to volume profile
+            if sz > 0.0 && price.is_finite() && price > 0.0 && state.show_volume_profile {
+                state.add_to_volume_profile(price, sz, is_buy);
+            }
 
             true
         }

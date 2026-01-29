@@ -129,7 +129,8 @@ pub struct HeatmapSnapshot {
 #[derive(Clone, Debug)]
 pub struct VolumeProfileLevel {
     pub price: f64,
-    pub volume: f64,
+    pub buy_volume: f64,
+    pub sell_volume: f64,
 }
 
 #[derive(Clone, Debug)]
@@ -1671,6 +1672,45 @@ impl AppState {
 
         if self.render_all_candles && mid_for_line > 0.0 {
             self.rebuild_candle_points(mid_for_line);
+        }
+    }
+
+    /// Aggregate trade into volume profile by price bucket
+    pub fn add_to_volume_profile(&mut self, price: f64, volume: f64, is_buy: bool) {
+        const MAX_LEVELS: usize = 100;
+        const PRICE_BUCKET_SIZE: f64 = 0.5; // Bucket trades within $0.50 intervals
+        
+        if !price.is_finite() || price <= 0.0 || !volume.is_finite() || volume <= 0.0 {
+            return;
+        }
+        
+        // Round price to nearest bucket
+        let bucket_price = (price / PRICE_BUCKET_SIZE).round() * PRICE_BUCKET_SIZE;
+        
+        // Find or create level
+        if let Some(level) = self.volume_profile.iter_mut().find(|l| (l.price - bucket_price).abs() < 0.01) {
+            if is_buy {
+                level.buy_volume += volume;
+            } else {
+                level.sell_volume += volume;
+            }
+        } else {
+            let (buy_vol, sell_vol) = if is_buy { (volume, 0.0) } else { (0.0, volume) };
+            self.volume_profile.push(VolumeProfileLevel {
+                price: bucket_price,
+                buy_volume: buy_vol,
+                sell_volume: sell_vol,
+            });
+            
+            // Keep only top N levels by volume
+            if self.volume_profile.len() > MAX_LEVELS {
+                self.volume_profile.sort_by(|a, b| {
+                    let total_a = a.buy_volume + a.sell_volume;
+                    let total_b = b.buy_volume + b.sell_volume;
+                    total_b.partial_cmp(&total_a).unwrap_or(std::cmp::Ordering::Equal)
+                });
+                self.volume_profile.truncate(MAX_LEVELS);
+            }
         }
     }
 

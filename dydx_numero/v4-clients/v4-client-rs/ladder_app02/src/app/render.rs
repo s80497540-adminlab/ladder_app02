@@ -1011,8 +1011,34 @@ fn build_pencil_commands(shape: &super::state::DrawShapeState) -> String {
 fn render_volume_profile(state: &AppState, ui: &crate::AppWindow) {
     use crate::VolumeProfileBar;
 
-    // Volume profile is currently empty, will be populated from trade data
-    ui.set_volume_profile_bars(ModelRc::new(VecModel::from(Vec::<VolumeProfileBar>::new())));
+    if state.volume_profile.is_empty() {
+        ui.set_volume_profile_bars(ModelRc::new(VecModel::from(Vec::<VolumeProfileBar>::new())));
+        return;
+    }
+
+    // Find price range for normalization
+    let min_price = state.volume_profile.iter().map(|l| l.price).fold(f64::INFINITY, f64::min);
+    let max_price = state.volume_profile.iter().map(|l| l.price).fold(f64::NEG_INFINITY, f64::max);
+    let price_range = max_price - min_price;
+
+    let bars: Vec<VolumeProfileBar> = state
+        .volume_profile
+        .iter()
+        .map(|level| {
+            let norm_price = if price_range > 0.0 {
+                ((level.price - min_price) / price_range) as f32
+            } else {
+                0.5
+            };
+            VolumeProfileBar {
+                norm_price,
+                buy_volume: level.buy_volume as f32,
+                sell_volume: level.sell_volume as f32,
+            }
+        })
+        .collect();
+
+    ui.set_volume_profile_bars(ModelRc::new(VecModel::from(bars)));
 }
 
 // Render liquidity history
