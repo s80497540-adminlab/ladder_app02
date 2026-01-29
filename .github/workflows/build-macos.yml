@@ -1,0 +1,48 @@
+name: Build macOS Binary
+
+on:
+  workflow_dispatch:  # Manual trigger
+  push:
+    branches:
+      - optimization_two
+      
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+          
+      - name: Install dependencies
+        run: |
+          brew install cmake pkg-config openssl
+          
+      - name: Build macOS binary
+        working-directory: ./dydx_numero/v4-clients/v4-client-rs/ladder_app02
+        run: |
+          cargo build --release
+          
+      - name: Create release directory
+        run: |
+          mkdir -p releases
+          cp ./dydx_numero/v4-clients/v4-client-rs/target/release/ladder_app02 ./releases/ladder_app02-macos-intel
+          
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ladder_app02-macos-intel
+          path: releases/ladder_app02-macos-intel
+          retention-days: 30
+          
+      - name: Get binary info
+        run: |
+          ls -lh releases/ladder_app02-macos-intel
+          file releases/ladder_app02-macos-intel

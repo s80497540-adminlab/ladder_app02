@@ -1,16 +1,3 @@
-[net]
-# Force Cargo to use the Git-based registry instead of the newer HTTP sparse protocol
-git-fetch-with-cli = true
-retry = 3
-
-[registries.crates-io]
-protocol = "sparse"
-
-[http]
-# Disabling revoke check helps if the proxy intercepts SSL certificates
-proxy = ""
-check-revoke = false
-
-[https]
-proxy = ""
-
+[target.x86_64-apple-darwin]
+linker = "clang"
+ar = "ar"
