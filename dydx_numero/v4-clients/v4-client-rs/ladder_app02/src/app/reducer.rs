@@ -310,6 +310,7 @@ fn reduce_ui(state: &mut AppState, ev: UiEvent) -> bool {
             state.order_message = format!("TF set to {}s", state.candle_tf_secs);
 
             debug_hooks::log_candle_reset("TF changed; rebuilding candles for new bucket size");
+            state.reset_trade_candles();
             if state.chart_enabled {
                 if !state.history_valve_open {
                     state.load_session_ticks_for_view(state.render_all_candles);
@@ -325,6 +326,7 @@ fn reduce_ui(state: &mut AppState, ev: UiEvent) -> bool {
 
             // ✅ Rebuild cache under new window
             debug_hooks::log_candle_reset("window changed; rebuilding candle cache");
+            state.reset_trade_candles();
             if state.chart_enabled {
                 if !state.history_valve_open {
                     state.load_session_ticks_for_view(state.render_all_candles);
@@ -339,7 +341,7 @@ fn reduce_ui(state: &mut AppState, ev: UiEvent) -> bool {
             state.order_message = format!("Price mode: {}", state.candle_price_mode);
 
             debug_hooks::log_candle_reset("price mode changed; rebuilding candles");
-            if state.chart_enabled {
+            if state.chart_enabled && state.candle_price_mode != "Trade" {
                 if !state.history_valve_open {
                     state.load_session_ticks_for_view(state.render_all_candles);
                 }
@@ -370,6 +372,11 @@ fn reduce_ui(state: &mut AppState, ev: UiEvent) -> bool {
             if !full {
                 state.candle_points.clear();
                 state.candle_midline = 0.5;
+                state.trade_candle_points.clear();
+                state.trade_candle_midline = 0.5;
+            }
+            if full {
+                state.rebuild_trade_candle_points();
             }
             if state.chart_enabled && !state.history_valve_open {
                 if state.load_session_ticks_for_view(state.render_all_candles) {
@@ -952,7 +959,7 @@ fn reduce_feed(state: &mut AppState, ev: FeedEvent) -> bool {
                 }
             }
 
-            if state.candle_price_mode == "Trade" && price.is_finite() && price > 0.0 {
+            if price.is_finite() && price > 0.0 {
                 state.on_trade_tick(ts_unix, price);
             }
 

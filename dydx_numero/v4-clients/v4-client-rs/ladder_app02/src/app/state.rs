@@ -269,8 +269,14 @@ pub struct AppState {
     pub candle_points: Vec<CandlePointState>,
     pub candle_midline: f32,
 
+    // Trade-only candles for chart + rows
+    pub trade_candles: Vec<Candle>,
+    pub trade_candle_points: Vec<CandlePointState>,
+    pub trade_candle_midline: f32,
+
     // ✅ Candle builder internal state
     pub candle_active_bucket: Option<u64>,
+    pub trade_candle_active_bucket: Option<u64>,
     pub mid_ticks: VecDeque<MidTick>,
     pub candle_last_ts: HashMap<String, u64>,
     pub pending_mid_ticks: VecDeque<MidTick>,
@@ -413,7 +419,7 @@ impl Default for AppState {
 
             candle_tf_secs: 60,
             candle_window_minutes: 60,
-            candle_price_mode: "Trade".to_string(),
+            candle_price_mode: "Mid".to_string(),
             dom_depth_levels: 20,
             render_all_candles: false,
             session_recording: true,
@@ -504,7 +510,11 @@ impl Default for AppState {
             candles: Vec::new(),
             candle_points: Vec::new(),
             candle_midline: 0.5,
+            trade_candles: Vec::new(),
+            trade_candle_points: Vec::new(),
+            trade_candle_midline: 0.5,
             candle_active_bucket: None,
+            trade_candle_active_bucket: None,
             mid_ticks: VecDeque::new(),
             candle_last_ts: HashMap::new(),
             pending_mid_ticks: VecDeque::new(),
@@ -704,7 +714,11 @@ impl AppState {
             candles: Vec::new(),
             candle_points: Vec::new(),
             candle_midline: 0.5,
+            trade_candles: Vec::new(),
+            trade_candle_points: Vec::new(),
+            trade_candle_midline: 0.5,
             candle_active_bucket: None,
+            trade_candle_active_bucket: None,
             mid_ticks: VecDeque::new(),
             candle_last_ts: HashMap::new(),
             pending_mid_ticks: VecDeque::new(),
@@ -758,12 +772,23 @@ impl AppState {
     }
 
     pub fn reset_candles(&mut self) {
+        self.reset_order_candles();
+        self.reset_trade_candles();
+        debug_hooks::log_candle_reset("explicit reset_candles call");
+    }
+
+    fn reset_order_candles(&mut self) {
         self.candles.clear();
         self.candle_points.clear();
         self.candle_midline = 0.5;
         self.candle_active_bucket = None;
+    }
 
-        debug_hooks::log_candle_reset("explicit reset_candles call");
+    pub fn reset_trade_candles(&mut self) {
+        self.trade_candles.clear();
+        self.trade_candle_points.clear();
+        self.trade_candle_midline = 0.5;
+        self.trade_candle_active_bucket = None;
     }
 
     pub fn is_ticker_feed_enabled(&self, ticker: &str) -> bool {
@@ -806,11 +831,6 @@ impl AppState {
         let ticker = self.current_ticker.clone();
         self.persist_mid_tick_for_ticker(&ticker, ts_unix, mid, bid, ask);
 
-        // Trade chart mode ignores book-driven candle updates
-        if self.candle_price_mode == "Trade" {
-            return;
-        }
-
         let price = self.price_for_mode(mid, bid, ask);
         self.apply_mid_tick(ts_unix, price);
     }
@@ -820,7 +840,73 @@ impl AppState {
         if !price.is_finite() || price <= 0.0 {
             return;
         }
-        self.apply_mid_tick(ts_unix, price);
+        self.apply_trade_tick(ts_unix, price);
+    }
+
+    fn apply_trade_tick(&mut self, ts_unix: u64, price: f64) {
+        let tf = self.tf_secs_u64();
+        let bucket = Self::bucket_start(ts_unix, tf);
+
+        match self.trade_candle_active_bucket {
+            None => {
+                self.trade_candle_active_bucket = Some(bucket);
+                self.trade_candles.push(Candle {
+                    ts: format!("unix:{bucket}"),
+                    open: price,
+                    high: price,
+                    low: price,
+                    close: price,
+                    volume: 0.0,
+                });
+                debug_hooks::log_mid_bucket(ts_unix, bucket, price, self.trade_candles.len());
+            }
+            Some(active) if active == bucket => {
+                if let Some(last) = self.trade_candles.last_mut() {
+                    last.close = price;
+                    if price > last.high {
+                        last.high = price;
+                    }
+                    if price < last.low {
+                        last.low = price;
+                    }
+                }
+            }
+            Some(active) if bucket > active => {
+                let prev_close = self.trade_candles.last().map(|c| c.close).unwrap_or(price);
+
+                let mut b = active + tf;
+                while b < bucket {
+                    self.trade_candles.push(Candle {
+                        ts: format!("unix:{b}"),
+                        open: prev_close,
+                        high: prev_close,
+                        low: prev_close,
+                        close: prev_close,
+                        volume: 0.0,
+                    });
+                    debug_hooks::log_candle_gap(active, b);
+                    b += tf;
+                }
+
+                self.trade_candle_active_bucket = Some(bucket);
+                self.trade_candles.push(Candle {
+                    ts: format!("unix:{bucket}"),
+                    open: prev_close,
+                    high: price.max(prev_close),
+                    low: price.min(prev_close),
+                    close: price,
+                    volume: 0.0,
+                });
+                debug_hooks::log_mid_bucket(ts_unix, bucket, price, self.trade_candles.len());
+            }
+            Some(_) => {
+                return;
+            }
+        }
+
+        if self.render_all_candles && !self.history_loading {
+            self.rebuild_trade_candle_points();
+        }
     }
 
     fn record_mid_tick(&mut self, ts_unix: u64, mid: f64, bid: f64, ask: f64) {
@@ -908,9 +994,6 @@ impl AppState {
     }
 
     pub fn rebuild_candles_from_history(&mut self) {
-        if self.candle_price_mode == "Trade" {
-            return;
-        }
         if self.mid_ticks.is_empty() {
             self.load_mid_cache();
         }
@@ -936,7 +1019,7 @@ impl AppState {
             return;
         }
 
-        self.reset_candles();
+        self.reset_order_candles();
 
         let render_points = self.render_all_candles;
         if render_points {
@@ -1665,13 +1748,9 @@ impl AppState {
             return;
         }
 
-        if self.candle_price_mode == "Trade" {
-            // Trade-driven candles are handled by on_trade_tick.
-            if let Some(last) = self.candles.last_mut() {
-                last.volume += trade_size;
-                debug_hooks::log_candle_volume(ts_unix, trade_size, Some(last.ts.clone()));
-            }
-            return;
+        if let Some(last) = self.trade_candles.last_mut() {
+            last.volume += trade_size;
+            debug_hooks::log_candle_volume(ts_unix, trade_size, Some(last.ts.clone()));
         }
 
         // Ensure candle exists for this time (uses current mid if available)
@@ -1696,8 +1775,11 @@ impl AppState {
             self.candles.last().map(|c| c.close).unwrap_or(0.0)
         };
 
-        if self.render_all_candles && mid_for_line > 0.0 {
-            self.rebuild_candle_points(mid_for_line);
+        if self.render_all_candles {
+            if mid_for_line > 0.0 {
+                self.rebuild_candle_points(mid_for_line);
+            }
+            self.rebuild_trade_candle_points();
         }
     }
 
@@ -1796,6 +1878,61 @@ impl AppState {
 
         // Keep midline visually centered to avoid vertical drift as prices move.
         self.candle_midline = 0.5;
+    }
+
+    pub fn rebuild_trade_candle_points(&mut self) {
+        if self.trade_candles.is_empty() {
+            self.trade_candle_points.clear();
+            self.trade_candle_midline = 0.5;
+            return;
+        }
+
+        let mut lo = f64::INFINITY;
+        let mut hi = f64::NEG_INFINITY;
+        let mut vmax: f64 = 0.0;
+
+        for c in &self.trade_candles {
+            lo = lo.min(c.low);
+            hi = hi.max(c.high);
+            vmax = vmax.max(c.volume);
+        }
+
+        let mut span = hi - lo;
+        if !span.is_finite() || span <= 0.0 {
+            span = hi.abs().max(1.0);
+            lo = hi - span;
+        }
+        let pad = span * 0.02;
+        lo -= pad;
+        hi += pad;
+        let span = (hi - lo).max(1e-9);
+
+        let y = |price: f64| -> f32 { ((hi - price) / span).clamp(0.0, 1.0) as f32 };
+
+        let n = self.trade_candles.len().max(1);
+        let w = (1.0 / n as f32).clamp(0.01, 0.2);
+
+        self.trade_candle_points = self
+            .trade_candles
+            .iter()
+            .enumerate()
+            .map(|(i, c)| CandlePointState {
+                x: (i as f32 + 0.5) / n as f32,
+                w,
+                open: y(c.open),
+                high: y(c.high),
+                low: y(c.low),
+                close: y(c.close),
+                is_up: c.close >= c.open,
+                volume: if vmax > 0.0 {
+                    (c.volume / vmax).clamp(0.0, 1.0) as f32
+                } else {
+                    0.0
+                },
+            })
+            .collect();
+
+        self.trade_candle_midline = 0.5;
     }
 }
 

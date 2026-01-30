@@ -1421,33 +1421,33 @@ component CandleChart inherits Rectangle {
             let is_ctrl  = event.modifiers.control;
 
             let dir  = dy < 0px ? 1.0 : -1.0;
-            let step = is_ctrl ? 0.05 : 0.25;
+            let step = is_ctrl ? 0.01 : 0.08;
+            let z_min = 0.10;
+            let z_max = 32.0;
 
             if is_shift {
-                let old_z = Math.max(0.25, Math.min(8.0, root.x_zoom));
+                let old_z = Math.max(z_min, Math.min(z_max, root.x_zoom));
                 let cx = root.cursor_x;
                 let px = root.pan_x;
 
                 let xw = 0.5 + (cx - 0.5 - px) / old_z;
-
-                let new_z = Math.max(0.25, Math.min(8.0, old_z + dir * step));
+                let new_z = Math.max(z_min, Math.min(z_max, old_z + dir * step));
                 root.x_zoom = new_z;
 
                 let px2 = cx - 0.5 - (xw - 0.5) * new_z;
-                root.pan_x = Math.max(-2.0, Math.min(2.0, px2));
+                root.pan_x = Math.max(-4.0, Math.min(4.0, px2));
             } else {
-                let old_z = Math.max(0.25, Math.min(8.0, root.y_zoom));
+                let old_z = Math.max(z_min, Math.min(z_max, root.y_zoom));
                 let cy = root.cursor_y;
                 let py = root.pan_y;
                 let mid = root.mid_line_y;
 
                 let yw = mid + (cy - mid - py) / old_z;
-
-                let new_z = Math.max(0.25, Math.min(8.0, old_z + dir * step));
+                let new_z = Math.max(z_min, Math.min(z_max, old_z + dir * step));
                 root.y_zoom = new_z;
 
                 let py2 = cy - mid - (yw - mid) * new_z;
-                root.pan_y = Math.max(-1.0, Math.min(1.0, py2));
+                root.pan_y = Math.max(-2.0, Math.min(2.0, py2));
             }
 
             EventResult.accept
@@ -1620,8 +1620,9 @@ component ChartPopoutPanel inherits Rectangle {
     in property <[DrawShape]> drawings;
     in property <[DrawTick]> draw_ticks;
     in property <[HeatmapCell]> heatmap_cells;
-    in property <bool> heatmap_enabled;
-    in property <bool> advanced_mode;
+    in-out property <bool> heatmap_enabled;
+    in-out property <string> view_mode;
+    property <bool> advanced_mode: view_mode == "Advanced";
     in property <string> draw_tool;
 
     in-out property <float> x_zoom;
@@ -1633,6 +1634,8 @@ component ChartPopoutPanel inherits Rectangle {
 
     in property <string> title;
 
+    callback view_mode_changed(new_mode: string);
+    callback heatmap_enabled_changed(enabled: bool);
     callback draw_begin(x: float, y: float);
     callback draw_update(x: float, y: float);
     callback draw_end(x: float, y: float);
@@ -1954,7 +1957,7 @@ export component AppWindow inherits Window {
 
     in-out property <int> candle_tf_secs;
     in-out property <int> candle_window_minutes;
-    in-out property <string> candle_price_mode: "Trade";
+    in-out property <string> candle_price_mode: "Mid";
 
     in-out property <string> script_text;
     in-out property <string> script_error;
@@ -1993,6 +1996,8 @@ export component AppWindow inherits Window {
     in-out property <[Trade]> recent_trades;
     in-out property <[CandleRow]> candles;
     in-out property <[CandlePoint]> candle_points;
+    in-out property <[CandleRow]> trade_candles;
+    in-out property <[CandlePoint]> trade_candle_points;
     in-out property <[AxisTick]> price_ticks;
     in-out property <[AxisTick]> time_ticks;
     in-out property <[DrawShape]> drawings;
@@ -2015,6 +2020,7 @@ export component AppWindow inherits Window {
     in-out property <bool> spread_normalize: true;
 
     in-out property <float> candle_midline;
+    in-out property <float> trade_candle_midline;
     in-out property <string> axis_price_unit: "";
     in-out property <string> last_move;
     in-out property <int> dom_depth_levels;
@@ -2039,6 +2045,13 @@ export component AppWindow inherits Window {
     in-out property <float> chart_cursor_x: 0.5;
     in-out property <float> chart_cursor_y: 0.5;
 
+    in-out property <float> trade_chart_x_zoom: 1.0;
+    in-out property <float> trade_chart_y_zoom: 1.0;
+    in-out property <float> trade_chart_pan_x: 0.0;
+    in-out property <float> trade_chart_pan_y: 0.0;
+    in-out property <float> trade_chart_cursor_x: 0.5;
+    in-out property <float> trade_chart_cursor_y: 0.5;
+
     in-out property <length> inline_chart_height: grid_row_h * 6;
     in-out property <bool> is_fullscreen: false;
 
@@ -2054,6 +2067,12 @@ export component AppWindow inherits Window {
     in-out property <length> chart_popout_y: grid_row_h * 6;
     in-out property <length> chart_popout_w: grid_col_w * 24;
     in-out property <length> chart_popout_h: grid_row_h * 11;
+
+    in-out property <bool> trade_chart_open: true;
+    in-out property <length> trade_chart_x: grid_col_w * 26;
+    in-out property <length> trade_chart_y: grid_row_h * 6;
+    in-out property <length> trade_chart_w: grid_col_w * 24;
+    in-out property <length> trade_chart_h: grid_row_h * 10;
 
     in-out property <string> current_time;
     in-out property <string> order_message;
@@ -2208,6 +2227,8 @@ export component AppWindow inherits Window {
                 property <length> row_h: root.grid_row_h;
                 property <length> row1_y: 0px;
                 property <length> row2_y: row_h;
+                property <length> btn_h: row_h * 0.65;
+                property <length> btn_y_offset: (row_h - btn_h) / 2;
 
                 Text {
                     x: col_w * 1;
@@ -2225,17 +2246,17 @@ export component AppWindow inherits Window {
                 }
                 Button {
                     x: col_w * 22;
-                    y: row1_y;
+                    y: row1_y + btn_y_offset;
                     width: col_w * 3;
-                    height: row_h;
+                    height: btn_h;
                     text: root.settings_panel_open ? "Settings ✓" : "Settings";
                     clicked => { root.settings_panel_open = !root.settings_panel_open; }
                 }
                 Button {
                     x: col_w * 25;
-                    y: row1_y;
+                    y: row1_y + btn_y_offset;
                     width: col_w * 3;
-                    height: row_h;
+                    height: btn_h;
                     text: root.session_recording ? "Sess: On" : "Sess: Off";
                     clicked => {
                         root.session_recording = !root.session_recording;
@@ -2244,25 +2265,25 @@ export component AppWindow inherits Window {
                 }
                 Button {
                     x: col_w * 28;
-                    y: row1_y;
+                    y: row1_y + btn_y_offset;
                     width: col_w * 2;
-                    height: row_h;
+                    height: btn_h;
                     text: "Close";
                     clicked => { root.close_and_save_requested(); }
                 }
                 Button {
                     x: col_w * 30;
-                    y: row1_y;
+                    y: row1_y + btn_y_offset;
                     width: col_w * 3;
-                    height: row_h;
+                    height: btn_h;
                     text: root.grid_enabled ? "Grid: On" : "Grid: Off";
                     clicked => { root.grid_enabled = !root.grid_enabled; }
                 }
                 Button {
                     x: col_w * 33;
-                    y: row1_y;
+                    y: row1_y + btn_y_offset;
                     width: col_w * 3;
-                    height: row_h;
+                    height: btn_h;
                     text: "Snap " + root.grid_snap_label;
                     clicked => {
                         root.grid_snap_index = Math.mod(root.grid_snap_index + 1, root.grid_snap_labels.length);
@@ -2270,9 +2291,9 @@ export component AppWindow inherits Window {
                 }
                 Button {
                     x: col_w * 36;
-                    y: row1_y;
+                    y: row1_y + btn_y_offset;
                     width: col_w * 3;
-                    height: row_h;
+                    height: btn_h;
                     text: root.layout_edit_mode ? "Edit ✓" : "Edit";
                     clicked => { root.layout_edit_mode = !root.layout_edit_mode; }
                 }
@@ -2289,9 +2310,9 @@ export component AppWindow inherits Window {
                 }
                 Button {
                     x: col_w * 42;
-                    y: row1_y;
+                    y: row1_y + btn_y_offset;
                     width: col_w * 3;
-                    height: row_h;
+                    height: btn_h;
                     text: root.history_valve_open ? "Hist: On" : "Hist: Off";
                     clicked => {
                         root.history_valve_open = !root.history_valve_open;
@@ -2439,8 +2460,9 @@ export component AppWindow inherits Window {
                 property <length> row1_y: 0px;
                 property <length> row2_y: row_h;
                 property <length> row3_y: row_h * 2;
-                property <length> btn_h: row_h;
-                property <length> zoom_btn_h: row_h;
+                property <length> btn_h: row_h * 0.65;
+                property <length> btn_y_offset: (row_h - btn_h) / 2;
+                property <length> zoom_btn_h: btn_h;
                 property <length> slider_h: row_h;
                 property <length> slider_y: row2_y;
                 property <length> font_main: root.topbar_font_size;
@@ -2449,7 +2471,7 @@ export component AppWindow inherits Window {
                 TopBarLabel { x: col_w * 1; y: row1_y; width: col_w * 2; height: row_h; text: "Ticker:"; color: #cccccc; label_font_size: font_main; label_font_family: root.topbar_font; vertical-alignment: center; }
 
                 TopBarButton {
-                    x: col_w * 3; y: row1_y; width: col_w * 3; height: btn_h;
+                    x: col_w * 3; y: row1_y + btn_y_offset; width: col_w * 3; height: btn_h;
                     text: root.tickers_dropdown_open ? "List ▲" : "List ▼";
                     font_size: font_main; font_family: root.topbar_font;
                     clicked => { root.tickers_dropdown_open = !root.tickers_dropdown_open; }
@@ -2457,7 +2479,7 @@ export component AppWindow inherits Window {
 
                 TickerBadge {
                     x: col_w * 6;
-                    y: row1_y;
+                    y: row1_y + btn_y_offset;
                     width: col_w * 6;
                     height: btn_h;
                     value: root.ticker_input;
@@ -2467,14 +2489,14 @@ export component AppWindow inherits Window {
 
                 TopBarLabel { x: col_w * 13; y: row1_y; width: col_w * 2; height: row_h; text: "Mode:"; color: #cccccc; label_font_size: font_main; label_font_family: root.topbar_font; vertical-alignment: center; }
                 TopBarButton {
-                    x: col_w * 15; y: row1_y; width: col_w * 2; height: btn_h;
+                    x: col_w * 15; y: row1_y + btn_y_offset; width: col_w * 2; height: btn_h;
                     text: "Live";
                     active: root.mode == "Live";
                     font_size: font_main; font_family: root.topbar_font;
                     clicked => { root.mode_changed("Live"); }
                 }
                 TopBarButton {
-                    x: col_w * 17; y: row1_y; width: col_w * 3; height: btn_h;
+                    x: col_w * 17; y: row1_y + btn_y_offset; width: col_w * 3; height: btn_h;
                     text: "Replay";
                     active: root.mode == "Replay";
                     font_size: font_main; font_family: root.topbar_font;
@@ -2483,14 +2505,14 @@ export component AppWindow inherits Window {
 
                 TopBarLabel { x: col_w * 21; y: row1_y; width: col_w * 2; height: row_h; text: "Time:"; color: #cccccc; label_font_size: font_main; label_font_family: root.topbar_font; vertical-alignment: center; }
                 TopBarButton {
-                    x: col_w * 23; y: row1_y; width: col_w * 2; height: btn_h;
+                    x: col_w * 23; y: row1_y + btn_y_offset; width: col_w * 2; height: btn_h;
                     text: "Local";
                     active: root.time_mode == "Local";
                     font_size: font_main; font_family: root.topbar_font;
                     clicked => { root.time_mode_changed("Local"); }
                 }
                 TopBarButton {
-                    x: col_w * 25; y: row1_y; width: col_w * 2; height: btn_h;
+                    x: col_w * 25; y: row1_y + btn_y_offset; width: col_w * 2; height: btn_h;
                     text: "UTC";
                     active: root.time_mode == "UTC";
                     font_size: font_main; font_family: root.topbar_font;
@@ -2498,13 +2520,13 @@ export component AppWindow inherits Window {
                 }
 
                 TopBarButton {
-                    x: col_w * 27; y: row1_y; width: col_w * 3; height: btn_h;
+                    x: col_w * 27; y: row1_y + btn_y_offset; width: col_w * 3; height: btn_h;
                     text: "Stretch";
                     font_size: font_main; font_family: root.topbar_font;
                     clicked => { root.stretch_to_viewport(); }
                 }
                 TopBarButton {
-                    x: col_w * 30; y: row1_y; width: col_w * 4; height: btn_h;
+                    x: col_w * 30; y: row1_y + btn_y_offset; width: col_w * 4; height: btn_h;
                     text: root.is_fullscreen ? "Exit Full" : "Fullscreen";
                     active: root.is_fullscreen;
                     font_size: font_main; font_family: root.topbar_font;
@@ -2514,7 +2536,7 @@ export component AppWindow inherits Window {
                     }
                 }
                 TopBarButton {
-                    x: col_w * 34; y: row1_y; width: col_w * 4; height: btn_h;
+                    x: col_w * 34; y: row1_y + btn_y_offset; width: col_w * 4; height: btn_h;
                     text: root.render_all_candles ? "Render: Full" : "Render: Cond";
                     active: root.render_all_candles;
                     font_size: font_main; font_family: root.topbar_font;
@@ -2524,7 +2546,7 @@ export component AppWindow inherits Window {
                     }
                 }
                 TopBarButton {
-                    x: col_w * 38; y: row1_y; width: col_w * 3; height: btn_h;
+                    x: col_w * 38; y: row1_y + btn_y_offset; width: col_w * 3; height: btn_h;
                     text: root.feed_enabled ? "Feed: On" : "Feed: Off";
                     active: root.feed_enabled;
                     font_size: font_main; font_family: root.topbar_font;
@@ -2534,7 +2556,7 @@ export component AppWindow inherits Window {
                     }
                 }
                 TopBarButton {
-                    x: col_w * 41; y: row1_y; width: col_w * 3; height: btn_h;
+                    x: col_w * 41; y: row1_y + btn_y_offset; width: col_w * 3; height: btn_h;
                     text: root.chart_enabled ? "Chart: On" : "Chart: Off";
                     active: root.chart_enabled;
                     font_size: font_main; font_family: root.topbar_font;
@@ -2545,7 +2567,7 @@ export component AppWindow inherits Window {
                 }
 
                 TopBarButton {
-                    x: col_w * 44; y: row1_y; width: col_w * 3; height: btn_h;
+                    x: col_w * 44; y: row1_y + btn_y_offset; width: col_w * 3; height: btn_h;
                     text: root.chart_popout_open ? "Popout ✓" : "Popout";
                     active: root.chart_popout_open;
                     font_size: font_main; font_family: root.topbar_font;
@@ -2561,13 +2583,13 @@ export component AppWindow inherits Window {
                 }
 
                 TopBarButton {
-                    x: col_w * 47; y: row1_y; width: col_w * 2; height: btn_h;
+                    x: col_w * 47; y: row1_y + btn_y_offset; width: col_w * 2; height: btn_h;
                     text: "Chart-";
                     font_size: font_main; font_family: root.topbar_font;
                     clicked => { root.inline_chart_height = Math.max(root.grid_row_h * 3, root.inline_chart_height - root.grid_row_h); }
                 }
                 TopBarButton {
-                    x: col_w * 49; y: row1_y; width: col_w * 2; height: btn_h;
+                    x: col_w * 49; y: row1_y + btn_y_offset; width: col_w * 2; height: btn_h;
                     text: "Chart+";
                     font_size: font_main; font_family: root.topbar_font;
                     clicked => { root.inline_chart_height = Math.min(root.grid_row_h * 12, root.inline_chart_height + root.grid_row_h); }
@@ -2582,7 +2604,7 @@ export component AppWindow inherits Window {
 
                 TopBarSelect {
                     x: col_w * 5;
-                    y: row2_y;
+                    y: row2_y + btn_y_offset;
                     width: col_w * 3;
                     height: btn_h;
                     model: root.tf_labels;
@@ -2615,13 +2637,13 @@ export component AppWindow inherits Window {
                 }
 
                 TopBarButton {
-                    x: col_w * 8; y: row2_y; width: col_w * 3; height: btn_h;
+                    x: col_w * 8; y: row2_y + btn_y_offset; width: col_w * 3; height: btn_h;
                     text: "Win 60m";
                     font_size: font_main; font_family: root.topbar_font;
                     clicked => { root.candle_window_changed(60); }
                 }
                 TopBarButton {
-                    x: col_w * 11; y: row2_y; width: col_w * 3; height: btn_h;
+                    x: col_w * 11; y: row2_y + btn_y_offset; width: col_w * 3; height: btn_h;
                     text: "Win 240m";
                     font_size: font_main; font_family: root.topbar_font;
                     clicked => { root.candle_window_changed(240); }
@@ -2629,7 +2651,7 @@ export component AppWindow inherits Window {
 
                 TopBarLabel { x: col_w * 14; y: row2_y; width: col_w * 2; height: row_h; text: "Price:"; color: #aaaaaa; label_font_size: font_main; label_font_family: root.topbar_font; vertical-alignment: center; }
                 TopBarButton {
-                    x: col_w * 16; y: row2_y; width: col_w * 2; height: btn_h;
+                    x: col_w * 16; y: row2_y + btn_y_offset; width: col_w * 2; height: btn_h;
                     text: "Bid";
                     active: root.candle_price_mode == "Bid";
                     font_size: font_main; font_family: root.topbar_font;
@@ -2639,7 +2661,7 @@ export component AppWindow inherits Window {
                     }
                 }
                 TopBarButton {
-                    x: col_w * 18; y: row2_y; width: col_w * 2; height: btn_h;
+                    x: col_w * 18; y: row2_y + btn_y_offset; width: col_w * 2; height: btn_h;
                     text: "Mid";
                     active: root.candle_price_mode == "Mid";
                     font_size: font_main; font_family: root.topbar_font;
@@ -2649,7 +2671,7 @@ export component AppWindow inherits Window {
                     }
                 }
                 TopBarButton {
-                    x: col_w * 20; y: row2_y; width: col_w * 2; height: btn_h;
+                    x: col_w * 20; y: row2_y + btn_y_offset; width: col_w * 2; height: btn_h;
                     text: "Ask";
                     active: root.candle_price_mode == "Ask";
                     font_size: font_main; font_family: root.topbar_font;
@@ -2660,19 +2682,18 @@ export component AppWindow inherits Window {
                 }
 
                 TopBarButton {
-                    x: col_w * 22; y: row2_y; width: col_w * 2; height: btn_h;
-                    text: "Trade";
-                    active: root.candle_price_mode == "Trade";
+                    x: col_w * 22; y: row2_y + btn_y_offset; width: col_w * 2; height: btn_h;
+                    text: root.trade_chart_open ? "Trade ✓" : "Trade";
+                    active: root.trade_chart_open;
                     font_size: font_main; font_family: root.topbar_font;
                     clicked => {
-                        root.candle_price_mode = "Trade";
-                        root.candle_price_mode_changed(root.candle_price_mode);
+                        root.trade_chart_open = !root.trade_chart_open;
                     }
                 }
 
                 TopBarLabel { x: col_w * 24; y: row2_y; width: col_w * 2; height: row_h; text: "Panels:"; color: #aaaaaa; label_font_size: font_main; label_font_family: root.topbar_font; vertical-alignment: center; }
                 TopBarCheck {
-                    x: col_w * 26; y: row2_y; width: col_w * 3; height: btn_h;
+                    x: col_w * 26; y: row2_y + btn_y_offset; width: col_w * 3; height: btn_h;
                     text: "Depth";
                     checked <=> show_depth;
                     font_size: font_main; font_family: root.topbar_font;
@@ -2680,7 +2701,7 @@ export component AppWindow inherits Window {
                     toggled => { root.depth_panel_changed(self.checked); }
                 }
                 TopBarCheck {
-                    x: col_w * 29; y: row2_y; width: col_w * 3; height: btn_h;
+                    x: col_w * 29; y: row2_y + btn_y_offset; width: col_w * 3; height: btn_h;
                     text: "Trades";
                     checked <=> show_trades;
                     font_size: font_main; font_family: root.topbar_font;
@@ -2688,7 +2709,7 @@ export component AppWindow inherits Window {
                     toggled => { root.trades_panel_changed(self.checked); }
                 }
                 TopBarCheck {
-                    x: col_w * 32; y: row2_y; width: col_w * 3; height: btn_h;
+                    x: col_w * 32; y: row2_y + btn_y_offset; width: col_w * 3; height: btn_h;
                     text: "Volume";
                     checked <=> show_volume;
                     font_size: font_main; font_family: root.topbar_font;
@@ -2758,7 +2779,7 @@ export component AppWindow inherits Window {
 
                 TopBarLabel { x: col_w * 44; y: row2_y; width: col_w * 2; height: row_h; text: "Poll:"; color: #aaaaaa; label_font_size: font_main; label_font_family: root.topbar_font; vertical-alignment: center; }
                 TopBarButton {
-                    x: col_w * 46; y: row2_y; width: col_w * 1; height: btn_h;
+                    x: col_w * 46; y: row2_y + btn_y_offset; width: col_w * 1; height: btn_h;
                     text: "-";
                     font_size: font_main; font_family: root.topbar_font;
                     clicked => { root.market_poll_adjust(-1); }
@@ -2771,7 +2792,7 @@ export component AppWindow inherits Window {
                     vertical-alignment: center;
                 }
                 TopBarButton {
-                    x: col_w * 49; y: row2_y; width: col_w * 1; height: btn_h;
+                    x: col_w * 49; y: row2_y + btn_y_offset; width: col_w * 1; height: btn_h;
                     text: "+";
                     font_size: font_main; font_family: root.topbar_font;
                     clicked => { root.market_poll_adjust(1); }
@@ -2785,7 +2806,7 @@ export component AppWindow inherits Window {
                     vertical-alignment: center;
                 }
                 TopBarButton {
-                    x: col_w * 46; y: row3_y;
+                    x: col_w * 46; y: row3_y + btn_y_offset;
                     width: col_w * 1; height: zoom_btn_h;
                     text: "X-";
                     font_size: font_small; font_family: root.topbar_font;
@@ -2803,7 +2824,7 @@ export component AppWindow inherits Window {
                     }
                 }
                 TopBarButton {
-                    x: col_w * 47; y: row3_y;
+                    x: col_w * 47; y: row3_y + btn_y_offset;
                     width: col_w * 1; height: zoom_btn_h;
                     text: "X+";
                     font_size: font_small; font_family: root.topbar_font;
@@ -2821,7 +2842,7 @@ export component AppWindow inherits Window {
                     }
                 }
                 TopBarButton {
-                    x: col_w * 48; y: row3_y;
+                    x: col_w * 48; y: row3_y + btn_y_offset;
                     width: col_w * 1; height: zoom_btn_h;
                     text: "Y-";
                     font_size: font_small; font_family: root.topbar_font;
@@ -2840,7 +2861,7 @@ export component AppWindow inherits Window {
                     }
                 }
                 TopBarButton {
-                    x: col_w * 49; y: row3_y;
+                    x: col_w * 49; y: row3_y + btn_y_offset;
                     width: col_w * 1; height: zoom_btn_h;
                     text: "Y+";
                     font_size: font_small; font_family: root.topbar_font;
@@ -3639,6 +3660,137 @@ export component AppWindow inherits Window {
                 }
             }
 
+            if root.trade_chart_open : Rectangle {
+                x: root.trade_chart_x;
+                y: root.trade_chart_y;
+                width: root.trade_chart_w;
+                height: root.trade_chart_h;
+                background: root.chart_view_mode == "Advanced" ? #0b0f17 : #11151d;
+
+                property <length> header_h: root.grid_row_h;
+                property <length> h_gap: root.grid_col_w;
+                property <length> v_gap: root.grid_row_h;
+                property <length> chart_h: parent.height - header_h - (v_gap * 2) - (root.grid_row_h * 3);
+                property <length> tools_w: root.chart_sidebar_open ? (root.grid_col_w * 4) : 0px;
+                property <length> chart_x: h_gap + tools_w + (root.chart_sidebar_open ? h_gap : 0px);
+                property <length> chart_w: parent.width - chart_x - h_gap;
+                property <length> list_y: header_h + v_gap + chart_h + v_gap;
+                property <length> toggle_w: root.grid_col_w;
+                property <length> header_text_x: h_gap + toggle_w + h_gap;
+                property <length> auto_x: parent.width - (root.grid_col_w * 4) - h_gap;
+
+                Text {
+                    x: header_text_x;
+                    y: 0px;
+                    width: parent.width - 100px;
+                    text:
+                        "Trade Candles  tf=" + candle_tf_secs
+                        + "s  window=" + candle_window_minutes + "m"
+                        + "   | X=" + trade_chart_x_zoom + "  Y=" + trade_chart_y_zoom;
+                    color: root.chart_view_mode == "Advanced" ? #f5e9ff : #ffffff;
+                    height: header_h;
+                    vertical-alignment: center;
+                }
+
+                Rectangle {
+                    x: h_gap;
+                    y: 0px;
+                    width: toggle_w;
+                    height: header_h;
+                    background: root.chart_view_mode == "Advanced" ? #12162a : #151b26;
+                    border-width: 1px;
+                    border-color: root.chart_view_mode == "Advanced" ? #343a52 : #2a3040;
+                    border-radius: 3px;
+
+                    Text {
+                        x: 0px;
+                        y: 0px;
+                        width: parent.width;
+                        height: parent.height;
+                        text: ">|<";
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        color: root.chart_view_mode == "Advanced" ? #f0d9ff : #dfe8ff;
+                        font-size: 12px;
+                    }
+
+                    TouchArea {
+                        x: 0px;
+                        y: 0px;
+                        width: parent.width;
+                        height: parent.height;
+                        clicked => { root.trade_chart_open = false; }
+                    }
+                }
+
+                Button {
+                    x: auto_x;
+                    y: 0px;
+                    width: root.grid_col_w * 4;
+                    height: header_h;
+                    text: "Auto: center";
+                    clicked => {
+                        root.trade_chart_pan_x = 0.0;
+                        root.trade_chart_pan_y = 0.0;
+                        root.trade_chart_x_zoom = 1.0;
+                        root.trade_chart_y_zoom = 1.0;
+                    }
+                }
+
+                Rectangle {
+                    x: h_gap + toggle_w + h_gap;
+                    y: header_h + v_gap;
+                    width: chart_w;
+                    height: chart_h;
+                    background: root.chart_view_mode == "Advanced" ? #050609 : #0c0f16;
+                    border-width: 1px;
+                    border-color: root.chart_view_mode == "Advanced" ? #1c2230 : #101418;
+                    border-radius: 3px;
+
+                    CandleChart {
+                        x: 0px;
+                        y: 0px;
+                        width: parent.width;
+                        height: parent.height;
+
+                        points: root.trade_candle_points;
+                        mid_line_y: root.trade_candle_midline;
+                        position_entry_y: root.position_entry_y;
+                        position_entry_visible: false;
+                        drawings: root.chart_view_mode == "Advanced" ? root.drawings : [];
+                        draw_ticks: root.chart_view_mode == "Advanced" ? root.draw_ticks : [];
+                        heatmap_cells: root.chart_view_mode == "Advanced" ? root.heatmap_cells : [];
+                        heatmap_enabled: root.chart_view_mode == "Advanced" && root.heatmap_enabled;
+                        advanced_mode: root.chart_view_mode == "Advanced";
+                        draw_tool: root.draw_tool;
+
+                        x_zoom <=> root.trade_chart_x_zoom;
+                        y_zoom <=> root.trade_chart_y_zoom;
+                        pan_x <=> root.trade_chart_pan_x;
+                        pan_y <=> root.trade_chart_pan_y;
+                        cursor_x <=> root.trade_chart_cursor_x;
+                        cursor_y <=> root.trade_chart_cursor_y;
+
+                        draw_begin(x, y) => { root.draw_begin(x, y); }
+                        draw_update(x, y) => { root.draw_update(x, y); }
+                        draw_end(x, y) => { root.draw_end(x, y); }
+                        draw_poly_sides_delta(delta) => { root.draw_poly_sides_delta(delta); }
+                    }
+                }
+
+                ListView {
+                    x: h_gap;
+                    y: list_y;
+                    width: parent.width - (h_gap * 2);
+                    height: parent.height - (list_y + h_gap);
+
+                    for c in root.trade_candles : Text {
+                        text: c.ts + "  O:" + c.open + " H:" + c.high + " L:" + c.low + " C:" + c.close + " V:" + c.volume;
+                        color: #d0d0d0;
+                    }
+                }
+            }
+
             if (root.show_depth || root.show_ladders) && root.orderbook_layer == 0 : OrderbookPanel {
                 x: root.orderbook_x;
                 y: root.orderbook_y;
@@ -3842,119 +3994,124 @@ export component AppWindow inherits Window {
             }
 
             Rectangle {
+                property <bool> is_advanced: root.chart_view_mode == "Advanced";
                 property <length> chart_left: root.chart_left_x;
                 property <length> chart_top: root.chart_left_y;
                 property <length> chart_w: root.grid_col_w * 26;
-                property <length> price_w: root.grid_col_w * 7;
-                property <length> price_h: root.grid_row_h;
-                property <length> meta_w: root.grid_col_w * 7;
-                property <length> meta_h: root.grid_row_h * 3;
+                property <length> price_h: root.grid_row_h * 0.7;
 
-                Rectangle {
-                    x: -meta_w - root.grid_col_w;
+                x: chart_left;
+                y: chart_top - price_h - (root.grid_row_h * 0.1);
+                width: chart_w;
+                height: price_h;
+                background: is_advanced ? #0f1324dd : #0e1422dd;
+                border-width: 1px;
+                border-color: is_advanced ? #2f3550 : #273042;
+                border-radius: 3px;
+
+                property <length> col_spacing: root.grid_col_w * 5;
+                property <length> label_w: root.grid_col_w * 1.2;
+
+                Text {
+                    x: 0px;
                     y: 0px;
-                    width: meta_w;
-                    height: meta_h;
-                    background: root.chart_view_mode == "Advanced" ? #0f1324cc : #0e1422cc;
-                    border-width: 1px;
-                    border-color: root.chart_view_mode == "Advanced" ? #2f3550 : #273042;
-                    border-radius: 4px;
-
-                    Text {
-                        x: 0px;
-                        y: 0px;
-                        width: parent.width;
-                        height: root.grid_row_h;
-                        text: "Mark:";
-                        color: #b8c5ff;
-                        font-size: 20px;
-                        vertical-alignment: center;
-                    }
-                    ZeroPadText {
-                        main: root.mark_price_main == "" ? "--" : root.mark_price_main;
-                        pad: root.mark_price_main == "" ? "" : root.mark_price_pad;
-                        main_color: #e8f6ff;
-                        pad_color: #7aa8ff;
-                        font_size: 20px;
-                        x: root.grid_col_w * 2;
-                        y: 0px;
-                    }
-
-                    Text {
-                        x: 0px;
-                        y: root.grid_row_h;
-                        width: parent.width;
-                        height: root.grid_row_h;
-                        text: "Oracle:";
-                        color: #b8c5ff;
-                        font-size: 20px;
-                        vertical-alignment: center;
-                    }
-                    ZeroPadText {
-                        main: root.oracle_price_main == "" ? "--" : root.oracle_price_main;
-                        pad: root.oracle_price_main == "" ? "" : root.oracle_price_pad;
-                        main_color: #e8f6ff;
-                        pad_color: #7aa8ff;
-                        font_size: 20px;
-                        x: root.grid_col_w * 2;
-                        y: root.grid_row_h;
-                    }
-
-                    Text {
-                        x: 0px;
-                        y: root.grid_row_h * 2;
-                        width: parent.width;
-                        height: root.grid_row_h;
-                        text: "Last:";
-                        color: #b8c5ff;
-                        font-size: 20px;
-                        vertical-alignment: center;
-                    }
-                    ZeroPadText {
-                        main: root.last_price_main == "" ? "--" : root.last_price_main;
-                        pad: root.last_price_main == "" ? "" : root.last_price_pad;
-                        main_color: #e8f6ff;
-                        pad_color: #7aa8ff;
-                        font_size: 20px;
-                        x: root.grid_col_w * 2;
-                        y: root.grid_row_h * 2;
-                    }
+                    width: label_w;
+                    height: parent.height;
+                    text: "Mark:";
+                    color: #b8c5ff;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    padding-left: 4px;
+                }
+                ZeroPadText {
+                    main: root.mark_price_main == "" ? "--" : root.mark_price_main;
+                    pad: root.mark_price_main == "" ? "" : root.mark_price_pad;
+                    main_color: #e8f6ff;
+                    pad_color: #7aa8ff;
+                    font_size: 12px;
+                    x: label_w + 2px;
+                    y: 0px;
                 }
 
-                x: chart_left + chart_w - price_w - root.grid_col_w;
-                y: chart_top + root.grid_row_h;
-                width: price_w;
-                height: price_h;
-                background: root.chart_view_mode == "Advanced" ? #0f1324cc : #0e1422cc;
-                border-width: 1px;
-                border-color: root.chart_view_mode == "Advanced" ? #2f3550 : #273042;
-                border-radius: 4px;
-                visible: true;
+                Text {
+                    x: col_spacing;
+                    y: 0px;
+                    width: label_w;
+                    height: parent.height;
+                    text: "Oracle:";
+                    color: #b8c5ff;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    padding-left: 4px;
+                }
+                ZeroPadText {
+                    main: root.oracle_price_main == "" ? "--" : root.oracle_price_main;
+                    pad: root.oracle_price_main == "" ? "" : root.oracle_price_pad;
+                    main_color: #e8f6ff;
+                    pad_color: #7aa8ff;
+                    font_size: 12px;
+                    x: col_spacing + label_w + 2px;
+                    y: 0px;
+                }
 
+                Text {
+                    x: col_spacing * 2;
+                    y: 0px;
+                    width: label_w;
+                    height: parent.height;
+                    text: "Last:";
+                    color: #b8c5ff;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    padding-left: 4px;
+                }
+                ZeroPadText {
+                    main: root.last_price_main == "" ? "--" : root.last_price_main;
+                    pad: root.last_price_main == "" ? "" : root.last_price_pad;
+                    main_color: #e8f6ff;
+                    pad_color: #7aa8ff;
+                    font_size: 12px;
+                    x: col_spacing * 2 + label_w + 2px;
+                    y: 0px;
+                }
+
+                Text {
+                    x: col_spacing * 3;
+                    y: 0px;
+                    width: label_w;
+                    height: parent.height;
+                    text: "Current:";
+                    color: #b8c5ff;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    padding-left: 4px;
+                }
                 ZeroPadText {
                     main: root.current_price_main == "" ? "--" : root.current_price_main;
                     pad: root.current_price_main == "" ? "" : root.current_price_pad;
-                    main_color: root.chart_view_mode == "Advanced" ? #ffdaff : #e8f6ff;
+                    main_color: parent.is_advanced ? #ffdaff : #e8f6ff;
                     pad_color: #7aa8ff;
-                    font_size: 30px;
-                    x: parent.width - self.width - 6px;
-                    y: (parent.height - self.height) / 2;
+                    font_size: 12px;
+                    x: col_spacing * 3 + label_w + 2px;
+                    y: 0px;
                 }
             }
-        if root.tickers_dropdown_open && root.ticker_dropdown_layer == 0 : Rectangle {
-            x: root.ticker_dropdown_x;
-            y: root.ticker_dropdown_y;
-            width: root.grid_col_w * 8;
-            height: root.grid_row_h * 7;
-            background: #0f1320;
-            border-radius: 4px;
-            border-width: 1px;
-            border-color: #2a3346;
-            z: 0;
 
-            Text { x: 8px; y: 6px; text: "Tickers"; color: #c7d2ff; font-size: 12px; }
+            // Chart panel (order-based)
+            Rectangle {
+                x: root.ticker_dropdown_x;
+                y: root.ticker_dropdown_y;
+                width: root.grid_col_w * 8;
+                height: root.grid_row_h * 7;
+                background: #0f1320;
+                border-radius: 4px;
+                border-width: 1px;
+                border-color: #2a3346;
+                z: 0;
 
-            ListView {
+                Text { x: 8px; y: 6px; text: "Tickers"; color: #c7d2ff; font-size: 12px; }
+
+                ListView {
                 x: 6px;
                 y: 26px;
                 width: parent.width - 12px;
@@ -4515,7 +4672,7 @@ export component AppWindow inherits Window {
             draw_ticks <=> root.draw_ticks;
             heatmap_cells <=> root.heatmap_cells;
             heatmap_enabled: root.heatmap_enabled;
-            advanced_mode: root.chart_view_mode == "Advanced";
+            view_mode: root.chart_view_mode;
             draw_tool: root.draw_tool;
 
             x_zoom <=> root.chart_x_zoom;
@@ -4552,7 +4709,7 @@ export component AppWindow inherits Window {
             draw_ticks <=> root.draw_ticks;
             heatmap_cells <=> root.heatmap_cells;
             heatmap_enabled: root.heatmap_enabled;
-            advanced_mode: root.chart_view_mode == "Advanced";
+            view_mode: root.chart_view_mode;
             draw_tool: root.draw_tool;
 
             x_zoom <=> root.chart_x_zoom;
@@ -4591,7 +4748,7 @@ export component AppWindow inherits Window {
             draw_ticks <=> root.draw_ticks;
             heatmap_cells <=> root.heatmap_cells;
             heatmap_enabled: root.heatmap_enabled;
-            advanced_mode: root.chart_view_mode == "Advanced";
+            view_mode: root.chart_view_mode;
             draw_tool: root.draw_tool;
 
             x_zoom <=> root.chart_x_zoom;

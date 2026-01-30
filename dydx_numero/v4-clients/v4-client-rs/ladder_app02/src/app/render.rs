@@ -278,9 +278,11 @@ pub fn render(state: &AppState, ui: &crate::AppWindow) {
         .collect();
     ui.set_recent_trades(ModelRc::new(VecModel::from(trades)));
 
+    let use_trade_candles = state.candle_price_mode == "Trade";
+    let candles_source = if use_trade_candles { &state.trade_candles } else { &state.candles };
+
     // Candles (rows under the chart)
-    let candle_rows: Vec<CandleRow> = state
-        .candles
+    let candle_rows: Vec<CandleRow> = candles_source
         .iter()
         .rev()
         .take(500)
@@ -299,13 +301,13 @@ pub fn render(state: &AppState, ui: &crate::AppWindow) {
     let condensed_candles = if state.render_all_candles {
         None
     } else {
-        Some(condense_candles(&state.candles, MAX_CONDENSED_POINTS))
+        Some(condense_candles(candles_source, MAX_CONDENSED_POINTS))
     };
-    let candles_for_view: &[Candle] = condensed_candles.as_deref().unwrap_or(&state.candles);
+    let candles_for_view: &[Candle] = condensed_candles.as_deref().unwrap_or(candles_source);
 
     let points: Vec<CandlePoint> = if state.render_all_candles {
-        state
-            .candle_points
+        let source_points = if use_trade_candles { &state.trade_candle_points } else { &state.candle_points };
+        source_points
             .iter()
             .map(|p| CandlePoint {
                 x: p.x,
@@ -324,7 +326,7 @@ pub fn render(state: &AppState, ui: &crate::AppWindow) {
     ui.set_candle_points(ModelRc::new(VecModel::from(points)));
 
     let candle_midline = if state.render_all_candles {
-        state.candle_midline
+        if use_trade_candles { state.trade_candle_midline } else { state.candle_midline }
     } else {
         0.5
     };
