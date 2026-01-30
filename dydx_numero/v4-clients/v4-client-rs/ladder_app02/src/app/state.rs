@@ -413,7 +413,7 @@ impl Default for AppState {
 
             candle_tf_secs: 60,
             candle_window_minutes: 60,
-            candle_price_mode: "Mid".to_string(),
+            candle_price_mode: "Trade".to_string(),
             dom_depth_levels: 20,
             render_all_candles: false,
             session_recording: true,
@@ -803,10 +803,24 @@ impl AppState {
         }
 
         self.record_mid_tick(ts_unix, mid, bid, ask);
-        let price = self.price_for_mode(mid, bid, ask);
-        self.apply_mid_tick(ts_unix, price);
         let ticker = self.current_ticker.clone();
         self.persist_mid_tick_for_ticker(&ticker, ts_unix, mid, bid, ask);
+
+        // Trade chart mode ignores book-driven candle updates
+        if self.candle_price_mode == "Trade" {
+            return;
+        }
+
+        let price = self.price_for_mode(mid, bid, ask);
+        self.apply_mid_tick(ts_unix, price);
+    }
+
+    /// ✅ Call this whenever you have a trade price (Trade mode).
+    pub fn on_trade_tick(&mut self, ts_unix: u64, price: f64) {
+        if !price.is_finite() || price <= 0.0 {
+            return;
+        }
+        self.apply_mid_tick(ts_unix, price);
     }
 
     fn record_mid_tick(&mut self, ts_unix: u64, mid: f64, bid: f64, ask: f64) {
@@ -894,6 +908,9 @@ impl AppState {
     }
 
     pub fn rebuild_candles_from_history(&mut self) {
+        if self.candle_price_mode == "Trade" {
+            return;
+        }
         if self.mid_ticks.is_empty() {
             self.load_mid_cache();
         }
@@ -1645,6 +1662,15 @@ impl AppState {
     /// ✅ Call this on Trade events to add volume into the most recent candle.
     pub fn on_trade_volume(&mut self, ts_unix: u64, trade_size: f64) {
         if trade_size <= 0.0 || !trade_size.is_finite() {
+            return;
+        }
+
+        if self.candle_price_mode == "Trade" {
+            // Trade-driven candles are handled by on_trade_tick.
+            if let Some(last) = self.candles.last_mut() {
+                last.volume += trade_size;
+                debug_hooks::log_candle_volume(ts_unix, trade_size, Some(last.ts.clone()));
+            }
             return;
         }
 

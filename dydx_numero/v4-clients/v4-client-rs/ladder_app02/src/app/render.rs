@@ -198,6 +198,9 @@ pub fn render(state: &AppState, ui: &crate::AppWindow) {
         "Ask" if !state.best_ask_raw.is_empty() => {
             split_number_raw(&state.best_ask_raw, PRICE_DECIMALS)
         }
+        "Trade" if !state.last_price_raw.is_empty() => {
+            split_number_raw(&state.last_price_raw, PRICE_DECIMALS)
+        }
         "Bid" if state.metrics.best_bid.is_finite() && state.metrics.best_bid > 0.0 => {
             split_number_value(state.metrics.best_bid, PRICE_DECIMALS)
         }

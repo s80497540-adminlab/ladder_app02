@@ -1954,7 +1954,7 @@ export component AppWindow inherits Window {
 
     in-out property <int> candle_tf_secs;
     in-out property <int> candle_window_minutes;
-    in-out property <string> candle_price_mode: "Mid";
+    in-out property <string> candle_price_mode: "Trade";
 
     in-out property <string> script_text;
     in-out property <string> script_error;
@@ -2659,9 +2659,20 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                TopBarLabel { x: col_w * 22; y: row2_y; width: col_w * 2; height: row_h; text: "Panels:"; color: #aaaaaa; label_font_size: font_main; label_font_family: root.topbar_font; vertical-alignment: center; }
+                TopBarButton {
+                    x: col_w * 22; y: row2_y; width: col_w * 2; height: btn_h;
+                    text: "Trade";
+                    active: root.candle_price_mode == "Trade";
+                    font_size: font_main; font_family: root.topbar_font;
+                    clicked => {
+                        root.candle_price_mode = "Trade";
+                        root.candle_price_mode_changed(root.candle_price_mode);
+                    }
+                }
+
+                TopBarLabel { x: col_w * 24; y: row2_y; width: col_w * 2; height: row_h; text: "Panels:"; color: #aaaaaa; label_font_size: font_main; label_font_family: root.topbar_font; vertical-alignment: center; }
                 TopBarCheck {
-                    x: col_w * 24; y: row2_y; width: col_w * 3; height: btn_h;
+                    x: col_w * 26; y: row2_y; width: col_w * 3; height: btn_h;
                     text: "Depth";
                     checked <=> show_depth;
                     font_size: font_main; font_family: root.topbar_font;
@@ -2669,7 +2680,7 @@ export component AppWindow inherits Window {
                     toggled => { root.depth_panel_changed(self.checked); }
                 }
                 TopBarCheck {
-                    x: col_w * 27; y: row2_y; width: col_w * 3; height: btn_h;
+                    x: col_w * 29; y: row2_y; width: col_w * 3; height: btn_h;
                     text: "Trades";
                     checked <=> show_trades;
                     font_size: font_main; font_family: root.topbar_font;
@@ -2677,7 +2688,7 @@ export component AppWindow inherits Window {
                     toggled => { root.trades_panel_changed(self.checked); }
                 }
                 TopBarCheck {
-                    x: col_w * 30; y: row2_y; width: col_w * 3; height: btn_h;
+                    x: col_w * 32; y: row2_y; width: col_w * 3; height: btn_h;
                     text: "Volume";
                     checked <=> show_volume;
                     font_size: font_main; font_family: root.topbar_font;
@@ -2685,10 +2696,10 @@ export component AppWindow inherits Window {
                     toggled => { root.volume_panel_changed(self.checked); }
                 }
 
-                TopBarLabel { x: col_w * 33; y: row2_y; width: col_w * 3; height: row_h; text: "DOM depth:"; color: #aaaaaa; label_font_size: font_main; label_font_family: root.topbar_font; vertical-alignment: center; }
+                TopBarLabel { x: col_w * 35; y: row2_y; width: col_w * 3; height: row_h; text: "DOM depth:"; color: #aaaaaa; label_font_size: font_main; label_font_family: root.topbar_font; vertical-alignment: center; }
 
                 Rectangle {
-                    x: col_w * 36; y: slider_y; width: col_w * 6; height: slider_h;
+                    x: col_w * 38; y: slider_y; width: col_w * 6; height: slider_h;
                     background: #202633; border-radius: 5px;
 
                     property <length> knob_x: (root.dom_depth_levels - 5) * (parent.width - 12px) / 45;

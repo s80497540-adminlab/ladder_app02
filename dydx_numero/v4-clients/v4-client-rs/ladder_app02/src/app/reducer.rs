@@ -952,6 +952,10 @@ fn reduce_feed(state: &mut AppState, ev: FeedEvent) -> bool {
                 }
             }
 
+            if state.candle_price_mode == "Trade" && price.is_finite() && price > 0.0 {
+                state.on_trade_tick(ts_unix, price);
+            }
+
             let ts = format_time_basic(ts_unix);
             let is_buy = side.to_ascii_lowercase().starts_with('b');
             if state.trades_enabled {
