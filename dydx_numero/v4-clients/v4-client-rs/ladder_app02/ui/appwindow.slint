@@ -2089,6 +2089,13 @@ export component AppWindow inherits Window {
     in-out property <string> settings_signer_status;
     in-out property <string> settings_last_error;
 
+    // Cycle management (71-hour cycles with 1-hour prep)
+    in-out property <int> cycle_number: 1;
+    in-out property <int> cycle_secs_remaining: 255600; // 71 hours in seconds
+    in-out property <bool> cycle_in_prep_mode: false;
+    in-out property <float> cycle_projected_gb: 41.0;
+    in-out property <bool> cycle_auto_rotate: true;
+
     callback ticker_changed(new_ticker: string);
     callback mode_changed(new_mode: string);
     callback time_mode_changed(new_time_mode: string);
@@ -2154,6 +2161,10 @@ export component AppWindow inherits Window {
 
     callback arm_real_request(phrase: string);
     callback disarm_real();
+
+    // Cycle management callbacks
+    callback cycle_rotate_logs();
+    callback cycle_toggle_auto_rotate(enabled: bool);
 
     // --------- VIEWPORT (fixed) + WORKSPACE (scrollable) -------------
     viewport := Rectangle {
@@ -2395,6 +2406,43 @@ export component AppWindow inherits Window {
                     font-size: 9px;
                     horizontal-alignment: right;
                     vertical-alignment: center;
+                }
+
+                // Cycle status display
+                Rectangle {
+                    x: col_w * 36;
+                    y: row1_y + row_h;
+                    width: col_w * 12;
+                    height: row_h * 0.8;
+                    background: cycle_in_prep_mode ? #3a2a20 : #1a1f2a;
+                    border-radius: 3px;
+                    border-width: 1px;
+                    border-color: cycle_in_prep_mode ? #ff8844 : #2a3545;
+
+                    property <int> hours_remaining: cycle_secs_remaining / 3600;
+                    property <int> mins_remaining: Math.mod(cycle_secs_remaining, 3600) / 60;
+
+                    Text {
+                        x: 6px;
+                        y: 0px;
+                        width: parent.width - 12px;
+                        height: parent.height;
+                        text: cycle_in_prep_mode 
+                            ? "⏱ PREP: " + hours_remaining + "h " + mins_remaining + "m | Next: " + Math.round(cycle_projected_gb) + "GB"
+                            : "Cycle #" + cycle_number + ": " + hours_remaining + "h " + mins_remaining + "m | ~" + Math.round(cycle_projected_gb) + "GB";
+                        color: cycle_in_prep_mode ? #ffaa66 : #88aacc;
+                        font-size: 8px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+
+                    TouchArea {
+                        clicked => {
+                            if cycle_in_prep_mode {
+                                root.cycle_rotate_logs();
+                            }
+                        }
+                    }
                 }
 
                 Rectangle {

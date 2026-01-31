@@ -749,6 +749,21 @@ fn reduce_ui(state: &mut AppState, ev: UiEvent) -> bool {
             true
         }
 
+        UiEvent::CycleRotateLogs => {
+            state.order_message = "Log rotation requested (daemon will handle)".to_string();
+            true
+        }
+
+        UiEvent::CycleToggleAutoRotate { enabled } => {
+            state.cycle_auto_rotate = enabled;
+            state.order_message = if enabled {
+                "Auto-rotation enabled".to_string()
+            } else {
+                "Auto-rotation disabled".to_string()
+            };
+            true
+        }
+
         UiEvent::SendOrder => {
             let now = now_unix();
             let ts = format_time_basic(now);

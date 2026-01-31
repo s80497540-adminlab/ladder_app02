@@ -3,18 +3,23 @@
 // Persistent dYdX mainnet data daemon. Runs headless 24/7, tails the
 // websocket feed, and writes compact snapshots + append-only events to
 // ./data so the UI can instantly hydrate when launched.
+//
+// Includes 71-hour cycle management: runs 71h, then 1h preparation phase
+// where UI prompts for log rotation and storage planning.
 
 use anyhow::{anyhow, Context, Result};
 use futures_util::{SinkExt, StreamExt};
+use ladder_app02::cycle_manager::{self, CycleStats, CYCLE_DURATION_SECS, PREP_DURATION_SECS};
 use ladder_app02::feed_shared::{
     self, BookLevel, BookLevelsRecord, BookTopRecord, SnapshotState, TradeRecord,
 };
 use rustls::crypto::ring;
 use serde_json::{json, Value};
 use std::collections::HashSet;
-use std::fs::OpenOptions;
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
@@ -51,14 +56,24 @@ async fn main() -> Result<()> {
     println!("[data_daemon02] starting, writing to {:?}", feed_shared::data_dir());
     feed_shared::ensure_data_dir()?;
 
+    // Load or initialize cycle stats
+    let mut cycle_stats = cycle_manager::load_cycle_stats()
+        .unwrap_or_else(|_| CycleStats::default());
+    println!(
+        "[data_daemon02] cycle {}: {} bytes from previous cycle",
+        cycle_stats.cycle_number, cycle_stats.prev_cycle_bytes
+    );
+
     let state = Arc::new(Mutex::new(SnapshotState::default()));
     let log_file = Arc::new(Mutex::new(open_log()?));
+    let bytes_written = Arc::new(AtomicU64::new(0));
 
     let mut tickers = fetch_market_tickers().await;
     if tickers.is_empty() {
         tickers = DEFAULT_TICKERS.iter().map(|s| s.to_string()).collect();
     }
     prioritize_tickers(&mut tickers, DEFAULT_TICKERS);
+    cycle_stats.tickers_active = tickers.len();
     let chunks: Vec<Vec<String>> = tickers
         .chunks(MAX_TICKERS_PER_CONN)
         .map(|c| c.to_vec())
@@ -69,12 +84,14 @@ async fn main() -> Result<()> {
         chunks.len()
     );
 
+    // Spawn connection streams
     for (idx, chunk) in chunks.into_iter().enumerate() {
         let state = Arc::clone(&state);
         let log_file = Arc::clone(&log_file);
+        let bytes_written = Arc::clone(&bytes_written);
         tokio::spawn(async move {
             loop {
-                match run_connection(&chunk, idx, &state, &log_file).await {
+                match run_connection(&chunk, idx, &state, &log_file, &bytes_written).await {
                     Ok(_) => {
                         println!(
                             "[data_daemon02] stream {idx} ended cleanly, reconnecting"
@@ -95,6 +112,59 @@ async fn main() -> Result<()> {
         });
     }
 
+    // Spawn cycle monitor task
+    let cycle_bytes = Arc::clone(&bytes_written);
+    tokio::spawn(async move {
+        let mut rate_check_interval = Instant::now();
+        loop {
+            sleep(Duration::from_secs(60)).await;
+
+            // Update rate every 60 seconds
+            if rate_check_interval.elapsed().as_secs() >= 60 {
+                let elapsed = cycle_stats.cycle_start_unix.saturating_sub(
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                );
+                let bytes = cycle_bytes.load(Ordering::Relaxed);
+                cycle_stats.update_rate(bytes, CYCLE_DURATION_SECS.saturating_sub(cycle_stats.secs_until_prep()));
+                
+                if cycle_stats.secs_until_prep() <= 3600 && !cycle_stats.in_preparation_mode {
+                    println!("\n[cycle_manager] ⚠️  PREPARATION MODE IMMINENT");
+                    println!("[cycle_manager] Cycle {} ends in {} minutes", 
+                        cycle_stats.cycle_number, 
+                        cycle_stats.secs_until_prep() / 60
+                    );
+                    println!("[cycle_manager] Projected next 72h storage: {}", 
+                        cycle_manager::format_bytes_human(cycle_stats.project_next_72h_bytes())
+                    );
+                }
+
+                if cycle_stats.should_enter_prep_mode() {
+                    println!("\n[cycle_manager] 🛑 ENTERING PREPARATION MODE");
+                    println!("[cycle_manager] Please check UI for storage planning and log rotation options");
+                    cycle_stats.enter_prep_mode();
+                    let _ = cycle_manager::save_cycle_stats(&cycle_stats);
+                }
+
+                if cycle_stats.should_rotate_and_restart() {
+                    println!("\n[cycle_manager] ♻️  ROTATING LOGS AND STARTING NEW CYCLE");
+                    match cycle_manager::rotate_and_reset_cycle(&cycle_stats) {
+                        Ok(new_stats) => {
+                            cycle_stats = new_stats;
+                            cycle_bytes.store(0, Ordering::Relaxed);
+                            let _ = cycle_manager::save_cycle_stats(&cycle_stats);
+                        }
+                        Err(e) => eprintln!("[cycle_manager] rotation error: {e:?}"),
+                    }
+                }
+
+                rate_check_interval = Instant::now();
+            }
+        }
+    });
+
     loop {
         sleep(Duration::from_secs(3600)).await;
     }
@@ -105,6 +175,7 @@ async fn run_connection(
     idx: usize,
     state: &Arc<Mutex<SnapshotState>>,
     log_file: &Arc<Mutex<std::fs::File>>,
+    bytes_written: &Arc<AtomicU64>,
 ) -> Result<()> {
     let (mut ws, _) = connect_async(WS_MAINNET)
         .await
@@ -127,7 +198,7 @@ async fn run_connection(
             Ok(Message::Text(txt)) => {
                 let mut state_guard = state.lock().await;
                 let mut log_guard = log_file.lock().await;
-                if let Err(err) = handle_message(&txt, &mut state_guard, &mut log_guard) {
+                if let Err(err) = handle_message(&txt, &mut state_guard, &mut log_guard, bytes_written) {
                     eprintln!("[data_daemon02] handle_message error: {err:?}");
                 }
             }
@@ -224,6 +295,7 @@ fn handle_message(
     txt: &str,
     state: &mut SnapshotState,
     log_file: &mut std::fs::File,
+    bytes_written: &Arc<AtomicU64>,
 ) -> Result<()> {
     let v: Value = serde_json::from_str(txt).context("invalid websocket json")?;
     let msg_type = v.get("type").and_then(Value::as_str).unwrap_or_default();
@@ -243,8 +315,8 @@ fn handle_message(
         .unwrap_or_else(|| Value::Object(Default::default()));
 
     match channel {
-        "v4_orderbook" => handle_orderbook(id, &contents, state, log_file),
-        "v4_trades" => handle_trades(id, &contents, state, log_file),
+        "v4_orderbook" => handle_orderbook(id, &contents, state, log_file, bytes_written),
+        "v4_trades" => handle_trades(id, &contents, state, log_file, bytes_written),
         _ => Ok(()),
     }
 }
@@ -254,6 +326,7 @@ fn handle_orderbook(
     contents: &Value,
     state: &mut SnapshotState,
     log_file: &mut std::fs::File,
+    bytes_written: &Arc<AtomicU64>,
 ) -> Result<()> {
     let bids = contents
         .get("bids")
@@ -288,7 +361,7 @@ fn handle_orderbook(
     };
 
     state.last_book = Some(record.clone());
-    persist_event(log_file, &PersistedEvent::BookTop { data: record })?;
+    persist_event(log_file, &PersistedEvent::BookTop { data: record }, bytes_written)?;
 
     let levels_record = BookLevelsRecord {
         ts_unix,
@@ -296,7 +369,7 @@ fn handle_orderbook(
         bids: bid_levels,
         asks: ask_levels,
     };
-    persist_event(log_file, &PersistedEvent::BookLevels { data: levels_record })
+    persist_event(log_file, &PersistedEvent::BookLevels { data: levels_record }, bytes_written)
 }
 
 fn handle_trades(
@@ -304,6 +377,7 @@ fn handle_trades(
     contents: &Value,
     state: &mut SnapshotState,
     log_file: &mut std::fs::File,
+    bytes_written: &Arc<AtomicU64>,
 ) -> Result<()> {
     let trades = contents
         .get("trades")
@@ -352,7 +426,7 @@ fn handle_trades(
 
         state.recent_trades.push(rec.clone());
         state.trim_trades(MAX_TRADES);
-        persist_event(log_file, &PersistedEvent::Trade { data: rec })?;
+        persist_event(log_file, &PersistedEvent::Trade { data: rec }, bytes_written)?;
     }
 
     Ok(())
@@ -459,10 +533,12 @@ fn raw_string(v: &Value) -> Option<String> {
     }
 }
 
-fn persist_event(log_file: &mut std::fs::File, evt: &PersistedEvent) -> Result<()> {
+fn persist_event(log_file: &mut std::fs::File, evt: &PersistedEvent, bytes_written: &Arc<AtomicU64>) -> Result<()> {
     let line = serde_json::to_string(evt)?;
+    let bytes = line.len() + 1; // +1 for newline
     log_file.write_all(line.as_bytes())?;
     log_file.write_all(b"\n")?;
+    bytes_written.fetch_add(bytes as u64, Ordering::Relaxed);
     Ok(())
 }
 

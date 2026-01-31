@@ -79,6 +79,9 @@ pub enum UiEvent {
     TradeRealModeToggled { enabled: bool },
     ArmRealRequest { phrase: String },
     DisarmReal,
+
+    CycleRotateLogs,
+    CycleToggleAutoRotate { enabled: bool },
 }
 
 #[derive(Debug, Clone)]

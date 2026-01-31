@@ -439,6 +439,20 @@ pub fn wire_ui(ui: &crate::AppWindow, tx: std::sync::mpsc::Sender<AppEvent>) {
         });
     }
 
+    // --- Cycle management ---
+    {
+        let tx = tx.clone();
+        ui.on_cycle_rotate_logs(move || {
+            let _ = tx.send(AppEvent::Ui(UiEvent::CycleRotateLogs));
+        });
+    }
+    {
+        let tx = tx.clone();
+        ui.on_cycle_toggle_auto_rotate(move |enabled| {
+            let _ = tx.send(AppEvent::Ui(UiEvent::CycleToggleAutoRotate { enabled }));
+        });
+    }
+
     // (Optional) if you want to use the helper above:
     let _ = send;
 }

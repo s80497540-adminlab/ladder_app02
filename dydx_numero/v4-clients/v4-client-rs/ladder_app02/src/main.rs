@@ -52,6 +52,7 @@ fn main() -> Result<()> {
     {
         let mut rt = runtime.borrow_mut();
         rt.state = app::AppState::from_ui(&ui);
+        rt.state.load_cycle_stats(); // Load cycle stats from daemon
         rt.render(); // initial paint
     }
     {

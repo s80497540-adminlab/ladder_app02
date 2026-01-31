@@ -322,6 +322,13 @@ pub struct AppState {
     pub session_address: String,
     pub session_authenticator_id: Option<u64>,
     pub session_expires_at_unix: Option<u64>,
+
+    // Cycle management (71-hour cycles)
+    pub cycle_number: u64,
+    pub cycle_secs_remaining: u64,
+    pub cycle_in_prep_mode: bool,
+    pub cycle_projected_gb: f32,
+    pub cycle_auto_rotate: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -560,6 +567,12 @@ impl Default for AppState {
             session_address: String::new(),
             session_authenticator_id: None,
             session_expires_at_unix: None,
+
+            cycle_number: 1,
+            cycle_secs_remaining: 71 * 3600,
+            cycle_in_prep_mode: false,
+            cycle_projected_gb: 41.0,
+            cycle_auto_rotate: true,
         }
     }
 }
@@ -764,6 +777,12 @@ impl AppState {
             session_address: String::new(),
             session_authenticator_id: None,
             session_expires_at_unix: None,
+
+            cycle_number: 1,
+            cycle_secs_remaining: 71 * 3600,
+            cycle_in_prep_mode: false,
+            cycle_projected_gb: 41.0,
+            cycle_auto_rotate: true,
         };
         state.ensure_session_dir();
         state.load_session_drawings();
@@ -799,6 +818,29 @@ impl AppState {
             .get(ticker)
             .copied()
             .unwrap_or(true)
+    }
+
+    pub fn load_cycle_stats(&mut self) {
+        let cycle_stats_path = feed_shared::data_dir().join("cycle_stats.json");
+        if !cycle_stats_path.exists() {
+            return;
+        }
+        if let Ok(raw) = std::fs::read_to_string(&cycle_stats_path) {
+            if let Ok(stats) = serde_json::from_str::<serde_json::Value>(&raw) {
+                self.cycle_number = stats.get("cycle_number").and_then(|v| v.as_u64()).unwrap_or(1);
+                self.cycle_in_prep_mode = stats.get("in_preparation_mode").and_then(|v| v.as_bool()).unwrap_or(false);
+                
+                let bytes_per_sec = stats.get("bytes_per_sec").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let projected_bytes = bytes_per_sec * 72.0 * 3600.0;
+                self.cycle_projected_gb = (projected_bytes / (1024.0 * 1024.0 * 1024.0)) as f32;
+                
+                let start = stats.get("cycle_start_unix").and_then(|v| v.as_u64()).unwrap_or(0);
+                let now = now_unix();
+                let elapsed = now.saturating_sub(start);
+                let target: u64 = if self.cycle_in_prep_mode { 72 * 3600 } else { 71 * 3600 };
+                self.cycle_secs_remaining = target.saturating_sub(elapsed);
+            }
+        }
     }
 
     fn tf_secs_u64(&self) -> u64 {

@@ -138,6 +138,13 @@ pub fn render(state: &AppState, ui: &crate::AppWindow) {
     ));
     ui.set_settings_last_error(SharedString::from(state.settings_last_error.clone()));
 
+    // Cycle management
+    ui.set_cycle_number(state.cycle_number as i32);
+    ui.set_cycle_secs_remaining(state.cycle_secs_remaining as i32);
+    ui.set_cycle_in_prep_mode(state.cycle_in_prep_mode);
+    ui.set_cycle_projected_gb(state.cycle_projected_gb);
+    ui.set_cycle_auto_rotate(state.cycle_auto_rotate);
+
     let mut rows: Vec<TickerFeedRow> = Vec::new();
     let mut tickers = state.available_tickers.clone();
     tickers.sort();
