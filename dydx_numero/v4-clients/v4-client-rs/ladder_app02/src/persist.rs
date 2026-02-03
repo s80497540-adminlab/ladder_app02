@@ -56,12 +56,12 @@ pub struct AppConfig {
     pub chart_cursor_y: f32,
     pub inline_chart_height_px: f32,
 
-    // popout
-    pub chart_popout_open: bool,
-    pub chart_popout_x_px: f32,
-    pub chart_popout_y_px: f32,
-    pub chart_popout_w_px: f32,
-    pub chart_popout_h_px: f32,
+    // secondary chart
+    pub secondary_chart_open: bool,
+    pub secondary_chart_x_px: f32,
+    pub secondary_chart_y_px: f32,
+    pub secondary_chart_w_px: f32,
+    pub secondary_chart_h_px: f32,
 
     // settings
     pub settings_network: String,
@@ -113,11 +113,11 @@ impl Default for AppConfig {
             chart_cursor_y: 0.5,
             inline_chart_height_px: 260.0,
 
-            chart_popout_open: false,
-            chart_popout_x_px: 80.0,
-            chart_popout_y_px: 240.0,
-            chart_popout_w_px: 760.0,
-            chart_popout_h_px: 440.0,
+            secondary_chart_open: false,
+            secondary_chart_x_px: 80.0,
+            secondary_chart_y_px: 240.0,
+            secondary_chart_w_px: 760.0,
+            secondary_chart_h_px: 440.0,
 
             settings_network: "Mainnet".to_string(),
             settings_rpc_endpoint: "".to_string(),
@@ -213,11 +213,11 @@ impl Persistence {
         let chart_h = cfg.inline_chart_height_px.max(260.0);
         ui.set_inline_chart_height((chart_h).into());
 
-        ui.set_chart_popout_open(cfg.chart_popout_open);
-        ui.set_chart_popout_x((cfg.chart_popout_x_px).into());
-        ui.set_chart_popout_y((cfg.chart_popout_y_px).into());
-        ui.set_chart_popout_w((cfg.chart_popout_w_px).into());
-        ui.set_chart_popout_h((cfg.chart_popout_h_px).into());
+        ui.set_secondary_chart_open(cfg.secondary_chart_open);
+        ui.set_secondary_chart_x((cfg.secondary_chart_x_px).into());
+        ui.set_secondary_chart_y((cfg.secondary_chart_y_px).into());
+        ui.set_secondary_chart_w((cfg.secondary_chart_w_px).into());
+        ui.set_secondary_chart_h((cfg.secondary_chart_h_px).into());
 
         ui.set_settings_network(cfg.settings_network.clone().into());
         ui.set_settings_rpc_endpoint(cfg.settings_rpc_endpoint.clone().into());
@@ -271,11 +271,11 @@ impl Persistence {
             chart_cursor_y: ui.get_chart_cursor_y(),
             inline_chart_height_px: len_to_px(ui.get_inline_chart_height()),
 
-            chart_popout_open: ui.get_chart_popout_open(),
-            chart_popout_x_px: len_to_px(ui.get_chart_popout_x()),
-            chart_popout_y_px: len_to_px(ui.get_chart_popout_y()),
-            chart_popout_w_px: len_to_px(ui.get_chart_popout_w()),
-            chart_popout_h_px: len_to_px(ui.get_chart_popout_h()),
+            secondary_chart_open: ui.get_secondary_chart_open(),
+            secondary_chart_x_px: len_to_px(ui.get_secondary_chart_x()),
+            secondary_chart_y_px: len_to_px(ui.get_secondary_chart_y()),
+            secondary_chart_w_px: len_to_px(ui.get_secondary_chart_w()),
+            secondary_chart_h_px: len_to_px(ui.get_secondary_chart_h()),
 
             settings_network: ui.get_settings_network().to_string(),
             settings_rpc_endpoint: ui.get_settings_rpc_endpoint().to_string(),

@@ -125,7 +125,6 @@ component ZeroPadText inherits Rectangle {
     in property <length> pad_font_size: font_size - 3px;
     in property <string> font_family: "";
 
-    width: main_text.preferred-width + pad_text.preferred-width;
     height: main_text.preferred-height;
     property <length> text_y: (self.height - main_text.preferred-height) * 0.5;
 
@@ -434,6 +433,14 @@ component TopBarLabel inherits Text {
     in property <string> label_font_family: "Avenir Next";
     font-size: label_font_size;
     font-family: label_font_family;
+}
+
+export global UiSettings {
+    in-out property <float> button_scale: 1.0;
+}
+
+
+component AppButton inherits Button {
 }
 
 component TopBarButton inherits Rectangle {
@@ -937,9 +944,9 @@ component SettingsPanel inherits Rectangle {
             text <=> root.wallet_address;
         }
 
-        Button { x: 6px;  y: 48px; text: "Connect";    clicked => { root.connect_wallet(); } }
-        Button { x: 92px; y: 48px; text: "Disconnect"; clicked => { root.disconnect_wallet(); } }
-        Button { x: 196px; y: 48px; text: "Refresh";   clicked => { root.refresh_status(); } }
+        AppButton { x: 6px;  y: 48px; text: "Connect";    clicked => { root.connect_wallet(); } }
+        AppButton { x: 92px; y: 48px; text: "Disconnect"; clicked => { root.disconnect_wallet(); } }
+        AppButton { x: 196px; y: 48px; text: "Refresh";   clicked => { root.refresh_status(); } }
 
         Text {
             x: 6px; y: 76px; width: parent.width - 12px;
@@ -950,8 +957,8 @@ component SettingsPanel inherits Rectangle {
         Rectangle { x: 6px; y: 94px; width: parent.width - 12px; height: 1px; background: #222634; opacity: 0.8; }
         Text { x: 6px; y: 102px; text: "Network"; color: #ffffff; }
 
-        Button { x: 6px;  y: 122px; text: "Mainnet"; clicked => { root.select_network("Mainnet"); } }
-        Button { x: 92px; y: 122px; text: "Testnet"; clicked => { root.select_network("Testnet"); } }
+        AppButton { x: 6px;  y: 122px; text: "Mainnet"; clicked => { root.select_network("Mainnet"); } }
+        AppButton { x: 92px; y: 122px; text: "Testnet"; clicked => { root.select_network("Testnet"); } }
 
         Text {
             x: 188px; y: 126px;
@@ -965,7 +972,7 @@ component SettingsPanel inherits Rectangle {
             width: parent.width - 160px; height: 20px;
             text <=> root.rpc_endpoint;
         }
-        Button {
+        AppButton {
             x: parent.width - 62px;
             y: 146px;
             text: "Apply";
@@ -985,8 +992,8 @@ component SettingsPanel inherits Rectangle {
         Text { x: 6px; y: 226px; text: "Session TTL (min):"; color: #aaaaaa; font-size: 10px; }
         LineEdit { x: 110px; y: 222px; width: 60px; height: 20px; text <=> root.session_ttl_minutes; }
 
-        Button { x: 178px; y: 220px; text: "Create"; clicked => { root.create_session(root.session_ttl_minutes); } }
-        Button { x: 252px; y: 220px; text: "Revoke"; clicked => { root.revoke_session(); } }
+        AppButton { x: 178px; y: 220px; text: "Create"; clicked => { root.create_session(root.session_ttl_minutes); } }
+        AppButton { x: 252px; y: 220px; text: "Revoke"; clicked => { root.revoke_session(); } }
 
         Text {
             x: 6px; y: 248px; width: parent.width - 12px;
@@ -999,7 +1006,7 @@ component SettingsPanel inherits Rectangle {
             text: root.last_error;
             color: #ff8080; font-size: 10px;
         }
-        Button {
+        AppButton {
             x: parent.width - 60px;
             y: 264px;
             width: 54px;
@@ -1598,192 +1605,7 @@ component SpreadChart inherits Rectangle {
     }
 }
 
-// ---------- Popout chart panel (draggable + resizable) --------------
 
-component ChartPopoutPanel inherits Rectangle {
-    in-out property <bool> open;
-    in-out property <length> px;
-    in-out property <length> py;
-    in-out property <length> pw;
-    in-out property <length> ph;
-    in property <length> grid_col_w: 1px;
-    in property <length> grid_row_h: 1px;
-    in property <length> grid_snap_col_w: grid_col_w;
-    in property <length> grid_snap_row_h: grid_row_h;
-    in property <bool> allow_drag: true;
-
-    in property <[CandlePoint]> points;
-    in property <float> mid_line_y;
-    in property <float> position_entry_y;
-    in property <bool> position_entry_visible;
-    in property <color> position_entry_color;
-    in property <[DrawShape]> drawings;
-    in property <[DrawTick]> draw_ticks;
-    in property <[HeatmapCell]> heatmap_cells;
-    in-out property <bool> heatmap_enabled;
-    in-out property <string> view_mode;
-    property <bool> advanced_mode: view_mode == "Advanced";
-    in property <string> draw_tool;
-
-    in-out property <float> x_zoom;
-    in-out property <float> y_zoom;
-    in-out property <float> pan_x;
-    in-out property <float> pan_y;
-    in-out property <float> cursor_x;
-    in-out property <float> cursor_y;
-
-    in property <string> title;
-
-    callback view_mode_changed(new_mode: string);
-    callback heatmap_enabled_changed(enabled: bool);
-    callback draw_begin(x: float, y: float);
-    callback draw_update(x: float, y: float);
-    callback draw_end(x: float, y: float);
-    callback draw_poly_sides_delta(delta: int);
-
-    x: px;
-    y: py;
-    width: pw;
-    height: ph;
-
-    visible: open;
-
-    background: advanced_mode ? #0b0f17 : #202533;
-    border-radius: 6px;
-    border-width: 1px;
-    border-color: advanced_mode ? #3a3f55 : #31384a;
-
-    Rectangle {
-        x: 0px; y: 0px; width: parent.width; height: grid_row_h;
-        background: advanced_mode ? #1b2031 : #303545;
-
-        Text { x: grid_col_w; y: 0px; width: parent.width - (grid_col_w * 3); height: parent.height; text: title; color: advanced_mode ? #f5e9ff : #ffffff; vertical-alignment: center; }
-
-        Button {
-            x: parent.width - (grid_col_w * 2); y: 0px; width: grid_col_w * 2; height: parent.height;
-            text: "Close";
-            clicked => { root.open = false; }
-        }
-
-        TouchArea {
-            x: 0px; y: 0px; width: parent.width - (grid_col_w * 2); height: parent.height;
-
-            property <length> last_x;
-            property <length> last_y;
-            property <bool> dragging;
-
-            pointer-event(event) => {
-                if !root.allow_drag {
-                    EventResult.reject
-                } else if event.kind == PointerEventKind.down {
-                    dragging = true;
-                    last_x = self.mouse-x;
-                    last_y = self.mouse-y;
-                } else if event.kind == PointerEventKind.up {
-                    dragging = false;
-                    let col_px = root.grid_snap_col_w / 1px;
-                    let row_px = root.grid_snap_row_h / 1px;
-                    if col_px > 0.0 && row_px > 0.0 {
-                        root.px = Math.round((root.px / 1px) / col_px) * root.grid_snap_col_w;
-                        root.py = Math.round((root.py / 1px) / row_px) * root.grid_snap_row_h;
-                    }
-                } else if event.kind == PointerEventKind.move && dragging {
-                    let dx = self.mouse-x - last_x;
-                    let dy = self.mouse-y - last_y;
-
-                    root.px = Math.max(0px, root.px + dx);
-                    root.py = Math.max(40px, root.py + dy);
-
-                    last_x = self.mouse-x;
-                    last_y = self.mouse-y;
-                }
-            }
-        }
-    }
-
-    Rectangle {
-        x: grid_col_w;
-        y: grid_row_h;
-        width: parent.width - (grid_col_w * 2);
-        height: parent.height - grid_row_h;
-        background: #0b0f16;
-        border-radius: 4px;
-        border-width: 1px;
-        border-color: #1c2230;
-
-        CandleChart {
-            x: 0px;
-            y: 0px;
-            width: parent.width;
-            height: parent.height;
-
-            points: root.points;
-            mid_line_y: root.mid_line_y;
-            position_entry_y: root.position_entry_y;
-            position_entry_visible: root.position_entry_visible;
-            position_entry_color: root.position_entry_color;
-            drawings: root.drawings;
-            draw_ticks: root.draw_ticks;
-            heatmap_cells: root.heatmap_cells;
-            heatmap_enabled: root.heatmap_enabled;
-            advanced_mode: root.advanced_mode;
-            draw_tool: root.draw_tool;
-
-            x_zoom <=> root.x_zoom;
-            y_zoom <=> root.y_zoom;
-            pan_x <=> root.pan_x;
-            pan_y <=> root.pan_y;
-            cursor_x <=> root.cursor_x;
-            cursor_y <=> root.cursor_y;
-
-            draw_begin(x, y) => { root.draw_begin(x, y); }
-            draw_update(x, y) => { root.draw_update(x, y); }
-            draw_end(x, y) => { root.draw_end(x, y); }
-            draw_poly_sides_delta(delta) => { root.draw_poly_sides_delta(delta); }
-        }
-    }
-
-    Rectangle {
-        x: parent.width - 14px;
-        y: parent.height - 14px;
-        width: 12px;
-        height: 12px;
-        background: #7070ff;
-        opacity: 0.7;
-        border-radius: 2px;
-
-        TouchArea {
-            x: -8px; y: -8px; width: 28px; height: 28px;
-
-            property <length> start_w;
-            property <length> start_h;
-            property <length> last_x;
-            property <length> last_y;
-            property <bool> resizing;
-
-            pointer-event(event) => {
-                if event.kind == PointerEventKind.down {
-                    resizing = true;
-                    start_w = root.pw;
-                    start_h = root.ph;
-                    last_x = self.mouse-x;
-                    last_y = self.mouse-y;
-                } else if event.kind == PointerEventKind.up {
-                    resizing = false;
-                } else if event.kind == PointerEventKind.move && resizing {
-                    let dx = self.mouse-x - last_x;
-                    let dy = self.mouse-y - last_y;
-
-                    let nw = start_w + dx;
-                    let nh = start_h + dy;
-
-                    root.pw = Math.max(420px, Math.min(1100px, nw));
-                    root.ph = Math.max(260px, Math.min(900px, nh));
-                }
-            }
-        }
-    }
-}
 
 // ---------- Main window component -----------------------------------
 
@@ -1894,7 +1716,6 @@ export component AppWindow inherits Window {
     in-out property <int> settings_layer: 1;
     in-out property <int> microdepth_layer: 1;
     in-out property <int> ticker_dropdown_layer: 1;
-    in-out property <int> chart_popout_layer: 2;
 
     // Persisted panel positions (for phase-1 persistence)
     in-out property <length> orderbook_x: grid_col_w * 1;
@@ -2052,6 +1873,13 @@ export component AppWindow inherits Window {
     in-out property <float> trade_chart_cursor_x: 0.5;
     in-out property <float> trade_chart_cursor_y: 0.5;
 
+    in-out property <float> secondary_chart_x_zoom: 1.0;
+    in-out property <float> secondary_chart_y_zoom: 1.0;
+    in-out property <float> secondary_chart_pan_x: 0.0;
+    in-out property <float> secondary_chart_pan_y: 0.0;
+    in-out property <float> secondary_chart_cursor_x: 0.5;
+    in-out property <float> secondary_chart_cursor_y: 0.5;
+
     in-out property <length> inline_chart_height: grid_row_h * 6;
     in-out property <bool> is_fullscreen: false;
 
@@ -2062,11 +1890,11 @@ export component AppWindow inherits Window {
     in-out property <bool> heatmap_enabled: false;
     in-out property <bool> chart_sidebar_open: false;
 
-    in-out property <bool> chart_popout_open: false;
-    in-out property <length> chart_popout_x: grid_col_w * 5;
-    in-out property <length> chart_popout_y: grid_row_h * 6;
-    in-out property <length> chart_popout_w: grid_col_w * 24;
-    in-out property <length> chart_popout_h: grid_row_h * 11;
+    in-out property <bool> secondary_chart_open: false;
+    in-out property <length> secondary_chart_x: grid_col_w * 5;
+    in-out property <length> secondary_chart_y: grid_row_h * 6;
+    in-out property <length> secondary_chart_w: grid_col_w * 24;
+    in-out property <length> secondary_chart_h: grid_row_h * 11;
 
     in-out property <bool> trade_chart_open: true;
     in-out property <length> trade_chart_x: grid_col_w * 26;
@@ -2255,7 +2083,7 @@ export component AppWindow inherits Window {
                     color: #e0e0e0;
                     vertical-alignment: center;
                 }
-                Button {
+                AppButton {
                     x: col_w * 22;
                     y: row1_y + btn_y_offset;
                     width: col_w * 3;
@@ -2263,7 +2091,7 @@ export component AppWindow inherits Window {
                     text: root.settings_panel_open ? "Settings ✓" : "Settings";
                     clicked => { root.settings_panel_open = !root.settings_panel_open; }
                 }
-                Button {
+                AppButton {
                     x: col_w * 25;
                     y: row1_y + btn_y_offset;
                     width: col_w * 3;
@@ -2274,7 +2102,7 @@ export component AppWindow inherits Window {
                         root.session_recording_changed(root.session_recording);
                     }
                 }
-                Button {
+                AppButton {
                     x: col_w * 28;
                     y: row1_y + btn_y_offset;
                     width: col_w * 2;
@@ -2282,7 +2110,7 @@ export component AppWindow inherits Window {
                     text: "Close";
                     clicked => { root.close_and_save_requested(); }
                 }
-                Button {
+                AppButton {
                     x: col_w * 30;
                     y: row1_y + btn_y_offset;
                     width: col_w * 3;
@@ -2290,7 +2118,7 @@ export component AppWindow inherits Window {
                     text: root.grid_enabled ? "Grid: On" : "Grid: Off";
                     clicked => { root.grid_enabled = !root.grid_enabled; }
                 }
-                Button {
+                AppButton {
                     x: col_w * 33;
                     y: row1_y + btn_y_offset;
                     width: col_w * 3;
@@ -2300,7 +2128,7 @@ export component AppWindow inherits Window {
                         root.grid_snap_index = Math.mod(root.grid_snap_index + 1, root.grid_snap_labels.length);
                     }
                 }
-                Button {
+                AppButton {
                     x: col_w * 36;
                     y: row1_y + btn_y_offset;
                     width: col_w * 3;
@@ -2319,7 +2147,7 @@ export component AppWindow inherits Window {
                     horizontal-alignment: right;
                     vertical-alignment: center;
                 }
-                Button {
+                AppButton {
                     x: col_w * 42;
                     y: row1_y + btn_y_offset;
                     width: col_w * 3;
@@ -2611,22 +2439,6 @@ export component AppWindow inherits Window {
                     clicked => {
                         root.chart_enabled = !root.chart_enabled;
                         root.chart_enabled_changed(root.chart_enabled);
-                    }
-                }
-
-                TopBarButton {
-                    x: col_w * 44; y: row1_y + btn_y_offset; width: col_w * 3; height: btn_h;
-                    text: root.chart_popout_open ? "Popout ✓" : "Popout";
-                    active: root.chart_popout_open;
-                    font_size: font_main; font_family: root.topbar_font;
-                    clicked => {
-                        if !root.chart_popout_open {
-                            root.chart_popout_x = root.grid_col_w * 5;
-                            root.chart_popout_y = root.grid_row_h * 6;
-                            root.chart_popout_w = root.grid_col_w * 24;
-                            root.chart_popout_h = root.grid_row_h * 11;
-                        }
-                        root.chart_popout_open = !root.chart_popout_open;
                     }
                 }
 
@@ -2949,10 +2761,10 @@ export component AppWindow inherits Window {
                 property <length> row1_y: 0px;
                 property <length> row2_y: row_h;
 
-                Button { x: col_w * 1; y: row1_y; width: col_w * 2; height: row_h; text: "Buy";  clicked => { root.trade_side = "Buy"; } }
-                Button { x: col_w * 3; y: row1_y; width: col_w * 2; height: row_h; text: "Sell"; clicked => { root.trade_side = "Sell"; } }
+                AppButton { x: col_w * 1; y: row1_y; width: col_w * 2; height: row_h; text: "Buy";  clicked => { root.trade_side = "Buy"; } }
+                AppButton { x: col_w * 3; y: row1_y; width: col_w * 2; height: row_h; text: "Sell"; clicked => { root.trade_side = "Sell"; } }
 
-                Button {
+                AppButton {
                     x: col_w * 5; y: row1_y;
                     width: col_w * 4; height: row_h;
                     text: "Send Order";
@@ -2984,7 +2796,7 @@ export component AppWindow inherits Window {
                     visible: root.trade_real_mode;
                 }
 
-                Button {
+                AppButton {
                     x: col_w * 15; y: row1_y;
                     width: col_w * 3; height: row_h;
                     text: "ARM (60s)";
@@ -2992,7 +2804,7 @@ export component AppWindow inherits Window {
                     clicked => { root.arm_real_request(root.trade_real_arm_phrase); }
                 }
 
-                Button {
+                AppButton {
                     x: col_w * 18; y: row1_y;
                     width: col_w * 2; height: row_h;
                     text: "Disarm";
@@ -3203,7 +3015,7 @@ export component AppWindow inherits Window {
                     edited => { root.trade_margin_text_changed(self.text); }
                 }
 
-                Button {
+                AppButton {
                     x: col_w * 38; y: row2_y;
                     width: col_w * 1; height: row_h;
                     text: "-";
@@ -3213,7 +3025,7 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                Button {
+                AppButton {
                     x: col_w * 39; y: row2_y;
                     width: col_w * 1; height: row_h;
                     text: "+";
@@ -3234,9 +3046,9 @@ export component AppWindow inherits Window {
 
                 CheckBox { x: col_w * 26; y: row1_y; width: col_w * 4; height: row_h; text: "Bot auto trade"; checked <=> bot_auto_trade; }
 
-                Button { x: col_w * 30; y: row1_y; width: col_w * 3; height: row_h; text: "Deposit 100";  clicked => { root.deposit(100.0); } }
-                Button { x: col_w * 33; y: row1_y; width: col_w * 3; height: row_h; text: "Withdraw 100"; clicked => { root.withdraw(100.0); } }
-                Button { x: col_w * 36; y: row1_y; width: col_w * 3; height: row_h; text: "Reload data";  clicked => { root.reload_data(); } }
+                AppButton { x: col_w * 30; y: row1_y; width: col_w * 3; height: row_h; text: "Deposit 100";  clicked => { root.deposit(100.0); } }
+                AppButton { x: col_w * 33; y: row1_y; width: col_w * 3; height: row_h; text: "Withdraw 100"; clicked => { root.withdraw(100.0); } }
+                AppButton { x: col_w * 36; y: row1_y; width: col_w * 3; height: row_h; text: "Reload data";  clicked => { root.reload_data(); } }
 
                 Text {
                     x: col_w * 40;
@@ -3249,7 +3061,7 @@ export component AppWindow inherits Window {
                     vertical-alignment: center;
                 }
 
-                Button {
+                AppButton {
                     x: col_w * 48; y: row1_y;
                     width: col_w * 3; height: row_h;
                     text: "Close";
@@ -3323,7 +3135,7 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                Button {
+                AppButton {
                     x: auto_x;
                     y: 0px;
                     width: root.grid_col_w * 4;
@@ -3356,7 +3168,7 @@ export component AppWindow inherits Window {
 
                     Text { x: 6px; y: 4px; text: "View"; color: root.chart_view_mode == "Advanced" ? #f0d9ff : #cfd6e6; font-size: 10px; }
 
-                    Button {
+                    AppButton {
                         x: 6px;
                         y: 18px;
                         width: parent.width - 12px;
@@ -3367,7 +3179,7 @@ export component AppWindow inherits Window {
                             root.chart_view_mode_changed(root.chart_view_mode);
                         }
                     }
-                    Button {
+                    AppButton {
                         x: 6px;
                         y: 40px;
                         width: parent.width - 12px;
@@ -3378,7 +3190,7 @@ export component AppWindow inherits Window {
                             root.chart_view_mode_changed(root.chart_view_mode);
                         }
                     }
-                    Button {
+                    AppButton {
                         x: 6px;
                         y: 62px;
                         width: parent.width - 12px;
@@ -3393,7 +3205,7 @@ export component AppWindow inherits Window {
 
                     Text { x: 6px; y: tools_label_y; text: "Tools"; color: root.chart_view_mode == "Advanced" ? #f0d9ff : #cfd6e6; font-size: 10px; }
 
-                    for tool[idx] in root.draw_tools : Button {
+                    for tool[idx] in root.draw_tools : AppButton {
                         x: 6px;
                         y: tools_top + (idx * tools_row_h);
                         width: parent.width - 12px;
@@ -3405,7 +3217,7 @@ export component AppWindow inherits Window {
                         }
                     }
 
-                    Button {
+                    AppButton {
                         x: 6px;
                         y: clear_y;
                         width: parent.width - 12px;
@@ -3414,7 +3226,24 @@ export component AppWindow inherits Window {
                         clicked => { root.drawing_clear_all(); }
                     }
 
-                    Text { x: 6px; y: clear_y + 24px; text: "Drawings"; color: root.chart_view_mode == "Advanced" ? #f0d9ff : #cfd6e6; font-size: 10px; }
+                    AppButton {
+                        x: 6px;
+                        y: clear_y + 24px;
+                        width: parent.width - 12px;
+                        height: 20px;
+                        text: root.secondary_chart_open ? "Secondary ✓" : "Secondary Chart";
+                        clicked => {
+                            if !root.secondary_chart_open {
+                                root.secondary_chart_x = root.grid_col_w * 5;
+                                root.secondary_chart_y = root.grid_row_h * 6;
+                                root.secondary_chart_w = root.grid_col_w * 24;
+                                root.secondary_chart_h = root.grid_row_h * 11;
+                            }
+                            root.secondary_chart_open = !root.secondary_chart_open;
+                        }
+                    }
+
+                    Text { x: 6px; y: clear_y + 48px; text: "Drawings"; color: root.chart_view_mode == "Advanced" ? #f0d9ff : #cfd6e6; font-size: 10px; }
 
                     ListView {
                         x: 6px;
@@ -3436,7 +3265,7 @@ export component AppWindow inherits Window {
                                 font-size: 9px;
                             }
 
-                            Button {
+                            AppButton {
                                 x: parent.width - 20px;
                                 y: 1px;
                                 width: 18px;
@@ -3462,15 +3291,14 @@ export component AppWindow inherits Window {
                     width: chart_w;
                     height: chart_h;
 
-                    points <=> root.candle_points;
-                    mid_line_y: root.candle_midline;
+                    points: root.trade_candle_points;
+                    mid_line_y: root.trade_candle_midline;
                     position_entry_y: root.position_entry_y;
-                    position_entry_visible: root.position_entry_visible;
-                    position_entry_color: root.position_entry_color;
-                    drawings: root.drawings;
-                    draw_ticks: root.draw_ticks;
-                    heatmap_cells: root.heatmap_cells;
-                    heatmap_enabled: root.heatmap_enabled;
+                    position_entry_visible: false;
+                    drawings: root.chart_view_mode == "Advanced" ? root.drawings : [];
+                    draw_ticks: root.chart_view_mode == "Advanced" ? root.draw_ticks : [];
+                    heatmap_cells: root.chart_view_mode == "Advanced" ? root.heatmap_cells : [];
+                    heatmap_enabled: root.chart_view_mode == "Advanced" && root.heatmap_enabled;
                     advanced_mode: root.chart_view_mode == "Advanced";
                     draw_tool: root.draw_tool;
 
@@ -3662,7 +3490,7 @@ export component AppWindow inherits Window {
                         vertical-alignment: center;
                     }
 
-                    Button {
+                    AppButton {
                         x: parent.width - (col_w * 5);
                         y: 0px;
                         width: col_w * 5;
@@ -3702,98 +3530,48 @@ export component AppWindow inherits Window {
                         text <=> root.script_text;
                     }
 
-                    Button { x: 0px; y: row_h * 5; width: col_w * 4; height: row_h; text: "Run Script"; clicked => { root.run_script(); } }
+                    AppButton { x: 0px; y: row_h * 5; width: col_w * 4; height: row_h; text: "Run Script"; clicked => { root.run_script(); } }
                     Text { x: 0px; y: row_h * 6; width: parent.width; height: row_h; text: script_error; color: #ff8080; vertical-alignment: center; }
                     Text { x: 0px; y: row_h * 7; width: parent.width; height: row_h; text: order_message; color: #80ff80; vertical-alignment: center; }
                 }
             }
 
-            if root.trade_chart_open : Rectangle {
-                x: root.trade_chart_x;
-                y: root.trade_chart_y;
-                width: root.trade_chart_w;
-                height: root.trade_chart_h;
-                background: root.chart_view_mode == "Advanced" ? #0b0f17 : #11151d;
+            if root.secondary_chart_open : Rectangle {
+                x: root.secondary_chart_x;
+                y: root.secondary_chart_y;
+                width: root.secondary_chart_w;
+                height: root.secondary_chart_h;
+                background: #0c0f15;
+                border-radius: 6px;
+                border-width: 1px;
+                border-color: #31384a;
 
                 property <length> header_h: root.grid_row_h;
-                property <length> h_gap: root.grid_col_w;
-                property <length> v_gap: root.grid_row_h;
-                property <length> chart_h: parent.height - header_h - (v_gap * 2) - (root.grid_row_h * 3);
-                property <length> tools_w: root.chart_sidebar_open ? (root.grid_col_w * 4) : 0px;
-                property <length> chart_x: h_gap + tools_w + (root.chart_sidebar_open ? h_gap : 0px);
-                property <length> chart_w: parent.width - chart_x - h_gap;
-                property <length> list_y: header_h + v_gap + chart_h + v_gap;
-                property <length> toggle_w: root.grid_col_w;
-                property <length> header_text_x: h_gap + toggle_w + h_gap;
-                property <length> auto_x: parent.width - (root.grid_col_w * 4) - h_gap;
+                property <length> v_gap: 6px;
+                property <length> h_gap: 6px;
+                property <length> chart_h: parent.height - header_h - v_gap - v_gap;
+                property <length> chart_w: parent.width - (h_gap * 2);
 
-                Text {
-                    x: header_text_x;
-                    y: 0px;
-                    width: parent.width - 100px;
-                    text:
-                        "Trade Candles  tf=" + candle_tf_secs
-                        + "s  window=" + candle_window_minutes + "m"
-                        + "   | X=" + trade_chart_x_zoom + "  Y=" + trade_chart_y_zoom;
-                    color: root.chart_view_mode == "Advanced" ? #f5e9ff : #ffffff;
-                    height: header_h;
-                    vertical-alignment: center;
+                Rectangle {
+                    x: 0px; y: 0px; width: parent.width; height: header_h;
+                    background: #1b2031;
+                    Text { x: h_gap; y: 0px; width: parent.width - (h_gap + root.grid_col_w * 2); height: parent.height; text: "Secondary Chart (Historical)"; color: #f5e9ff; vertical-alignment: center; }
+                    AppButton {
+                        x: parent.width - (root.grid_col_w * 2); y: 0px; width: root.grid_col_w * 2; height: parent.height;
+                        text: "Close";
+                        clicked => { root.secondary_chart_open = false; }
+                    }
                 }
 
                 Rectangle {
                     x: h_gap;
-                    y: 0px;
-                    width: toggle_w;
-                    height: header_h;
-                    background: root.chart_view_mode == "Advanced" ? #12162a : #151b26;
-                    border-width: 1px;
-                    border-color: root.chart_view_mode == "Advanced" ? #343a52 : #2a3040;
-                    border-radius: 3px;
-
-                    Text {
-                        x: 0px;
-                        y: 0px;
-                        width: parent.width;
-                        height: parent.height;
-                        text: ">|<";
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                        color: root.chart_view_mode == "Advanced" ? #f0d9ff : #dfe8ff;
-                        font-size: 12px;
-                    }
-
-                    TouchArea {
-                        x: 0px;
-                        y: 0px;
-                        width: parent.width;
-                        height: parent.height;
-                        clicked => { root.trade_chart_open = false; }
-                    }
-                }
-
-                Button {
-                    x: auto_x;
-                    y: 0px;
-                    width: root.grid_col_w * 4;
-                    height: header_h;
-                    text: "Auto: center";
-                    clicked => {
-                        root.trade_chart_pan_x = 0.0;
-                        root.trade_chart_pan_y = 0.0;
-                        root.trade_chart_x_zoom = 1.0;
-                        root.trade_chart_y_zoom = 1.0;
-                    }
-                }
-
-                Rectangle {
-                    x: h_gap + toggle_w + h_gap;
                     y: header_h + v_gap;
                     width: chart_w;
                     height: chart_h;
-                    background: root.chart_view_mode == "Advanced" ? #050609 : #0c0f16;
+                    background: #0b0f16;
                     border-width: 1px;
-                    border-color: root.chart_view_mode == "Advanced" ? #1c2230 : #101418;
-                    border-radius: 3px;
+                    border-color: #1c2230;
+                    border-radius: 4px;
 
                     CandleChart {
                         x: 0px;
@@ -3801,40 +3579,29 @@ export component AppWindow inherits Window {
                         width: parent.width;
                         height: parent.height;
 
-                        points: root.trade_candle_points;
-                        mid_line_y: root.trade_candle_midline;
+                        points: root.secondary_chart_open ? root.candle_points : [];
+                        mid_line_y: root.candle_midline;
                         position_entry_y: root.position_entry_y;
-                        position_entry_visible: false;
-                        drawings: root.chart_view_mode == "Advanced" ? root.drawings : [];
-                        draw_ticks: root.chart_view_mode == "Advanced" ? root.draw_ticks : [];
-                        heatmap_cells: root.chart_view_mode == "Advanced" ? root.heatmap_cells : [];
-                        heatmap_enabled: root.chart_view_mode == "Advanced" && root.heatmap_enabled;
+                        position_entry_visible: root.position_entry_visible;
+                        position_entry_color: root.position_entry_color;
+                        drawings: root.drawings;
+                        draw_ticks: root.draw_ticks;
+                        heatmap_cells: root.heatmap_cells;
+                        heatmap_enabled: root.heatmap_enabled;
                         advanced_mode: root.chart_view_mode == "Advanced";
                         draw_tool: root.draw_tool;
 
-                        x_zoom <=> root.trade_chart_x_zoom;
-                        y_zoom <=> root.trade_chart_y_zoom;
-                        pan_x <=> root.trade_chart_pan_x;
-                        pan_y <=> root.trade_chart_pan_y;
-                        cursor_x <=> root.trade_chart_cursor_x;
-                        cursor_y <=> root.trade_chart_cursor_y;
+                        x_zoom <=> root.secondary_chart_x_zoom;
+                        y_zoom <=> root.secondary_chart_y_zoom;
+                        pan_x <=> root.secondary_chart_pan_x;
+                        pan_y <=> root.secondary_chart_pan_y;
+                        cursor_x <=> root.secondary_chart_cursor_x;
+                        cursor_y <=> root.secondary_chart_cursor_y;
 
                         draw_begin(x, y) => { root.draw_begin(x, y); }
                         draw_update(x, y) => { root.draw_update(x, y); }
                         draw_end(x, y) => { root.draw_end(x, y); }
                         draw_poly_sides_delta(delta) => { root.draw_poly_sides_delta(delta); }
-                    }
-                }
-
-                ListView {
-                    x: h_gap;
-                    y: list_y;
-                    width: parent.width - (h_gap * 2);
-                    height: parent.height - (list_y + h_gap);
-
-                    for c in root.trade_candles : Text {
-                        text: c.ts + "  O:" + c.open + " H:" + c.high + " L:" + c.low + " C:" + c.close + " V:" + c.volume;
-                        color: #d0d0d0;
                     }
                 }
             }
@@ -4172,7 +3939,7 @@ export component AppWindow inherits Window {
                         ? (row.active ? #1b2438 : #242835)
                         : (row.active ? #111725 : #0b0f1a);
 
-                    Button {
+                    AppButton {
                         x: 4px;
                         y: 2px;
                         width: 18px;
@@ -4189,7 +3956,7 @@ export component AppWindow inherits Window {
                         font-size: 12px;
                     }
 
-                    Button {
+                    AppButton {
                         x: parent.width - 74px;
                         y: 2px;
                         width: 70px;
@@ -4251,7 +4018,7 @@ export component AppWindow inherits Window {
                         ? (row.active ? #1b2438 : #242835)
                         : (row.active ? #111725 : #0b0f1a);
 
-                    Button {
+                    AppButton {
                         x: 4px;
                         y: 2px;
                         width: 18px;
@@ -4268,7 +4035,7 @@ export component AppWindow inherits Window {
                         font-size: 12px;
                     }
 
-                    Button {
+                    AppButton {
                         x: parent.width - 74px;
                         y: 2px;
                         width: 70px;
@@ -4330,7 +4097,7 @@ export component AppWindow inherits Window {
                         ? (row.active ? #1b2438 : #242835)
                         : (row.active ? #111725 : #0b0f1a);
 
-                    Button {
+                    AppButton {
                         x: 4px;
                         y: 2px;
                         width: 18px;
@@ -4347,7 +4114,7 @@ export component AppWindow inherits Window {
                         font-size: 12px;
                     }
 
-                    Button {
+                    AppButton {
                         x: parent.width - 74px;
                         y: 2px;
                         width: 70px;
@@ -4556,21 +4323,19 @@ export component AppWindow inherits Window {
                 layer <=> root.ticker_dropdown_layer;
             }
             LayoutHandle {
-                enabled: root.layout_edit_mode && root.chart_popout_open;
-                label: "Chart Popout";
-                target_x <=> root.chart_popout_x;
-                target_y <=> root.chart_popout_y;
-                target_w: root.chart_popout_w;
-                target_h: root.chart_popout_h;
+                enabled: root.layout_edit_mode && root.secondary_chart_open;
+                label: "Secondary Chart";
+                target_x <=> root.secondary_chart_x;
+                target_y <=> root.secondary_chart_y;
+                target_w: root.secondary_chart_w;
+                target_h: root.secondary_chart_h;
                 grid_col_w: root.grid_col_w;
                 grid_row_h: root.grid_row_h;
                 grid_snap_col_w: root.grid_snap_col_w;
                 grid_snap_row_h: root.grid_snap_row_h;
-                show_layer: true;
-                layer <=> root.chart_popout_layer;
             }
 
-            Button {
+            AppButton {
                 x: root.header_x + root.grid_col_w * 28;
                 y: root.header_y;
                 width: root.grid_col_w * 2;
@@ -4578,7 +4343,7 @@ export component AppWindow inherits Window {
                 text: "Close";
                 clicked => { root.close_and_save_requested(); }
             }
-            Button {
+            AppButton {
                 x: root.header_x + root.grid_col_w * 30;
                 y: root.header_y;
                 width: root.grid_col_w * 3;
@@ -4586,13 +4351,29 @@ export component AppWindow inherits Window {
                 text: root.grid_enabled ? "Grid: On" : "Grid: Off";
                 clicked => { root.grid_enabled = !root.grid_enabled; }
             }
-            Button {
+            AppButton {
                 x: root.header_x + root.grid_col_w * 33;
                 y: root.header_y;
                 width: root.grid_col_w * 3;
                 height: root.grid_row_h;
                 text: root.layout_edit_mode ? "Edit ✓" : "Edit";
                 clicked => { root.layout_edit_mode = !root.layout_edit_mode; }
+            }
+            AppButton {
+                x: root.header_x + root.grid_col_w * 36;
+                y: root.header_y;
+                width: root.grid_col_w * 2;
+                height: root.grid_row_h;
+                text: "Btn+";
+                clicked => { UiSettings.button_scale = Math.min(1.4, UiSettings.button_scale + 0.05); }
+            }
+            AppButton {
+                x: root.header_x + root.grid_col_w * 38;
+                y: root.header_y;
+                width: root.grid_col_w * 2;
+                height: root.grid_row_h;
+                text: "Btn-";
+                clicked => { UiSettings.button_scale = Math.max(0.8, UiSettings.button_scale - 0.05); }
             }
         }
         }
@@ -4696,120 +4477,5 @@ export component AppWindow inherits Window {
         }
 
         // Popout drawn LAST so it sits on top, and NOT scrolled
-        if root.chart_popout_open && root.chart_popout_layer == 0 : ChartPopoutPanel {
-            open <=> root.chart_popout_open;
-            px: root.chart_popout_x;
-            py: root.chart_popout_y;
-            pw: root.chart_popout_w;
-            ph: root.chart_popout_h;
-            grid_col_w: root.grid_col_w;
-            grid_row_h: root.grid_row_h;
-            grid_snap_col_w: root.grid_snap_col_w;
-            grid_snap_row_h: root.grid_snap_row_h;
-            z: 0;
-            allow_drag: false;
-
-            title: "Chart Popout (wheel: zoom, drag: pan)";
-
-            points <=> root.candle_points;
-            mid_line_y: root.candle_midline;
-            position_entry_y: root.position_entry_y;
-            position_entry_visible: root.position_entry_visible;
-            position_entry_color: root.position_entry_color;
-            drawings <=> root.drawings;
-            draw_ticks <=> root.draw_ticks;
-            heatmap_cells <=> root.heatmap_cells;
-            heatmap_enabled: root.heatmap_enabled;
-            view_mode: root.chart_view_mode;
-            draw_tool: root.draw_tool;
-
-            x_zoom <=> root.chart_x_zoom;
-            y_zoom <=> root.chart_y_zoom;
-            pan_x  <=> root.chart_pan_x;
-            pan_y  <=> root.chart_pan_y;
-            cursor_x <=> root.chart_cursor_x;
-            cursor_y <=> root.chart_cursor_y;
-
-            draw_begin(x, y) => { root.draw_begin(x, y); }
-            draw_update(x, y) => { root.draw_update(x, y); }
-            draw_end(x, y) => { root.draw_end(x, y); }
-            draw_poly_sides_delta(delta) => { root.draw_poly_sides_delta(delta); }
-        }
-        if root.chart_popout_open && root.chart_popout_layer == 1 : ChartPopoutPanel {
-            open <=> root.chart_popout_open;
-            px <=> root.chart_popout_x;
-            py <=> root.chart_popout_y;
-            pw <=> root.chart_popout_w;
-            ph <=> root.chart_popout_h;
-            grid_col_w: root.grid_col_w;
-            grid_row_h: root.grid_row_h;
-            z: 1;
-            allow_drag: !root.layout_edit_mode;
-
-            title: "Chart Popout (wheel: zoom, drag: pan)";
-
-            points <=> root.candle_points;
-            mid_line_y: root.candle_midline;
-            position_entry_y: root.position_entry_y;
-            position_entry_visible: root.position_entry_visible;
-            position_entry_color: root.position_entry_color;
-            drawings <=> root.drawings;
-            draw_ticks <=> root.draw_ticks;
-            heatmap_cells <=> root.heatmap_cells;
-            heatmap_enabled: root.heatmap_enabled;
-            view_mode: root.chart_view_mode;
-            draw_tool: root.draw_tool;
-
-            x_zoom <=> root.chart_x_zoom;
-            y_zoom <=> root.chart_y_zoom;
-            pan_x  <=> root.chart_pan_x;
-            pan_y  <=> root.chart_pan_y;
-            cursor_x <=> root.chart_cursor_x;
-            cursor_y <=> root.chart_cursor_y;
-
-            draw_begin(x, y) => { root.draw_begin(x, y); }
-            draw_update(x, y) => { root.draw_update(x, y); }
-            draw_end(x, y) => { root.draw_end(x, y); }
-            draw_poly_sides_delta(delta) => { root.draw_poly_sides_delta(delta); }
-        }
-        if root.chart_popout_open && root.chart_popout_layer == 2 : ChartPopoutPanel {
-            open <=> root.chart_popout_open;
-            px: root.chart_popout_x;
-            py: root.chart_popout_y;
-            pw: root.chart_popout_w;
-            ph: root.chart_popout_h;
-            grid_col_w: root.grid_col_w;
-            grid_row_h: root.grid_row_h;
-            grid_snap_col_w: root.grid_snap_col_w;
-            grid_snap_row_h: root.grid_snap_row_h;
-            z: 2;
-            allow_drag: false;
-
-            title: "Chart Popout (wheel: zoom, drag: pan)";
-
-            points <=> root.candle_points;
-            mid_line_y: root.candle_midline;
-            position_entry_y: root.position_entry_y;
-            position_entry_visible: root.position_entry_visible;
-            position_entry_color: root.position_entry_color;
-            drawings <=> root.drawings;
-            draw_ticks <=> root.draw_ticks;
-            heatmap_cells <=> root.heatmap_cells;
-            heatmap_enabled: root.heatmap_enabled;
-            view_mode: root.chart_view_mode;
-            draw_tool: root.draw_tool;
-
-            x_zoom <=> root.chart_x_zoom;
-            y_zoom <=> root.chart_y_zoom;
-            pan_x  <=> root.chart_pan_x;
-            pan_y  <=> root.chart_pan_y;
-            cursor_x <=> root.chart_cursor_x;
-            cursor_y <=> root.chart_cursor_y;
-
-            draw_begin(x, y) => { root.draw_begin(x, y); }
-            draw_update(x, y) => { root.draw_update(x, y); }
-            draw_end(x, y) => { root.draw_end(x, y); }
-            draw_poly_sides_delta(delta) => { root.draw_poly_sides_delta(delta); }
-        }
     }
 }
