@@ -332,12 +332,47 @@ pub fn render(state: &AppState, ui: &crate::AppWindow) {
     };
     ui.set_candle_points(ModelRc::new(VecModel::from(points)));
 
+    // Trade-only candle points for the main chart
+    let trade_candles_source = &state.trade_candles;
+    let trade_condensed = if state.render_all_candles {
+        None
+    } else {
+        Some(condense_candles(trade_candles_source, MAX_CONDENSED_POINTS))
+    };
+    let trade_candles_for_view: &[Candle] = trade_condensed.as_deref().unwrap_or(trade_candles_source);
+
+    let trade_points: Vec<CandlePoint> = if state.render_all_candles {
+        state.trade_candle_points
+            .iter()
+            .map(|p| CandlePoint {
+                x: p.x,
+                w: p.w,
+                open: p.open,
+                high: p.high,
+                low: p.low,
+                close: p.close,
+                is_up: p.is_up,
+                volume: p.volume,
+            })
+            .collect()
+    } else {
+        build_candle_points_from_candles(trade_candles_for_view)
+    };
+    ui.set_trade_candle_points(ModelRc::new(VecModel::from(trade_points)));
+
     let candle_midline = if state.render_all_candles {
         if use_trade_candles { state.trade_candle_midline } else { state.candle_midline }
     } else {
         0.5
     };
     ui.set_candle_midline(candle_midline);
+
+    let trade_candle_midline = if state.render_all_candles {
+        state.trade_candle_midline
+    } else {
+        0.5
+    };
+    ui.set_trade_candle_midline(trade_candle_midline);
     let (entry_visible, entry_y, entry_color) = entry_line_state(state, candles_for_view);
     ui.set_position_entry_visible(entry_visible);
     ui.set_position_entry_y(entry_y);
@@ -347,19 +382,29 @@ pub fn render(state: &AppState, ui: &crate::AppWindow) {
     let chart_y_zoom = ui.get_chart_y_zoom() as f64;
     let chart_pan_x = ui.get_chart_pan_x() as f64;
     let chart_pan_y = ui.get_chart_pan_y() as f64;
+    let chart_view_w_px = ui.get_chart_view_w_px() as f64;
+    let chart_view_h_px = ui.get_chart_view_h_px() as f64;
 
     // Axis ticks derived from visible window (pan/zoom aware)
     let price_ctx = price_axis_context(candles_for_view);
     let price_ticks = price_ctx
         .as_ref()
-        .map(|ctx| build_price_ticks_visible(ctx, chart_y_zoom, chart_pan_y, &state.current_ticker))
+        .map(|ctx| {
+            build_price_ticks_visible(
+                ctx,
+                chart_y_zoom,
+                chart_pan_y,
+                chart_view_h_px,
+                &state.current_ticker,
+            )
+        })
         .unwrap_or_default();
     ui.set_price_ticks(ModelRc::new(VecModel::from(price_ticks)));
 
     let time_ctx = time_axis_context(candles_for_view);
     let time_ticks = time_ctx
         .as_ref()
-        .map(|ctx| build_time_ticks_visible(ctx, chart_x_zoom, chart_pan_x))
+        .map(|ctx| build_time_ticks_visible(ctx, chart_x_zoom, chart_pan_x, chart_view_w_px))
         .unwrap_or_default();
     ui.set_time_ticks(ModelRc::new(VecModel::from(time_ticks)));
 
@@ -372,6 +417,8 @@ pub fn render(state: &AppState, ui: &crate::AppWindow) {
             chart_pan_x,
             chart_y_zoom,
             chart_pan_y,
+            chart_view_w_px,
+            chart_view_h_px,
         )
     } else {
         Vec::new()
@@ -399,6 +446,8 @@ pub fn render(state: &AppState, ui: &crate::AppWindow) {
                 chart_pan_x,
                 chart_y_zoom,
                 chart_pan_y,
+                chart_view_w_px,
+                chart_view_h_px,
             )
         })
         .collect();
@@ -413,6 +462,8 @@ pub fn render(state: &AppState, ui: &crate::AppWindow) {
             chart_pan_x,
             chart_y_zoom,
             chart_pan_y,
+            chart_view_w_px,
+            chart_view_h_px,
         ));
     }
     ui.set_drawings(ModelRc::new(VecModel::from(drawings)));
@@ -426,6 +477,7 @@ pub fn render(state: &AppState, ui: &crate::AppWindow) {
                 price_ctx.as_ref(),
                 chart_y_zoom,
                 chart_pan_y,
+                chart_view_h_px,
             ));
         }
     }
@@ -437,6 +489,7 @@ pub fn render(state: &AppState, ui: &crate::AppWindow) {
                 price_ctx.as_ref(),
                 chart_y_zoom,
                 chart_pan_y,
+                chart_view_h_px,
             ));
         }
     }
@@ -660,14 +713,30 @@ fn price_decimals(span: f64) -> usize {
     }
 }
 
-fn price_from_screen(ctx: &PriceAxisContext, y_screen: f64, y_zoom: f64, pan_y: f64) -> f64 {
-    let y_norm = 0.5 + (y_screen - 0.5 - pan_y) / y_zoom;
+fn price_from_screen(
+    ctx: &PriceAxisContext,
+    y_screen: f64,
+    y_zoom_px: f64,
+    pan_y: f64,
+    view_h_px: f64,
+) -> f64 {
+    let view_h_px = view_h_px.max(1.0);
+    let zoom_norm = (y_zoom_px / view_h_px).max(1e-6);
+    let y_norm = 0.5 + (y_screen - 0.5 - pan_y) / zoom_norm;
     ctx.hi - y_norm * ctx.span
 }
 
-fn screen_from_price(ctx: &PriceAxisContext, price: f64, y_zoom: f64, pan_y: f64) -> f64 {
+fn screen_from_price(
+    ctx: &PriceAxisContext,
+    price: f64,
+    y_zoom_px: f64,
+    pan_y: f64,
+    view_h_px: f64,
+) -> f64 {
+    let view_h_px = view_h_px.max(1.0);
+    let zoom_norm = (y_zoom_px / view_h_px).max(1e-6);
     let y_norm = (ctx.hi - price) / ctx.span;
-    0.5 + (y_norm - 0.5) * y_zoom + pan_y
+    0.5 + (y_norm - 0.5) * zoom_norm + pan_y
 }
 
 fn time_axis_context(candles: &[Candle]) -> Option<TimeAxisContext> {
@@ -681,13 +750,20 @@ fn time_axis_context(candles: &[Candle]) -> Option<TimeAxisContext> {
     Some(TimeAxisContext { ts })
 }
 
-fn ts_from_screen(ctx: &TimeAxisContext, x_screen: f64, x_zoom: f64, pan_x: f64) -> u64 {
+fn ts_from_screen(
+    ctx: &TimeAxisContext,
+    x_screen: f64,
+    x_zoom_px: f64,
+    pan_x_px: f64,
+    view_w_px: f64,
+) -> u64 {
     let n = ctx.ts.len();
     if n == 1 {
         return ctx.ts[0];
     }
-    let x_to_idx = 0.5 + (x_screen - 0.5 - pan_x) / x_zoom;
-    let idx = x_to_idx * n as f64 - 0.5;
+    let view_w_px = view_w_px.max(1.0);
+    let x_px = x_screen * view_w_px;
+    let idx = (x_px - pan_x_px) / x_zoom_px - 0.5;
     let i = idx.clamp(0.0, (n - 1) as f64);
     let lo_i = i.floor() as usize;
     let hi_i = i.ceil() as usize;
@@ -700,19 +776,29 @@ fn ts_from_screen(ctx: &TimeAxisContext, x_screen: f64, x_zoom: f64, pan_x: f64)
     (t_lo + (t_hi - t_lo) * frac) as u64
 }
 
-fn screen_from_ts(ctx: &TimeAxisContext, ts_unix: u64, x_zoom: f64, pan_x: f64) -> f64 {
+fn screen_from_ts(
+    ctx: &TimeAxisContext,
+    ts_unix: u64,
+    x_zoom_px: f64,
+    pan_x_px: f64,
+    view_w_px: f64,
+) -> f64 {
     let n = ctx.ts.len();
     if n == 0 {
         return 0.5;
     }
     if n == 1 {
-        return 0.5 + pan_x;
+        let view_w_px = view_w_px.max(1.0);
+        let x_px = 0.5 * view_w_px + pan_x_px;
+        return x_px / view_w_px;
     }
 
     let ts_first = ctx.ts[0];
     let ts_last = ctx.ts[n - 1];
     if ts_first == ts_last {
-        return 0.5 + pan_x;
+        let view_w_px = view_w_px.max(1.0);
+        let x_px = 0.5 * view_w_px + pan_x_px;
+        return x_px / view_w_px;
     }
 
     let mut idx = match ctx.ts.binary_search(&ts_unix) {
@@ -738,25 +824,23 @@ fn screen_from_ts(ctx: &TimeAxisContext, ts_unix: u64, x_zoom: f64, pan_x: f64) 
     };
 
     idx = idx.clamp(0.0, (n - 1) as f64);
-    let x_norm = if n > 1 {
-        idx / (n as f64 - 1.0)
-    } else {
-        0.5
-    };
-    0.5 + (x_norm - 0.5) * x_zoom + pan_x
+    let view_w_px = view_w_px.max(1.0);
+    let x_px = (idx + 0.5) * x_zoom_px + pan_x_px;
+    x_px / view_w_px
 }
 
 fn build_price_ticks_visible(
     ctx: &PriceAxisContext,
-    y_zoom: f64,
+    y_zoom_px: f64,
     pan_y: f64,
+    view_h_px: f64,
     unit: &str,
 ) -> Vec<AxisTick> {
     let mut out = Vec::new();
     let steps = 9;
     for i in 0..steps {
         let frac = i as f64 / (steps - 1) as f64;
-        let price = price_from_screen(ctx, frac, y_zoom, pan_y);
+        let price = price_from_screen(ctx, frac, y_zoom_px, pan_y, view_h_px);
         let label = format_num_compact(price, ctx.decimals);
         out.push(AxisTick {
             pos: frac as f32,
@@ -768,14 +852,15 @@ fn build_price_ticks_visible(
 
 fn build_time_ticks_visible(
     ctx: &TimeAxisContext,
-    x_zoom: f64,
-    pan_x: f64,
+    x_zoom_px: f64,
+    pan_x_px: f64,
+    view_w_px: f64,
 ) -> Vec<AxisTick> {
     let mut out = Vec::new();
     let steps = 7;
     for i in 0..steps {
         let frac = i as f64 / (steps - 1) as f64;
-        let ts_val = ts_from_screen(ctx, frac, x_zoom, pan_x);
+        let ts_val = ts_from_screen(ctx, frac, x_zoom_px, pan_x_px, view_w_px);
         let label = format_utc(ts_val).unwrap_or_default();
         out.push(AxisTick {
             pos: frac as f32,
@@ -805,10 +890,12 @@ fn build_heatmap_cells(
     state: &AppState,
     price_ctx: Option<&PriceAxisContext>,
     time_ctx: Option<&TimeAxisContext>,
-    x_zoom: f64,
-    pan_x: f64,
-    y_zoom: f64,
+    x_zoom_px: f64,
+    pan_x_px: f64,
+    y_zoom_px: f64,
     pan_y: f64,
+    view_w_px: f64,
+    view_h_px: f64,
 ) -> Vec<HeatmapCell> {
     let (Some(pctx), Some(tctx)) = (price_ctx, time_ctx) else {
         return Vec::new();
@@ -835,10 +922,11 @@ fn build_heatmap_cells(
         return Vec::new();
     }
 
-    let n = tctx.ts.len().max(2) as f64;
-    let step_norm = 1.0 / (n - 1.0);
-    let cell_w = (step_norm * x_zoom).clamp(0.002, 0.04) as f32;
-    let cell_h = (0.008 * y_zoom).clamp(0.003, 0.03) as f32;
+    let view_w_px = view_w_px.max(1.0);
+    let view_h_px = view_h_px.max(1.0);
+    let zoom_y_norm = (y_zoom_px / view_h_px).max(1e-6);
+    let cell_w = ((x_zoom_px / view_w_px) * 0.7).clamp(0.002, 0.06) as f32;
+    let cell_h = (0.008 * zoom_y_norm).clamp(0.003, 0.03) as f32;
 
     let mut out = Vec::new();
     for snap in state.heatmap_snapshots.iter() {
@@ -848,12 +936,12 @@ fn build_heatmap_cells(
         if snap.ts_unix < ts_min || snap.ts_unix > ts_max {
             continue;
         }
-        let x = screen_from_ts(tctx, snap.ts_unix, x_zoom, pan_x);
+        let x = screen_from_ts(tctx, snap.ts_unix, x_zoom_px, pan_x_px, view_w_px);
         if x < -0.1 || x > 1.1 {
             continue;
         }
         for lvl in &snap.levels {
-            let y = screen_from_price(pctx, lvl.price, y_zoom, pan_y);
+            let y = screen_from_price(pctx, lvl.price, y_zoom_px, pan_y, view_h_px);
             if y < -0.1 || y > 1.1 {
                 continue;
             }
@@ -876,13 +964,25 @@ fn build_draw_shape(
     selected: bool,
     price_ctx: Option<&PriceAxisContext>,
     time_ctx: Option<&TimeAxisContext>,
-    x_zoom: f64,
-    pan_x: f64,
-    y_zoom: f64,
+    x_zoom_px: f64,
+    pan_x_px: f64,
+    y_zoom_px: f64,
     pan_y: f64,
+    view_w_px: f64,
+    view_h_px: f64,
 ) -> DrawShape {
     let label = if shape.kind == "Ruler" {
-        build_ruler_label(shape, price_ctx, time_ctx, x_zoom, pan_x, y_zoom, pan_y)
+        build_ruler_label(
+            shape,
+            price_ctx,
+            time_ctx,
+            x_zoom_px,
+            pan_x_px,
+            y_zoom_px,
+            pan_y,
+            view_w_px,
+            view_h_px,
+        )
     } else {
         String::new()
     };
@@ -911,16 +1011,18 @@ fn build_ruler_label(
     shape: &super::state::DrawShapeState,
     price_ctx: Option<&PriceAxisContext>,
     _time_ctx: Option<&TimeAxisContext>,
-    _x_zoom: f64,
-    _pan_x: f64,
-    y_zoom: f64,
+    _x_zoom_px: f64,
+    _pan_x_px: f64,
+    y_zoom_px: f64,
     pan_y: f64,
+    _view_w_px: f64,
+    view_h_px: f64,
 ) -> String {
     let Some(ctx) = price_ctx else {
         return String::new();
     };
-    let p1 = price_from_screen(ctx, shape.y1 as f64, y_zoom, pan_y);
-    let p2 = price_from_screen(ctx, shape.y2 as f64, y_zoom, pan_y);
+    let p1 = price_from_screen(ctx, shape.y1 as f64, y_zoom_px, pan_y, view_h_px);
+    let p2 = price_from_screen(ctx, shape.y2 as f64, y_zoom_px, pan_y, view_h_px);
     if !p1.is_finite() || !p2.is_finite() || p1 <= 0.0 {
         return String::new();
     }
@@ -940,8 +1042,9 @@ fn build_ruler_ticks(
     shape: &super::state::DrawShapeState,
     is_preview: bool,
     price_ctx: Option<&PriceAxisContext>,
-    y_zoom: f64,
+    y_zoom_px: f64,
     pan_y: f64,
+    view_h_px: f64,
 ) -> Vec<DrawTick> {
     let Some(ctx) = price_ctx else {
         return Vec::new();
@@ -957,7 +1060,7 @@ fn build_ruler_ticks(
         let frac = i as f32 / steps as f32;
         let x = shape.x1 + dx * frac;
         let y = shape.y1 + dy * frac;
-        let price = price_from_screen(ctx, y as f64, y_zoom, pan_y);
+        let price = price_from_screen(ctx, y as f64, y_zoom_px, pan_y, view_h_px);
         let label = if price.is_finite() {
             format_num_compact(price, ctx.decimals)
         } else {
