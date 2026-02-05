@@ -15,7 +15,6 @@ use ladder_app02::feed_shared::{
 };
 use rustls::crypto::ring;
 use serde_json::{json, Value};
-use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::sync::Arc;
@@ -32,7 +31,6 @@ const DEFAULT_TICKERS: &[&str] = &["ETH-USD", "BTC-USD", "SOL-USD"];
 const MAX_TICKERS_PER_CONN: usize = 20;
 const MAX_TRADES: usize = 2000;
 const SNAPSHOT_INTERVAL_SECS: u64 = 5;
-const MARKET_HTTP: &str = "https://indexer.dydx.trade/v4/perpetualMarkets";
 
 #[derive(Debug, serde::Serialize)]
 #[serde(tag = "kind")]
@@ -68,11 +66,8 @@ async fn main() -> Result<()> {
     let log_file = Arc::new(Mutex::new(open_log()?));
     let bytes_written = Arc::new(AtomicU64::new(0));
 
-    let mut tickers = fetch_market_tickers().await;
-    if tickers.is_empty() {
-        tickers = DEFAULT_TICKERS.iter().map(|s| s.to_string()).collect();
-    }
-    prioritize_tickers(&mut tickers, DEFAULT_TICKERS);
+    // Only subscribe to priority tickers for performance
+    let tickers: Vec<String> = DEFAULT_TICKERS.iter().map(|s| s.to_string()).collect();
     cycle_stats.tickers_active = tickers.len();
     let chunks: Vec<Vec<String>> = tickers
         .chunks(MAX_TICKERS_PER_CONN)
@@ -228,52 +223,6 @@ async fn run_connection(
     }
 
     Ok(())
-}
-
-fn prioritize_tickers(tickers: &mut Vec<String>, priority: &[&str]) {
-    let mut seen = HashSet::new();
-    tickers.retain(|t| seen.insert(t.clone()));
-
-    let mut ordered = Vec::with_capacity(tickers.len() + priority.len());
-    for &tk in priority {
-        if let Some(pos) = tickers.iter().position(|t| t == tk) {
-            tickers.remove(pos);
-        }
-        ordered.push(tk.to_string());
-    }
-    ordered.extend(tickers.iter().cloned());
-    *tickers = ordered;
-}
-
-async fn fetch_market_tickers() -> Vec<String> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(8))
-        .build();
-    let Ok(client) = client else {
-        return Vec::new();
-    };
-    let resp = client.get(MARKET_HTTP).send().await;
-    let Ok(resp) = resp else {
-        return Vec::new();
-    };
-    let json = resp.json::<Value>().await;
-    let Ok(json) = json else {
-        return Vec::new();
-    };
-    let Some(markets) = json.get("markets").and_then(|v| v.as_object()) else {
-        return Vec::new();
-    };
-    let mut out = Vec::with_capacity(markets.len());
-    for (ticker, meta) in markets {
-        if let Some(status) = meta.get("status").and_then(|v| v.as_str()) {
-            if status != "ACTIVE" {
-                continue;
-            }
-        }
-        out.push(ticker.to_string());
-    }
-    out.sort();
-    out
 }
 
 async fn subscribe(

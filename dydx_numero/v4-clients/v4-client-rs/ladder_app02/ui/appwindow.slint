@@ -1733,7 +1733,7 @@ export component AppWindow inherits Window {
     in-out property <length> chart_right_y: chart_top_y;
 
     in-out property <length> ticker_dropdown_x: grid_col_w * 3;
-    in-out property <length> ticker_dropdown_y: topbar_y + topbar_h;
+    in-out property <length> ticker_dropdown_y: topbar_y + grid_row_h * 1.5;
 
     in-out property <length> microdepth_x: grid_col_w * 44;
     in-out property <length> microdepth_y: grid_row_h * 1;
@@ -3925,79 +3925,115 @@ export component AppWindow inherits Window {
                 }
             }
 
-            if root.tickers_dropdown_open : Rectangle {
-                x: 0px;
-                y: root.ticker_dropdown_y;
-                width: root.ui_content_w_px * 1px;
-                height: (root.ui_content_h_px * 1px) - root.ticker_dropdown_y;
-                background: transparent;
-                z: 99;
+            // Backdrop removed - dropdown stays open until manually closed
 
-                TouchArea {
-                    x: 0px;
-                    y: 0px;
-                    width: parent.width;
-                    height: parent.height;
-                    clicked => { root.tickers_dropdown_open = false; }
-                }
-            }
-
-            // Chart panel (order-based)
+            // Ticker dropdown panel
             if root.tickers_dropdown_open && root.ticker_dropdown_layer == 0 : Rectangle {
                 x: root.ticker_dropdown_x;
                 y: root.ticker_dropdown_y;
                 width: root.grid_col_w * 8;
-                height: root.grid_row_h * 7;
+                height: root.grid_row_h * 10;
                 background: #0f1320;
                 border-radius: 4px;
-                border-width: 1px;
-                border-color: #2a3346;
-                z: 0;
+                border-width: 2px;
+                border-color: #3a4356;
+                z: 100;
 
-                Text { x: 8px; y: 6px; text: "Tickers"; color: #c7d2ff; font-size: 12px; }
+                // Draggable title bar
+                Rectangle {
+                    x: 0px;
+                    y: 0px;
+                    width: parent.width;
+                    height: 24px;
+                    background: #1a2030;
+                    border-radius: 4px;
+
+                    Text { 
+                        x: 8px; 
+                        y: 6px; 
+                        text: "Tickers (drag to move)"; 
+                        color: #c7d2ff; 
+                        font-size: 12px; 
+                    }
+
+                    AppButton {
+                        x: parent.width - 24px;
+                        y: 2px;
+                        width: 20px;
+                        height: 20px;
+                        text: "✕";
+                        clicked => { root.tickers_dropdown_open = false; }
+                    }
+
+                    TouchArea {
+                        property <length> drag_start_x;
+                        property <length> drag_start_y;
+                        property <bool> dragging: false;
+
+                        mouse-cursor: dragging ? MouseCursor.grabbing : MouseCursor.grab;
+
+                        pointer-event(event) => {
+                            if event.kind == PointerEventKind.down {
+                                self.dragging = true;
+                                self.drag_start_x = root.ticker_dropdown_x - self.mouse-x;
+                                self.drag_start_y = root.ticker_dropdown_y - self.mouse-y;
+                            } else if event.kind == PointerEventKind.up {
+                                self.dragging = false;
+                            }
+                        }
+
+                        moved => {
+                            if self.dragging {
+                                root.ticker_dropdown_x = self.drag_start_x + self.mouse-x;
+                                root.ticker_dropdown_y = self.drag_start_y + self.mouse-y;
+                            }
+                        }
+                    }
+                }
 
                 ListView {
                 x: 6px;
-                y: 26px;
+                y: 30px;
                 width: parent.width - 12px;
-                height: parent.height - 32px;
+                height: parent.height - 36px;
 
                 for row in root.ticker_feed_rows : Rectangle {
                     width: parent.width;
-                    height: 22px;
+                    height: 32px;
                     background: row.ticker == root.current_ticker
                         ? (row.active ? #1b2438 : #242835)
                         : (row.active ? #111725 : #0b0f1a);
 
                     AppButton {
                         x: 4px;
-                        y: 2px;
-                        width: 18px;
-                        height: 18px;
+                        y: 5px;
+                        width: 22px;
+                        height: 22px;
                         text: row.favorite ? "★" : "☆";
                         clicked => { root.ticker_favorite_toggled(row.ticker, !row.favorite); }
                     }
 
                     Text {
-                        x: 26px;
-                        y: 3px;
+                        x: 30px;
+                        y: 8px;
                         text: row.ticker;
                         color: row.active ? #d6dcff : #6f778a;
-                        font-size: 12px;
+                        font-size: 13px;
+                        font-weight: 600;
                     }
 
                     AppButton {
-                        x: parent.width - 74px;
-                        y: 2px;
-                        width: 70px;
-                        height: 18px;
+                        x: parent.width - 78px;
+                        y: 5px;
+                        width: 74px;
+                        height: 22px;
                         text: row.feed_on ? "Feed: On" : "Feed: Off";
                         enabled: row.active;
                         clicked => { root.ticker_feed_toggled(row.ticker, !row.feed_on); }
                     }
                     Text {
                         x: parent.width - 150px;
-                        y: 4px;
+                        y: 9px;
                         width: 70px;
                         text: "Inactive";
                         color: #6f778a;
@@ -4007,15 +4043,14 @@ export component AppWindow inherits Window {
                     }
 
                     TouchArea {
-                        x: 24px;
+                        x: 28px;
                         y: 0px;
-                        width: parent.width - 102px;
+                        width: parent.width - 110px;
                         height: parent.height;
                         clicked => {
                             if row.active {
                                 root.ticker_input = row.ticker;
                                 root.ticker_changed(row.ticker);
-                                root.tickers_dropdown_open = false;
                             }
                         }
                     }
@@ -4026,57 +4061,108 @@ export component AppWindow inherits Window {
             x: root.ticker_dropdown_x;
             y: root.ticker_dropdown_y;
             width: root.grid_col_w * 8;
-            height: root.grid_row_h * 7;
+            height: root.grid_row_h * 10;
             background: #0f1320;
             border-radius: 4px;
-            border-width: 1px;
-            border-color: #2a3346;
-            z: 1;
+            border-width: 2px;
+            border-color: #3a4356;
+            z: 100;
 
-            Text { x: 8px; y: 6px; text: "Tickers"; color: #c7d2ff; font-size: 12px; }
+            // Draggable title bar
+            Rectangle {
+                x: 0px;
+                y: 0px;
+                width: parent.width;
+                height: 24px;
+                background: #1a2030;
+                border-radius: 4px;
+
+                Text { 
+                    x: 8px; 
+                    y: 6px; 
+                    text: "Tickers (drag to move)"; 
+                    color: #c7d2ff; 
+                    font-size: 12px; 
+                }
+
+                AppButton {
+                    x: parent.width - 24px;
+                    y: 2px;
+                    width: 20px;
+                    height: 20px;
+                    text: "✕";
+                    clicked => { root.tickers_dropdown_open = false; }
+                }
+
+                TouchArea {
+                    property <length> drag_start_x;
+                    property <length> drag_start_y;
+                    property <bool> dragging: false;
+
+                    mouse-cursor: dragging ? MouseCursor.grabbing : MouseCursor.grab;
+
+                    pointer-event(event) => {
+                        if event.kind == PointerEventKind.down {
+                            self.dragging = true;
+                            self.drag_start_x = root.ticker_dropdown_x - self.mouse-x;
+                            self.drag_start_y = root.ticker_dropdown_y - self.mouse-y;
+                        } else if event.kind == PointerEventKind.up {
+                            self.dragging = false;
+                        }
+                    }
+
+                    moved => {
+                        if self.dragging {
+                            root.ticker_dropdown_x = self.drag_start_x + self.mouse-x;
+                            root.ticker_dropdown_y = self.drag_start_y + self.mouse-y;
+                        }
+                    }
+                }
+            }
 
             ListView {
                 x: 6px;
-                y: 26px;
+                y: 30px;
                 width: parent.width - 12px;
-                height: parent.height - 32px;
+                height: parent.height - 36px;
 
                 for row in root.ticker_feed_rows : Rectangle {
                     width: parent.width;
-                    height: 22px;
+                    height: 32px;
                     background: row.ticker == root.current_ticker
                         ? (row.active ? #1b2438 : #242835)
                         : (row.active ? #111725 : #0b0f1a);
 
                     AppButton {
                         x: 4px;
-                        y: 2px;
-                        width: 18px;
-                        height: 18px;
+                        y: 5px;
+                        width: 22px;
+                        height: 22px;
                         text: row.favorite ? "★" : "☆";
                         clicked => { root.ticker_favorite_toggled(row.ticker, !row.favorite); }
                     }
 
                     Text {
-                        x: 26px;
-                        y: 3px;
+                        x: 30px;
+                        y: 8px;
                         text: row.ticker;
                         color: row.active ? #d6dcff : #6f778a;
-                        font-size: 12px;
+                        font-size: 13px;
+                        font-weight: 600;
                     }
 
                     AppButton {
-                        x: parent.width - 74px;
-                        y: 2px;
-                        width: 70px;
-                        height: 18px;
+                        x: parent.width - 78px;
+                        y: 5px;
+                        width: 74px;
+                        height: 22px;
                         text: row.feed_on ? "Feed: On" : "Feed: Off";
                         enabled: row.active;
                         clicked => { root.ticker_feed_toggled(row.ticker, !row.feed_on); }
                     }
                     Text {
                         x: parent.width - 150px;
-                        y: 4px;
+                        y: 9px;
                         width: 70px;
                         text: "Inactive";
                         color: #6f778a;
@@ -4086,15 +4172,14 @@ export component AppWindow inherits Window {
                     }
 
                     TouchArea {
-                        x: 24px;
+                        x: 28px;
                         y: 0px;
-                        width: parent.width - 102px;
+                        width: parent.width - 110px;
                         height: parent.height;
                         clicked => {
                             if row.active {
                                 root.ticker_input = row.ticker;
                                 root.ticker_changed(row.ticker);
-                                root.tickers_dropdown_open = false;
                             }
                         }
                     }
