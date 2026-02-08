@@ -1129,8 +1129,8 @@ component CandleChart inherits Rectangle {
     border-color: advanced_mode ? #2a2f45 : #1c2230;
 
     property <length> px_per_candle: Math.max(5px, Math.min(500px, root.x_zoom * 1px));
-    property <length> candle_spacing: px_per_candle * 0.8;
-    property <length> candle_width: candle_spacing * 0.7;
+    property <length> candle_spacing: px_per_candle * 1.0;
+    property <length> candle_width: candle_spacing * 1.0;
 
     Rectangle { x: 0px; width: parent.width; height: 1px; y: parent.height * 0.25; background: advanced_mode ? #1f2b3f : #1a202d; opacity: advanced_mode ? 0.55 : 0.35; }
     Rectangle { x: 0px; width: parent.width; height: 1px; y: parent.height * 0.5;  background: advanced_mode ? #1f2b3f : #1a202d; opacity: advanced_mode ? 0.55 : 0.35; }
@@ -1671,7 +1671,7 @@ export component AppWindow inherits Window {
     property <length> midbar_h: grid_row_h * 2;
     property <length> topbar_h: grid_row_h * 3;
     property <length> secondbar_h: grid_row_h * 2;
-    property <length> chart_top_y: secondbar_y + secondbar_h;
+    property <length> chart_top_y: secondbar_y + secondbar_h + 100px;
 
     in-out property <bool> grid_enabled: false;
     in-out property <int> grid_cursor_col: -1;
@@ -3827,7 +3827,7 @@ export component AppWindow inherits Window {
                 property <length> chart_w: root.grid_col_w * 26;
                 property <length> price_h: root.grid_row_h * 0.7;
 
-                x: chart_left;
+                x: chart_left + root.grid_col_w;
                 y: chart_top + root.grid_row_h - price_h - 2px;
                 width: chart_w;
                 height: price_h;
@@ -3847,7 +3847,7 @@ export component AppWindow inherits Window {
                     height: parent.height;
                     text: "Mark:";
                     color: #b8c5ff;
-                    font-size: 12px;
+                    font-size: 20px;
                     vertical-alignment: center;
                     padding-left: 4px;
                 }
@@ -3856,7 +3856,7 @@ export component AppWindow inherits Window {
                     pad: root.mark_price_main == "" ? "" : root.mark_price_pad;
                     main_color: #e8f6ff;
                     pad_color: #7aa8ff;
-                    font_size: 12px;
+                    font_size: 20px;
                     x: label_w + 2px;
                     y: 0px;
                 }
@@ -3868,7 +3868,7 @@ export component AppWindow inherits Window {
                     height: parent.height;
                     text: "Oracle:";
                     color: #b8c5ff;
-                    font-size: 12px;
+                    font-size: 22px;
                     vertical-alignment: center;
                     padding-left: 4px;
                 }
@@ -3877,7 +3877,7 @@ export component AppWindow inherits Window {
                     pad: root.oracle_price_main == "" ? "" : root.oracle_price_pad;
                     main_color: #e8f6ff;
                     pad_color: #7aa8ff;
-                    font_size: 12px;
+                    font_size: 20px;
                     x: col_spacing + label_w + 2px;
                     y: 0px;
                 }
@@ -3889,7 +3889,7 @@ export component AppWindow inherits Window {
                     height: parent.height;
                     text: "Last:";
                     color: #b8c5ff;
-                    font-size: 12px;
+                    font-size: 22px;
                     vertical-alignment: center;
                     padding-left: 4px;
                 }
@@ -3898,7 +3898,7 @@ export component AppWindow inherits Window {
                     pad: root.last_price_main == "" ? "" : root.last_price_pad;
                     main_color: #e8f6ff;
                     pad_color: #7aa8ff;
-                    font_size: 12px;
+                    font_size: 20px;
                     x: col_spacing * 2 + label_w + 2px;
                     y: 0px;
                 }
@@ -3910,7 +3910,7 @@ export component AppWindow inherits Window {
                     height: parent.height;
                     text: "Current:";
                     color: #b8c5ff;
-                    font-size: 12px;
+                    font-size: 22px;
                     vertical-alignment: center;
                     padding-left: 4px;
                 }
@@ -3919,7 +3919,7 @@ export component AppWindow inherits Window {
                     pad: root.current_price_main == "" ? "" : root.current_price_pad;
                     main_color: parent.is_advanced ? #ffdaff : #e8f6ff;
                     pad_color: #7aa8ff;
-                    font_size: 12px;
+                    font_size: 22px;
                     x: col_spacing * 3 + label_w + 2px;
                     y: 0px;
                 }
@@ -4535,7 +4535,7 @@ export component AppWindow inherits Window {
                             let nx = Math.max(0.0, Math.min(bw - kw, mx - kw * 0.5));
                             let nt = (bw - kw) <= 0.0 ? 0.0 : (nx / (bw - kw));
 
-                            root.ui_scroll_x_px = nt * viewport.max_scroll_x;
+                            root.ui_scroll_x_px = nt * viewport.max_scroll_x * 0.25;
                         }
                     }
                 }
@@ -4584,7 +4584,7 @@ export component AppWindow inherits Window {
                             let ny = Math.max(0.0, Math.min(bh - kh, my - kh * 0.5));
                             let nt = (bh - kh) <= 0.0 ? 0.0 : (ny / (bh - kh));
 
-                            root.ui_scroll_y_px = nt * viewport.max_scroll_y;
+                            root.ui_scroll_y_px = nt * viewport.max_scroll_y * 0.5;
                         }
                     }
                 }
