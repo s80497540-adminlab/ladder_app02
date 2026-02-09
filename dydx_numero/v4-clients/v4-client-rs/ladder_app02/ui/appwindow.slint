@@ -1419,10 +1419,10 @@ component CandleChart inherits Rectangle {
                     root.draw_dragging = false;
                 } else if event.kind == PointerEventKind.move && dragging {
                     let dx = (self.mouse-x - last_x) / 1px;
-                    let dy = (self.mouse-y - last_y) / parent.height;
+                    let dy = (self.mouse-y - last_y) / parent.height * 0.5;
 
                     root.pan_x = Math.max(-100000.0, Math.min(100000.0, root.pan_x + dx));
-                    root.pan_y = Math.max(-2.0, Math.min(2.0, root.pan_y + dy));
+                    root.pan_y = Math.max(-5.0, Math.min(5.0, root.pan_y + dy));
 
                     last_x = self.mouse-x;
                     last_y = self.mouse-y;
@@ -3447,6 +3447,22 @@ export component AppWindow inherits Window {
                     points: root.spread_points;
                     normalize: root.spread_normalize;
                     visible: root.show_spread_chart;
+                }
+
+                // Axis borders (distinct)
+                Rectangle {
+                    x: chart_x;
+                    y: header_h + v_gap;
+                    width: 1px;
+                    height: chart_h;
+                    background: #5c6b84;
+                }
+                Rectangle {
+                    x: chart_x;
+                    y: header_h + v_gap + chart_h;
+                    width: chart_w;
+                    height: 1px;
+                    background: #5c6b84;
                 }
 
                 // Price axis ticks (left)
