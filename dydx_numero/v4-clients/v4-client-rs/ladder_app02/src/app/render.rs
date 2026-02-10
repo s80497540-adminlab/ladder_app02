@@ -837,16 +837,52 @@ fn build_price_ticks_visible(
     unit: &str,
 ) -> Vec<AxisTick> {
     let mut out = Vec::new();
-    let steps = 9;
-    for i in 0..steps {
-        let frac = i as f64 / (steps - 1) as f64;
-        let price = price_from_screen(ctx, frac, y_zoom_px, pan_y, view_h_px);
-        let label = format_num_compact(price, ctx.decimals);
-        out.push(AxisTick {
-            pos: frac as f32,
-            label: format!("{label} {unit}").into(),
-        });
+    
+    // Generate ticks from fixed price levels, not screen positions
+    // Calculate how many ticks we can fit based on zoom level
+    let visible_price_span = view_h_px / y_zoom_px.max(1e-6) * ctx.span;
+    
+    // Determine tick spacing (round number)
+    let magnitude = 10_f64.powi((visible_price_span.log10().floor()) as i32);
+    let step = if visible_price_span / magnitude < 2.5 {
+        magnitude * 0.2
+    } else if visible_price_span / magnitude < 5.0 {
+        magnitude * 0.5
+    } else {
+        magnitude
+    };
+    
+    // Add minor ticks at finer granularity (4 subdivisions between major ticks)
+    let minor_step = step / 4.0;
+    let start_price = (ctx.lo / minor_step).floor() * minor_step;
+    let mut price = start_price;
+    let mut tick_count = 0;
+    
+    while price <= ctx.hi && tick_count < 100 {
+        let screen_pos = screen_from_price(ctx, price, y_zoom_px, pan_y, view_h_px);
+        if screen_pos >= -0.2 && screen_pos <= 1.2 {
+            // Check if this is a major tick (divisible by step)
+            let is_major = ((price / step).round() * step - price).abs() < minor_step * 0.1;
+            
+            if is_major {
+                // Major tick with label
+                let label = format_num_compact(price, ctx.decimals);
+                out.push(AxisTick {
+                    pos: screen_pos as f32,
+                    label: format!("{label} {unit}").into(),
+                });
+            } else {
+                // Minor tick without label
+                out.push(AxisTick {
+                    pos: screen_pos as f32,
+                    label: "".into(),
+                });
+            }
+            tick_count += 1;
+        }
+        price += minor_step;
     }
+    
     out
 }
 
@@ -857,16 +893,71 @@ fn build_time_ticks_visible(
     view_w_px: f64,
 ) -> Vec<AxisTick> {
     let mut out = Vec::new();
-    let steps = 7;
-    for i in 0..steps {
-        let frac = i as f64 / (steps - 1) as f64;
-        let ts_val = ts_from_screen(ctx, frac, x_zoom_px, pan_x_px, view_w_px);
-        let label = format_utc(ts_val).unwrap_or_default();
-        out.push(AxisTick {
-            pos: frac as f32,
-            label: label.into(),
-        });
+    let n = ctx.ts.len();
+    
+    if n == 0 {
+        return out;
     }
+    
+    let ts_first = ctx.ts[0];
+    let ts_last = ctx.ts[n - 1];
+    let ts_span = ts_last.saturating_sub(ts_first);
+    
+    if ts_span == 0 {
+        return out;
+    }
+    
+    // Determine time interval based on visible span
+    let visible_ts_span = view_w_px / x_zoom_px.max(1e-6) * ts_span as f64;
+    
+    // Choose appropriate interval (in seconds)
+    let interval: u64 = if visible_ts_span < 60.0 {
+        1  // 1 second
+    } else if visible_ts_span < 300.0 {
+        5  // 5 seconds
+    } else if visible_ts_span < 600.0 {
+        10  // 10 seconds
+    } else if visible_ts_span < 3600.0 {
+        60  // 1 minute
+    } else if visible_ts_span < 14400.0 {
+        300  // 5 minutes
+    } else if visible_ts_span < 86400.0 {
+        1800  // 30 minutes
+    } else {
+        3600  // 1 hour
+    };
+    
+    // Add minor ticks at finer granularity (4 subdivisions between major ticks)
+    let minor_interval = if interval >= 4 { interval / 4 } else { 1 };
+    let start_ts = (ts_first / minor_interval) * minor_interval;
+    let mut ts = start_ts;
+    let mut tick_count = 0;
+    
+    while ts <= ts_last && tick_count < 100 {
+        let screen_pos = screen_from_ts(ctx, ts, x_zoom_px, pan_x_px, view_w_px);
+        if screen_pos >= -0.2 && screen_pos <= 1.2 {
+            // Check if this is a major tick (divisible by interval)
+            let is_major = (ts % interval) == 0;
+            
+            if is_major {
+                // Major tick with label
+                let label = format_utc(ts).unwrap_or_default();
+                out.push(AxisTick {
+                    pos: screen_pos as f32,
+                    label: label.into(),
+                });
+            } else {
+                // Minor tick without label
+                out.push(AxisTick {
+                    pos: screen_pos as f32,
+                    label: "".into(),
+                });
+            }
+            tick_count += 1;
+        }
+        ts = ts.saturating_add(minor_interval);
+    }
+    
     out
 }
 

@@ -3206,12 +3206,20 @@ export component AppWindow inherits Window {
                     y: 0px;
                     width: root.grid_col_w * 4;
                     height: header_h;
-                    text: "Auto: center";
+                    text: "Auto";
                     clicked => {
-                        root.chart_pan_x = 0.0;
-                        root.chart_pan_y = 0.0;
-                        root.chart_x_zoom = 1.0;
+                        // Center the current (most recent) candle in the view
                         root.chart_y_zoom = 1.0;
+                        root.chart_pan_y = 0.0;
+                        
+                        // Calculate pan_x to center the last candle
+                        // Last candle position: (n - 0.5) * px_per_candle + pan_x = chart_view_w / 2
+                        // So: pan_x = chart_view_w / 2 - (n - 0.5) * px_per_candle
+                        if root.trade_candle_points.length > 0 {
+                            root.chart_pan_x = root.chart_view_w_px / 2.0 - (root.trade_candle_points.length - 0.5) * Math.max(5.0, Math.min(500.0, root.chart_x_zoom));
+                        } else {
+                            root.chart_pan_x = 0.0;
+                        }
                     }
                 }
 
@@ -3473,20 +3481,23 @@ export component AppWindow inherits Window {
                     height: 16px;
                     background: #00000000;
 
+                    // Tick mark - shorter for minor ticks
                     Rectangle {
                         x: 0px;
                         y: 7px;
-                        width: 6px;
+                        width: t.label == "" ? 3px : 6px;
                         height: 1px;
-                        background: #4a5970;
+                        background: t.label == "" ? #3a4960 : #4a5970;
                     }
 
+                    // Label only for major ticks
                     Text {
                         x: 10px;
                         y: 0px;
-                        text: t.label + (axis_price_unit == "" ? "" : (" " + axis_price_unit));
+                        text: t.label == "" ? "" : (t.label + (axis_price_unit == "" ? "" : (" " + axis_price_unit)));
                         color: #9fd1ff;
                         font-size: 10px;
+                        visible: t.label != "";
                     }
                 }
 
@@ -3495,9 +3506,10 @@ export component AppWindow inherits Window {
                     x: chart_x + chart_w * t.pos;
                     y: header_h + v_gap + chart_h + 2px;
                     width: 1px;
-                    height: 16px;
-                    background: #4a5970;
+                    height: t.label == "" ? 8px : 16px;
+                    background: t.label == "" ? #3a4960 : #4a5970;
 
+                    // Label only for major ticks
                     Text {
                         x: -40px;
                         y: 4px;
@@ -3506,6 +3518,7 @@ export component AppWindow inherits Window {
                         text: t.label;
                         color: #9fd1ff;
                         font-size: 10px;
+                        visible: t.label != "";
                     }
                 }
 
@@ -4515,24 +4528,30 @@ export component AppWindow inherits Window {
             y: parent.height - 12px;
             width: parent.width - 14px;
             height: 10px;
-            background: #202633;
+            background: #60606020;
             border-radius: 5px;
             visible: max_scroll_x > 0.0;
+            opacity: hscroll_touch.has-hover || hscroll_knob_touch.dragging ? 1.0 : 0.0;
 
             property <float> bar_w: self.width / 1px;
             property <float> knob_w: Math.max(30.0, bar_w * (viewport_w_px / content_w_px));
             property <float> t: max_scroll_x <= 0.0 ? 0.0 : (sx / max_scroll_x);
             property <float> knob_x: t * Math.max(0.0, bar_w - knob_w);
 
+            hscroll_touch := TouchArea {
+                width: parent.width;
+                height: parent.height;
+            }
+
             Rectangle {
                 x: knob_x * 1px;
                 y: -1px;
                 width: knob_w * 1px;
                 height: parent.height + 2px;
-                background: #7070ff;
+                background: #80808060;
                 border-radius: 6px;
 
-                TouchArea {
+                hscroll_knob_touch := TouchArea {
                     x: 0px; y: -6px;
                     width: parent.width; height: parent.height + 12px;
 
@@ -4564,24 +4583,30 @@ export component AppWindow inherits Window {
             y: 2px;
             width: 10px;
             height: parent.height - 14px;
-            background: #202633;
+            background: #60606020;
             border-radius: 5px;
             visible: max_scroll_y > 0.0;
+            opacity: vscroll_touch.has-hover || vscroll_knob_touch.dragging ? 1.0 : 0.0;
 
             property <float> bar_h: self.height / 1px;
             property <float> knob_h: Math.max(30.0, bar_h * (viewport_h_px / content_h_px));
             property <float> t: max_scroll_y <= 0.0 ? 0.0 : (sy / max_scroll_y);
             property <float> knob_y: t * Math.max(0.0, bar_h - knob_h);
 
+            vscroll_touch := TouchArea {
+                width: parent.width;
+                height: parent.height;
+            }
+
             Rectangle {
                 x: -1px;
                 y: knob_y * 1px;
                 width: parent.width + 2px;
                 height: knob_h * 1px;
-                background: #7070ff;
+                background: #80808060;
                 border-radius: 6px;
 
-                TouchArea {
+                vscroll_knob_touch := TouchArea {
                     x: -6px; y: 0px;
                     width: parent.width + 12px; height: parent.height;
 
