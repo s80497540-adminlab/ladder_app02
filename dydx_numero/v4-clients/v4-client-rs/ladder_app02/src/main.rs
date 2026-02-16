@@ -1,1247 +1,755 @@
+mod app;
+mod debug_hooks;
+mod exec;
+mod feed;
+mod keplr_bridge;
+mod trade_engine;
+
 mod candle_agg;
+mod persist;
+mod settings;
+mod signer;
+use ladder_app02::feed_shared;
+
+use anyhow::Result;
+use serde_json::Value;
+use slint::{Timer, TimerMode};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
+    time::{Duration, Instant},
+};
 
 slint::include_modules!();
 
-use crate::candle_agg::{Candle, CandleAgg};
+fn main() -> Result<()> {
+    // --- UI ---
+    let ui = AppWindow::new()?;
 
-use std::cell::RefCell;
-use std::cmp::{max, min};
-use std::collections::{BTreeMap, HashMap};
-use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
-use std::path::{Path, PathBuf};
-use std::rc::Rc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    // --- Persistence (load -> apply; then autosave runs in background) ---
+    let persistence = persist::Persistence::new()?;
+    println!("CONFIG_PATH = {:?}", persistence.config_path());
 
-use chrono::{Local, TimeZone};
-use rhai::{Engine, Scope};
+    let cfg = persistence.load();
+    persist::Persistence::apply_to_ui(&cfg, &ui);
+    ui.set_ticker_input(ui.get_current_ticker());
+    persistence.start_autosave(ui.as_weak())?;
 
-use slint::{ModelRc, SharedString, Timer, TimerMode, VecModel};
+    // --- Event bus ---
+    let (tx, rx) = std::sync::mpsc::channel::<app::AppEvent>();
 
-fn now_unix() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or(Duration::from_secs(0))
-        .as_secs()
-}
+    // Wire UI callbacks -> AppEvent::Ui(...)
+    app::commands::wire_ui(&ui, tx.clone());
 
-// ---- price key helpers -----------------------------------------------------
+    // Runtime holder (state + reducer + render)
+    let runtime = Rc::new(RefCell::new(app::AppRuntime::new(ui.as_weak())));
 
-type PriceKey = i64;
-
-fn price_to_key(price: f64) -> PriceKey {
-    (price * 10_000.0).round() as PriceKey
-}
-
-fn key_to_price(key: PriceKey) -> f64 {
-    key as f64 / 10_000.0
-}
-
-fn format_ts_local(ts: u64) -> String {
-    let dt = Local
-        .timestamp_opt(ts as i64, 0)
-        .single()
-        .unwrap_or_else(|| Local.timestamp_opt(0, 0).single().unwrap());
-    dt.format("%Y-%m-%d %H:%M:%S").to_string()
-}
-
-// ---- CSV data structures ---------------------------------------------------
-
-#[derive(Clone, Debug)]
-struct BookCsvEvent {
-    ts: u64,
-    ticker: String,
-    kind: String,
-    side: String,
-    price: f64,
-    size: f64,
-}
-
-#[derive(Clone, Debug)]
-struct TradeCsvEvent {
-    ts: u64,
-    ticker: String,
-    source: String,
-    side: String,
-    size_str: String,
-}
-
-#[derive(Clone, Debug, Default)]
-struct TickerData {
-    ticker: String,
-    book_events: Vec<BookCsvEvent>,
-    trade_events: Vec<TradeCsvEvent>,
-    min_ts: u64,
-    max_ts: u64,
-}
-
-#[derive(Clone, Debug, Default)]
-struct Snapshot {
-    bids: BTreeMap<PriceKey, f64>,
-    asks: BTreeMap<PriceKey, f64>,
-    candles: Vec<Candle>,
-    trades: Vec<TradeCsvEvent>,
-    last_mid: f64,
-    last_vol: f64,
-}
-
-#[derive(Clone, Debug, Default)]
-struct BubbleMetrics {
-    best_bid: f64,
-    best_ask: f64,
-    mid: f64,
-    spread: f64,
-    bid_liq: f64,
-    ask_liq: f64,
-    imbalance: f64,
-}
-
-// ---- CSV loading -----------------------------------------------------------
-
-fn load_book_csv(path: &Path, ticker: &str) -> Vec<BookCsvEvent> {
-    if !path.exists() {
-        return Vec::new();
-    }
-    let Ok(f) = File::open(path) else {
-        return Vec::new();
-    };
-    let reader = BufReader::new(f);
-    let mut out = Vec::new();
-
-    for line in reader.lines().flatten() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let parts: Vec<&str> = line.split(',').collect();
-        if parts.len() < 6 {
-            continue;
-        }
-
-        let Ok(ts) = parts[0].parse::<u64>() else {
-            continue;
-        };
-        let tk = parts[1].trim_matches('"').to_string();
-        if tk != ticker {
-            continue;
-        }
-        let kind = parts[2].to_string();
-        let side = parts[3].to_string();
-        let Ok(price) = parts[4].parse::<f64>() else {
-            continue;
-        };
-        let Ok(size) = parts[5].parse::<f64>() else {
-            continue;
-        };
-
-        out.push(BookCsvEvent {
-            ts,
-            ticker: tk,
-            kind,
-            side,
-            price,
-            size,
-        });
-    }
-
-    out.sort_by_key(|e| e.ts);
-    out
-}
-
-fn load_trades_csv(path: &Path, ticker: &str) -> Vec<TradeCsvEvent> {
-    if !path.exists() {
-        return Vec::new();
-    }
-    let Ok(f) = File::open(path) else {
-        return Vec::new();
-    };
-    let reader = BufReader::new(f);
-    let mut out = Vec::new();
-
-    for line in reader.lines().flatten() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let parts: Vec<&str> = line.split(',').collect();
-        if parts.len() < 5 {
-            continue;
-        }
-
-        let Ok(ts) = parts[0].parse::<u64>() else {
-            continue;
-        };
-        let tk = parts[1].trim_matches('"').to_string();
-        if tk != ticker {
-            continue;
-        }
-        let source = parts[2].to_string();
-        let side = parts[3].to_string();
-        let size_str = parts[4].to_string();
-
-        out.push(TradeCsvEvent {
-            ts,
-            ticker: tk,
-            source,
-            side,
-            size_str,
-        });
-    }
-
-    out.sort_by_key(|t| t.ts);
-    out
-}
-
-fn load_ticker_data(base_dir: &Path, ticker: &str) -> Option<TickerData> {
-    let ob_path = base_dir.join(format!("orderbook_{ticker}.csv"));
-    let tr_path = base_dir.join(format!("trades_{ticker}.csv"));
-
-    let book_events = load_book_csv(&ob_path, ticker);
-    let trade_events = load_trades_csv(&tr_path, ticker);
-
-    if book_events.is_empty() && trade_events.is_empty() {
-        return None;
-    }
-
-    let mut min_ts = u64::MAX;
-    let mut max_ts = 0u64;
-
-    for e in &book_events {
-        min_ts = min(min_ts, e.ts);
-        max_ts = max(max_ts, e.ts);
-    }
-    for e in &trade_events {
-        min_ts = min(min_ts, e.ts);
-        max_ts = max(max_ts, e.ts);
-    }
-
-    if min_ts == u64::MAX {
-        return None;
-    }
-
-    Some(TickerData {
-        ticker: ticker.to_string(),
-        book_events,
-        trade_events,
-        min_ts,
-        max_ts,
-    })
-}
-
-// ---- snapshot + metrics ----------------------------------------------------
-
-fn compute_snapshot_for(data: &TickerData, tf_secs: u64, window_secs: u64) -> Snapshot {
-    let mut bids: BTreeMap<PriceKey, f64> = BTreeMap::new();
-    let mut asks: BTreeMap<PriceKey, f64> = BTreeMap::new();
-
-    if data.book_events.is_empty() {
-        return Snapshot::default();
-    }
-
-    let target_ts = data.max_ts;
-    let window_start = target_ts.saturating_sub(window_secs);
-
-    let mut agg = CandleAgg::new(tf_secs);
-    let _tf_for_debug = agg.tf();
-
-    for e in &data.book_events {
-        if !e.ticker.is_empty() && e.ticker != data.ticker {
-            // inconsistent line, ignore silently
-        }
-        if !e.kind.is_empty() && e.kind != "orderbook" {
-            // other kinds could be special; just acknowledged
-        }
-
-        if e.ts < window_start {
-            continue;
-        }
-        if e.ts > target_ts {
-            break;
-        }
-
-        let map = if e.side.eq_ignore_ascii_case("bid") {
-            &mut bids
-        } else {
-            &mut asks
-        };
-
-        let key = price_to_key(e.price);
-
-        if e.size == 0.0 {
-            map.remove(&key);
-        } else {
-            map.insert(key, e.size);
-        }
-
-        if let (Some((bp, _)), Some((ap, _))) = (bids.iter().next_back(), asks.iter().next()) {
-            let mid = (key_to_price(*bp) + key_to_price(*ap)) * 0.5;
-            let vol = e.size.abs();
-            agg.update(e.ts, mid, vol);
-        }
-    }
-
+    // Seed state from UI (after persistence apply)
     {
-        let s = agg.series_mut();
-        let max_candles = 500usize;
-        if s.len() > max_candles {
-            let extra = s.len() - max_candles;
-            s.drain(0..extra);
-        }
+        let mut rt = runtime.borrow_mut();
+        rt.state = app::AppState::from_ui(&ui);
+        rt.state.load_cycle_stats(); // Load cycle stats from daemon
+        rt.render(); // initial paint
     }
-
-    let candles = agg.series().clone();
-    let (last_mid, last_vol) = if let Some(c) = candles.last() {
-        (c.close, c.volume)
-    } else {
-        (0.0, 0.0)
-    };
-
-    let mut trades: Vec<TradeCsvEvent> = data
-        .trade_events
-        .iter()
-        .filter(|t| t.ts >= window_start && t.ts <= target_ts)
-        .cloned()
-        .collect();
-
-    trades.sort_by_key(|t| t.ts);
-    if trades.len() > 100 {
-        let start = trades.len() - 100;
-        trades = trades[start..].to_vec();
-    }
-
-    Snapshot {
-        bids,
-        asks,
-        candles,
-        trades,
-        last_mid,
-        last_vol,
-    }
-}
-
-fn compute_bubble_metrics(snap: &Snapshot) -> BubbleMetrics {
-    let best_bid = snap
-        .bids
-        .iter()
-        .next_back()
-        .map(|(k, _)| key_to_price(*k))
-        .unwrap_or(0.0);
-    let best_ask = snap
-        .asks
-        .iter()
-        .next()
-        .map(|(k, _)| key_to_price(*k))
-        .unwrap_or(0.0);
-
-    let mid = if best_bid > 0.0 && best_ask > 0.0 {
-        (best_bid + best_ask) * 0.5
-    } else {
-        0.0
-    };
-
-    let spread = if best_bid > 0.0 && best_ask > 0.0 {
-        best_ask - best_bid
-    } else {
-        0.0
-    };
-
-    let mut bid_liq = 0.0;
-    for (_, s) in snap.bids.iter().rev().take(10) {
-        bid_liq += *s;
-    }
-    let mut ask_liq = 0.0;
-    for (_, s) in snap.asks.iter().take(10) {
-        ask_liq += *s;
-    }
-
-    let imbalance = if ask_liq > 0.0 { bid_liq / ask_liq } else { 0.0 };
-
-    BubbleMetrics {
-        best_bid,
-        best_ask,
-        mid,
-        spread,
-        bid_liq,
-        ask_liq,
-        imbalance,
-    }
-}
-
-// ---- CSV append for trades (GUI & bot) ------------------------------------
-
-fn append_trade_csv(base_dir: &Path, ticker: &str, source: &str, side: &str, size_str: &str) {
-    let ts = now_unix();
-    let path = base_dir.join(format!("trades_{ticker}.csv"));
-
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
-        let _ = writeln!(f, "{ts},{ticker},{source},{side},{size_str}");
-    }
-}
-
-// ---- App core --------------------------------------------------------------
-
-struct AppCore {
-    base_dir: PathBuf,
-    tickers: Vec<String>,
-    ticker_data: HashMap<String, TickerData>,
-    current_ticker: String,
-    tf_secs: u64,
-    window_secs: u64,
-    last_reload_ts: u64,
-
-    engine: Engine,
-    scope: Scope<'static>,
-    script_error: String,
-    bot_signal: String,
-    bot_size: f64,
-    bot_comment: String,
-    bot_auto_trade: bool,
-    last_bot_fired_signal: String,
-
-    receipts: Vec<Receipt>,
-
-    // Cached snapshot + metrics to avoid recomputing every second.
-    cached_snapshot: Option<Snapshot>,
-    cached_metrics: Option<BubbleMetrics>,
-    snapshot_dirty: bool,
-
-    // DOM zoom depth (how many levels to show)
-    dom_depth_levels: usize,
-}
-
-impl AppCore {
-    fn new(base_dir: PathBuf, tickers: Vec<String>) -> Self {
-        let mut ticker_data = HashMap::new();
-
-        println!("AppCore::new: loading CSV data from {}", base_dir.display());
-
-        for tk in &tickers {
-            if let Some(td) = load_ticker_data(&base_dir, tk) {
-                println!(
-                    "  {}: events={}, trades={}, ts {}..{}",
-                    td.ticker,
-                    td.book_events.len(),
-                    td.trade_events.len(),
-                    td.min_ts,
-                    td.max_ts
-                );
-
-                let mut agg = CandleAgg::new(60);
-                let candles_path = base_dir.join(format!("candles_{}.csv", tk));
-                agg.load_from_csv(&candles_path);
-                agg.save_to_csv(&candles_path);
-
-                ticker_data.insert(tk.clone(), td);
-            } else {
-                println!("  {}: no CSV data found", tk);
-            }
-        }
-
-        let current_ticker = tickers
-            .get(0)
-            .cloned()
-            .unwrap_or_else(|| "ETH-USD".to_string());
-
-        let mut engine = Engine::new();
-        engine.set_max_expr_depths(64, 64);
-
-        let scope = Scope::new();
-
-        Self {
-            base_dir,
-            tickers,
-            ticker_data,
-            current_ticker,
-            tf_secs: 60,
-            window_secs: 3600,
-            last_reload_ts: now_unix(),
-            engine,
-            scope,
-            script_error: String::new(),
-            bot_signal: "none".to_string(),
-            bot_size: 0.0,
-            bot_comment: String::new(),
-            bot_auto_trade: false,
-            last_bot_fired_signal: "none".to_string(),
-            receipts: Vec::new(),
-            cached_snapshot: None,
-            cached_metrics: None,
-            snapshot_dirty: true,
-            dom_depth_levels: 20,
-        }
-    }
-
-    fn mark_snapshot_dirty(&mut self) {
-        self.snapshot_dirty = true;
-    }
-
-    fn recompute_snapshot_if_dirty(&mut self) {
-        if !self.snapshot_dirty {
-            return;
-        }
-
-        if let Some(td) = self.ticker_data.get(&self.current_ticker) {
-            let snap = compute_snapshot_for(td, self.tf_secs, self.window_secs);
-            let metrics = compute_bubble_metrics(&snap);
-            self.cached_snapshot = Some(snap);
-            self.cached_metrics = Some(metrics);
-        } else {
-            self.cached_snapshot = None;
-            self.cached_metrics = None;
-        }
-
-        self.snapshot_dirty = false;
-    }
-
-    fn snapshot_for_ui(&mut self) -> Option<(Snapshot, BubbleMetrics)> {
-        self.recompute_snapshot_if_dirty();
-        match (&self.cached_snapshot, &self.cached_metrics) {
-            (Some(s), Some(m)) => Some((s.clone(), m.clone())),
-            _ => None,
-        }
-    }
-
-    fn ticker_range(&self, ticker: &str) -> Option<(u64, u64)> {
-        self.ticker_data.get(ticker).map(|td| (td.min_ts, td.max_ts))
-    }
-
-    fn reload_current_ticker(&mut self) {
-        if let Some(td) = load_ticker_data(&self.base_dir, &self.current_ticker) {
-            println!(
-                "[RELOAD] {}: events={}, trades={}, ts {}..{}",
-                td.ticker,
-                td.book_events.len(),
-                td.trade_events.len(),
-                td.min_ts,
-                td.max_ts
-            );
-            self.ticker_data.insert(self.current_ticker.clone(), td);
-            self.last_reload_ts = now_unix();
-            self.mark_snapshot_dirty();
-        }
-    }
-
-    fn set_tf_from_ui(&mut self, new_tf_secs: u64) {
-        if new_tf_secs == 0 || new_tf_secs == self.tf_secs {
-            return;
-        }
-        println!(
-            "[TF] changing candle tf from {} to {} seconds",
-            self.tf_secs, new_tf_secs
-        );
-        self.tf_secs = new_tf_secs;
-        self.mark_snapshot_dirty();
-    }
-
-    fn set_window_from_ui(&mut self, minutes: u64) {
-        if minutes == 0 {
-            return;
-        }
-        let new_secs = minutes.saturating_mul(60);
-        if new_secs == self.window_secs {
-            return;
-        }
-        println!(
-            "[WINDOW] changing window from {}s to {}s",
-            self.window_secs, new_secs
-        );
-        self.window_secs = new_secs;
-        self.mark_snapshot_dirty();
-    }
-
-    fn set_dom_depth_from_ui(&mut self, levels: i32) {
-        let mut lv = if levels < 1 { 1 } else { levels } as usize;
-        if lv < 5 {
-            lv = 5;
-        }
-        if lv > 50 {
-            lv = 50;
-        }
-        if lv == self.dom_depth_levels {
-            return;
-        }
-        println!(
-            "[DOM] changing depth levels from {} to {}",
-            self.dom_depth_levels, lv
-        );
-        self.dom_depth_levels = lv;
-    }
-
-    fn dom_depth_levels(&self) -> usize {
-        self.dom_depth_levels
-    }
-
-    fn run_bot_script(&mut self, app: &AppWindow, metrics: &BubbleMetrics) {
-        if !self.script_error.is_empty() {
-            eprintln!("[SCRIPT] previous error: {}", self.script_error);
-        }
-
-        self.script_error.clear();
-
-        let script: String = app.get_script_text().to_string();
-
-        self.scope.clear();
-
-        self.scope.set_value("ticker", self.current_ticker.clone());
-        self.scope.set_value("best_bid", metrics.best_bid);
-        self.scope.set_value("best_ask", metrics.best_ask);
-        self.scope.set_value("mid", metrics.mid);
-        self.scope.set_value("spread", metrics.spread);
-        self.scope.set_value("bid_liquidity_near", metrics.bid_liq);
-        self.scope.set_value("ask_liquidity_near", metrics.ask_liq);
-        self.scope.set_value("tf_secs", self.tf_secs as i64);
-
-        self.scope.set_value("bot_signal", self.bot_signal.clone());
-        self.scope.set_value("bot_size", self.bot_size);
-        self.scope.set_value("bot_comment", self.bot_comment.clone());
-
-        let res = self
-            .engine
-            .eval_with_scope::<()>(&mut self.scope, &script);
-
-        match res {
-            Ok(()) => {
-                if let Some(sig) = self.scope.get_value::<String>("bot_signal") {
-                    self.bot_signal = sig;
-                } else {
-                    self.bot_signal = "none".to_string();
-                }
-                if let Some(sz) = self.scope.get_value::<f64>("bot_size") {
-                    self.bot_size = sz.max(0.0);
-                } else {
-                    self.bot_size = 0.0;
-                }
-                if let Some(cmt) = self.scope.get_value::<String>("bot_comment") {
-                    self.bot_comment = cmt;
-                } else {
-                    self.bot_comment.clear();
-                }
-
-                self.script_error.clear();
-                app.set_script_error(SharedString::from(""));
-            }
-            Err(e) => {
-                self.bot_signal = "none".to_string();
-                self.bot_size = 0.0;
-                self.bot_comment.clear();
-                self.script_error = e.to_string();
-                app.set_script_error(SharedString::from(&self.script_error));
-                eprintln!("[SCRIPT] error: {}", self.script_error);
-            }
-        }
-
-        app.set_bot_signal(SharedString::from(&self.bot_signal));
-        app.set_bot_size(self.bot_size as f32);
-        app.set_bot_comment(SharedString::from(&self.bot_comment));
-    }
-
-    fn push_receipt(&mut self, app: &AppWindow, r: Receipt) {
-        self.receipts.push(r);
-        if self.receipts.len() > 300 {
-            let extra = self.receipts.len() - 300;
-            self.receipts.drain(0..extra);
-        }
-        let model = VecModel::from(self.receipts.clone());
-        app.set_receipts(ModelRc::new(model));
-    }
-
-    fn maybe_auto_trade(&mut self, app: &AppWindow, metrics: &BubbleMetrics) {
-        self.bot_auto_trade = app.get_bot_auto_trade();
-
-        if !self.bot_auto_trade {
-            return;
-        }
-        if self.bot_signal != "buy" && self.bot_signal != "sell" {
-            return;
-        }
-        if self.bot_signal == self.last_bot_fired_signal {
-            return;
-        }
-        if self.bot_size <= 0.0 {
-            return;
-        }
-
-        let side = self.bot_signal.clone();
-        let ticker = self.current_ticker.clone();
-        let size_str = format!("{:.8}", self.bot_size);
-
-        append_trade_csv(&self.base_dir, &ticker, "bot_auto", &side, &size_str);
-
-        let receipt = Receipt {
-            ts: SharedString::from(format_ts_local(now_unix())),
-            ticker: SharedString::from(&ticker),
-            side: SharedString::from(&side),
-            kind: SharedString::from("BotAuto"),
-            size: SharedString::from(&size_str),
-            status: SharedString::from("submitted"),
-            comment: SharedString::from(&self.bot_comment),
-        };
-        self.push_receipt(app, receipt);
-
-        self.last_bot_fired_signal = self.bot_signal.clone();
-
-        eprintln!(
-            "[BOT] auto-trade: {} {} size {} (mid {:.2}, spread {:.5})",
-            side, ticker, size_str, metrics.mid, metrics.spread
+    {
+        let rt = runtime.borrow();
+        start_market_poll(
+            tx.clone(),
+            rt.state.market_poll_interval.clone(),
+            rt.state.market_poll_ticker.clone(),
         );
     }
-}
-
-// ---- UI wiring -------------------------------------------------------------
-
-fn apply_snapshot_to_ui(app: &AppWindow, snap: &Snapshot, metrics: &BubbleMetrics, dom_depth_levels: usize) {
-    app.set_mid_price(metrics.mid as f32);
-    app.set_best_bid(metrics.best_bid as f32);
-    app.set_best_ask(metrics.best_ask as f32);
-    app.set_spread(metrics.spread as f32);
-    app.set_imbalance(metrics.imbalance as f32);
-
-    let depth = dom_depth_levels.max(1).min(50);
-
-    let mut bid_levels_raw: Vec<(PriceKey, f64)> =
-        snap.bids.iter().rev().take(depth).map(|(k, s)| (*k, *s)).collect();
-    let mut ask_levels_raw: Vec<(PriceKey, f64)> =
-        snap.asks.iter().take(depth).map(|(k, s)| (*k, *s)).collect();
-
-    let max_bid = bid_levels_raw
-        .iter()
-        .fold(0.0f64, |acc, (_, s)| acc.max(s.abs()));
-    let max_ask = ask_levels_raw
-        .iter()
-        .fold(0.0f64, |acc, (_, s)| acc.max(s.abs()));
-
-    let mut first_bid = true;
-    let bids: Vec<BookLevel> = bid_levels_raw
-        .drain(..)
-        .map(|(k, s)| {
-            let ratio = if max_bid > 0.0 { (s.abs() / max_bid) as f32 } else { 0.0 };
-            let is_best = first_bid;
-            if first_bid {
-                first_bid = false;
-            }
-            BookLevel {
-                price: SharedString::from(format!("{:.2}", key_to_price(k))),
-                size: SharedString::from(format!("{:.4}", s)),
-                depth_ratio: ratio,
-                is_best,
-            }
-        })
-        .collect();
-    app.set_bids(ModelRc::new(VecModel::from(bids)));
-
-    let mut first_ask = true;
-    let asks: Vec<BookLevel> = ask_levels_raw
-        .drain(..)
-        .map(|(k, s)| {
-            let ratio = if max_ask > 0.0 { (s.abs() / max_ask) as f32 } else { 0.0 };
-            let is_best = first_ask;
-            if first_ask {
-                first_ask = false;
-            }
-            BookLevel {
-                price: SharedString::from(format!("{:.2}", key_to_price(k))),
-                size: SharedString::from(format!("{:.4}", s)),
-                depth_ratio: ratio,
-                is_best,
-            }
-        })
-        .collect();
-    app.set_asks(ModelRc::new(VecModel::from(asks)));
-
-    let trades: Vec<Trade> = snap
-        .trades
-        .iter()
-        .rev()
-        .take(50)
-        .map(|t| {
-            let is_buy = t.side.to_ascii_lowercase().starts_with('b');
-            let side_label = if t.source.is_empty() {
-                t.side.clone()
-            } else {
-                format!("{} ({})", t.side, t.source)
-            };
-            let ts_str = format_ts_local(t.ts);
-
-            Trade {
-                ts: SharedString::from(ts_str),
-                side: SharedString::from(side_label),
-                size: SharedString::from(&t.size_str),
-                is_buy,
-            }
-        })
-        .collect();
-    app.set_recent_trades(ModelRc::new(VecModel::from(trades)));
-
-    let candle_rows: Vec<CandleRow> = snap
-        .candles
-        .iter()
-        .rev()
-        .take(200)
-        .map(|c| CandleRow {
-            ts: SharedString::from(format_ts_local(c.t)),
-            open: SharedString::from(format!("{:.2}", c.open)),
-            high: SharedString::from(format!("{:.2}", c.high)),
-            low: SharedString::from(format!("{:.2}", c.low)),
-            close: SharedString::from(format!("{:.2}", c.close)),
-            volume: SharedString::from(format!("{:.4}", c.volume)),
-        })
-        .collect();
-    app.set_candles(ModelRc::new(VecModel::from(candle_rows)));
-
-    let mut candle_points_vec: Vec<CandlePoint> = Vec::new();
-    let mut midline_n: f32 = 0.5;
-    let mut last_move_str = "flat".to_string();
-
-    if !snap.candles.is_empty() {
-        let slice = &snap.candles[..];
-
-        let mut min_price = f64::MAX;
-        let mut max_price = f64::MIN;
-        let mut max_vol = 0.0;
-
-        for c in slice {
-            if c.low < min_price {
-                min_price = c.low;
-            }
-            if c.high > max_price {
-                max_price = c.high;
-            }
-            if c.volume > max_vol {
-                max_vol = c.volume;
-            }
-        }
-        if !min_price.is_finite() || !max_price.is_finite() || max_price <= min_price {
-            min_price = 0.0;
-            max_price = 1.0;
-        }
-        let range = max_price - min_price;
-
-        let norm_price = |p: f64| -> f32 {
-            if range <= 0.0 {
-                0.5
-            } else {
-                ((max_price - p) / range) as f32
-            }
-        };
-
-        let n = slice.len();
-        for (i, c) in slice.iter().enumerate() {
-            let x_center = if n <= 1 { 0.5f32 } else { (i as f32 + 0.5) / n as f32 };
-            let w = if n == 0 { 1.0f32 } else { (1.0f32 / n as f32) * 0.7 };
-
-            let open_n = norm_price(c.open);
-            let high_n = norm_price(c.high);
-            let low_n = norm_price(c.low);
-            let close_n = norm_price(c.close);
-            let is_up = c.close >= c.open;
-
-            let volume_n = if max_vol > 0.0 { (c.volume / max_vol) as f32 } else { 0.0 };
-
-            candle_points_vec.push(CandlePoint {
-                x: x_center,
-                w,
-                open: open_n,
-                high: high_n,
-                low: low_n,
-                close: close_n,
-                is_up,
-                volume: volume_n,
-            });
-        }
-
-        if range > 0.0 && metrics.mid.is_finite() {
-            let clamped = metrics.mid.max(min_price).min(max_price);
-            midline_n = ((max_price - clamped) / range) as f32;
-        } else {
-            midline_n = 0.5;
-        }
-
-        if slice.len() >= 2 {
-            let prev = &slice[slice.len() - 2];
-            let last = &slice[slice.len() - 1];
-            let eps = 1e-9;
-            if last.close > prev.close + eps {
-                last_move_str = "up".to_string();
-            } else if last.close < prev.close - eps {
-                last_move_str = "down".to_string();
-            } else {
-                last_move_str = "flat".to_string();
-            }
-        } else {
-            last_move_str = "flat".to_string();
-        }
-    }
-
-    app.set_candle_points(ModelRc::new(VecModel::from(candle_points_vec)));
-    app.set_candle_midline(midline_n);
-    app.set_last_move(SharedString::from(&last_move_str));
-
-    let _ = (snap.last_mid, snap.last_vol);
-}
-
-#[allow(dead_code)]
-fn debug_print_candle_meta(label: &str, candles: &[Candle]) {
-    if candles.is_empty() {
-        eprintln!("[DEBUG][{}] no candles", label);
-        return;
-    }
-    let first = &candles[0];
-    let last = &candles[candles.len().saturating_sub(1)];
-    eprintln!(
-        "[DEBUG][{}] candles: count={}  t_range={}..{}",
-        label,
-        candles.len(),
-        first.t,
-        last.t
-    );
-}
-
-fn main() {
-    let base_dir = PathBuf::from("data");
-    let tickers = vec!["ETH-USD".to_string(), "BTC-USD".to_string(), "SOL-USD".to_string()];
-
-    let core = AppCore::new(base_dir.clone(), tickers.clone());
-    let core_rc = Rc::new(RefCell::new(core));
-
-    println!("DEBUG: before AppWindow::new()");
-    let app = AppWindow::new().unwrap();
-    println!("DEBUG: after AppWindow::new()");
-
-    app.set_mode(SharedString::from("Live"));
-    app.set_time_mode(SharedString::from("Local"));
-    app.set_show_depth(true);
-    app.set_show_ladders(true);
-    app.set_show_trades(true);
-    app.set_show_volume(true);
-    app.set_trade_side(SharedString::from("Buy"));
-    app.set_trade_size(0.01);
-    app.set_trade_leverage(5.0);
-    app.set_bot_signal(SharedString::from("none"));
-    app.set_bot_size(0.0);
-    app.set_bot_comment(SharedString::from(""));
-    app.set_bot_auto_trade(false);
-    app.set_balance_usdc(1000.0);
-    app.set_balance_pnl(0.0);
-    app.set_candle_midline(0.5);
-    app.set_last_move(SharedString::from("flat"));
-
+    let account_poll_cfg = Arc::new(Mutex::new(AccountPollConfig::default()));
+    start_account_poll(tx.clone(), account_poll_cfg.clone());
     {
-        let core = core_rc.borrow();
-        app.set_candle_tf_secs(core.tf_secs as i32);
-        app.set_candle_window_minutes((core.window_secs / 60) as i32);
-        app.set_dom_depth_levels(core.dom_depth_levels() as i32);
+        let rt = runtime.borrow();
+        sync_account_poll_config(&account_poll_cfg, &rt.state);
     }
 
-    let default_script = r#"// Rhai bot script.
-// Inputs:
-//   ticker:             String
-//   best_bid, best_ask, mid, spread: f64
-//   bid_liquidity_near, ask_liquidity_near: f64
-//   tf_secs: i64
-//
-// Outputs you must set:
-//   bot_signal = "none" | "buy" | "sell"
-//   bot_size   = positive float (units)
-//   bot_comment = String
-
-let imbalance = if ask_liquidity_near > 0.0 {
-    bid_liquidity_near / ask_liquidity_near
-} else {
-    0.0
-};
-
-bot_signal = "none";
-bot_size = 0.0;
-bot_comment = "";
-
-if imbalance > 2.5 && spread < mid * 0.0005 {
-    bot_signal = "buy";
-    bot_size = 0.01;
-    bot_comment = "Bid bubble detected";
-} else if imbalance < 0.4 && spread < mid * 0.0005 {
-    bot_signal = "sell";
-    bot_size = 0.01;
-    bot_comment = "Ask bubble detected";
-}
-"#;
-    app.set_script_text(SharedString::from(default_script));
-    app.set_script_error(SharedString::from(""));
-
-    let app_weak = app.as_weak();
-
-    {
-        let mut core = core_rc.borrow_mut();
-        if let Some((snap, metrics)) = core.snapshot_for_ui() {
-            if let Some((min_ts, max_ts)) = core.ticker_range(&core.current_ticker) {
-                let range_str = format!(
-                    "Range: {} -> {}",
-                    format_ts_local(min_ts),
-                    format_ts_local(max_ts)
-                );
-                app.set_data_range(SharedString::from(range_str));
-            }
-            apply_snapshot_to_ui(&app, &snap, &metrics, core.dom_depth_levels());
-        }
-        app.set_current_ticker(SharedString::from(&core.current_ticker));
+    if ui.get_chart_enabled() && ui.get_history_valve_open() {
+        let ticker = ui.get_current_ticker().to_string();
+        let full = ui.get_render_all_candles();
+        spawn_history_load(tx.clone(), ticker, full);
     }
 
-    {
-        let core_rc_ticker = core_rc.clone();
-        let app_weak_ticker = app_weak.clone();
-        app.on_ticker_changed(move |new_ticker| {
-            if let Some(app) = app_weak_ticker.upgrade() {
-                let mut core = core_rc_ticker.borrow_mut();
-                let nt = new_ticker.to_string();
-
-                if !core.tickers.contains(&nt) {
-                    eprintln!(
-                        "[TICKER] requested unknown ticker {}, keeping {}",
-                        nt, core.current_ticker
-                    );
-                    app.set_current_ticker(SharedString::from(&core.current_ticker));
-                    return;
-                }
-
-                core.current_ticker = nt.clone();
-                core.mark_snapshot_dirty();
-
-                if let Some((min_ts, max_ts)) = core.ticker_range(&core.current_ticker) {
-                    let range_str = format!(
-                        "Range: {} -> {}",
-                        format_ts_local(min_ts),
-                        format_ts_local(max_ts)
-                    );
-                    app.set_data_range(SharedString::from(range_str));
-                }
-
-                if let Some((snap, metrics)) = core.snapshot_for_ui() {
-                    apply_snapshot_to_ui(&app, &snap, &metrics, core.dom_depth_levels());
-                }
-
-                println!("[TICKER] Changed to: {}", core.current_ticker);
-            }
-        });
+    let feed_started = Rc::new(Cell::new(false));
+    let keplr_running = Rc::new(Cell::new(false));
+    let close_scheduled = Rc::new(Cell::new(false));
+    if ui.get_feed_enabled() {
+        start_feeds(tx.clone());
+        feed_started.set(true);
     }
 
+    // --- UI-thread event pump (drain channel, reduce, render) ---
+    // This is the key: ALL UI touching happens on UI thread via this timer.
+    let pump = Timer::default();
     {
-        let app_weak_mode = app_weak.clone();
-        app.on_mode_changed(move |new_mode| {
-            if let Some(app) = app_weak_mode.upgrade() {
-                println!("[MODE] Changed to: {}", new_mode);
-                app.set_mode(new_mode);
-            }
-        });
-    }
-
-    {
-        let app_weak_tm = app_weak.clone();
-        app.on_time_mode_changed(move |new_tm| {
-            if let Some(app) = app_weak_tm.upgrade() {
-                println!("[TIME MODE] Changed to: {}", new_tm);
-                app.set_time_mode(new_tm);
-            }
-        });
-    }
-
-    {
-        let app_weak_tf = app_weak.clone();
-        let core_rc_tf = core_rc.clone();
-        app.on_candle_tf_changed(move |new_tf| {
-            if let Some(app) = app_weak_tf.upgrade() {
-                let mut core = core_rc_tf.borrow_mut();
-                core.set_tf_from_ui(new_tf as u64);
-                app.set_candle_tf_secs(new_tf);
-                if let Some((snap, metrics)) = core.snapshot_for_ui() {
-                    apply_snapshot_to_ui(&app, &snap, &metrics, core.dom_depth_levels());
-                }
-            }
-        });
-    }
-
-    {
-        let app_weak_win = app_weak.clone();
-        let core_rc_win = core_rc.clone();
-        app.on_candle_window_changed(move |new_window_minutes| {
-            if let Some(app) = app_weak_win.upgrade() {
-                let mut core = core_rc_win.borrow_mut();
-                core.set_window_from_ui(new_window_minutes as u64);
-                app.set_candle_window_minutes(new_window_minutes);
-                if let Some((snap, metrics)) = core.snapshot_for_ui() {
-                    apply_snapshot_to_ui(&app, &snap, &metrics, core.dom_depth_levels());
-                }
-            }
-        });
-    }
-
-    {
-        let app_weak_dom = app_weak.clone();
-        let core_rc_dom = core_rc.clone();
-        app.on_dom_depth_changed(move |new_depth| {
-            if let Some(app) = app_weak_dom.upgrade() {
-                let mut core = core_rc_dom.borrow_mut();
-                core.set_dom_depth_from_ui(new_depth);
-                app.set_dom_depth_levels(new_depth);
-                if let Some((snap, metrics)) = core.snapshot_for_ui() {
-                    apply_snapshot_to_ui(&app, &snap, &metrics, core.dom_depth_levels());
-                }
-            }
-        });
-    }
-
-    {
-        let app_weak_send = app_weak.clone();
-        let core_rc_send = core_rc.clone();
-        app.on_send_order(move || {
-            if let Some(app) = app_weak_send.upgrade() {
-                let mut core = core_rc_send.borrow_mut();
-                let side = app.get_trade_side().to_string();
-                let size = app.get_trade_size();
-                let size_str = format!("{:.8}", size);
-                let ticker = core.current_ticker.clone();
-
-                append_trade_csv(&core.base_dir, &ticker, "gui_manual", &side, &size_str);
-
-                let msg = format!("Order sent: {} {} units on {}", side, size_str, ticker);
-                app.set_order_message(SharedString::from(&msg));
-
-                let receipt = Receipt {
-                    ts: SharedString::from(format_ts_local(now_unix())),
-                    ticker: SharedString::from(&ticker),
-                    side: SharedString::from(&side),
-                    kind: SharedString::from("Manual"),
-                    size: SharedString::from(&size_str),
-                    status: SharedString::from("submitted"),
-                    comment: SharedString::from("GUI manual"),
-                };
-                core.push_receipt(&app, receipt);
-
-                if let Some((_, metrics)) = core.snapshot_for_ui() {
-                    println!("[ORDER] {} (mid {:.2}, spread {:.5})", msg, metrics.mid, metrics.spread);
-                } else {
-                    println!("[ORDER] {}", msg);
-                }
-            }
-        });
-    }
-
-    {
-        let app_weak_reload = app_weak.clone();
-        let core_rc_reload = core_rc.clone();
-        app.on_reload_data(move || {
-            if let Some(app) = app_weak_reload.upgrade() {
-                let mut core = core_rc_reload.borrow_mut();
-                core.reload_current_ticker();
-                if let Some((snap, metrics)) = core.snapshot_for_ui() {
-                    apply_snapshot_to_ui(&app, &snap, &metrics, core.dom_depth_levels());
-                }
-                app.set_order_message(SharedString::from("Data reloaded"));
-            }
-        });
-    }
-
-    {
-        let app_weak_script = app_weak.clone();
-        let core_rc_script = core_rc.clone();
-        app.on_run_script(move || {
-            if let Some(app) = app_weak_script.upgrade() {
-                let mut core = core_rc_script.borrow_mut();
-                if let Some((snap, metrics)) = core.snapshot_for_ui() {
-                    core.run_bot_script(&app, &metrics);
-                    core.maybe_auto_trade(&app, &metrics);
-                    apply_snapshot_to_ui(&app, &snap, &metrics, core.dom_depth_levels());
-                    println!("[SCRIPT] run complete; signal={}", core.bot_signal);
-                } else {
-                    app.set_script_error(SharedString::from("No snapshot available yet"));
-                }
-            }
-        });
-    }
-
-    {
-        let app_weak_dep = app_weak.clone();
-        let core_rc_dep = core_rc.clone();
-        app.on_deposit(move |amount| {
-            if let Some(app) = app_weak_dep.upgrade() {
-                let mut core = core_rc_dep.borrow_mut();
-                let mut bal = app.get_balance_usdc();
-                let amt = amount.max(0.0);
-                bal += amt;
-                app.set_balance_usdc(bal);
-                let receipt = Receipt {
-                    ts: SharedString::from(format_ts_local(now_unix())),
-                    ticker: SharedString::from("N/A"),
-                    side: SharedString::from("N/A"),
-                    kind: SharedString::from("DepositSim"),
-                    size: SharedString::from(format!("{:.2}", amt)),
-                    status: SharedString::from("ok"),
-                    comment: SharedString::from("Sim deposit"),
-                };
-                core.push_receipt(&app, receipt);
-            }
-        });
-
-        let app_weak_wd = app_weak.clone();
-        let core_rc_wd = core_rc.clone();
-        app.on_withdraw(move |amount| {
-            if let Some(app) = app_weak_wd.upgrade() {
-                let mut core = core_rc_wd.borrow_mut();
-                let mut bal = app.get_balance_usdc();
-                let amt = amount.max(0.0);
-                if bal >= amt {
-                    bal -= amt;
-                    app.set_balance_usdc(bal);
-                    let receipt = Receipt {
-                        ts: SharedString::from(format_ts_local(now_unix())),
-                        ticker: SharedString::from("N/A"),
-                        side: SharedString::from("N/A"),
-                        kind: SharedString::from("WithdrawSim"),
-                        size: SharedString::from(format!("{:.2}", amt)),
-                        status: SharedString::from("ok"),
-                        comment: SharedString::from("Sim withdraw"),
-                    };
-                    core.push_receipt(&app, receipt);
-                } else {
-                    let receipt = Receipt {
-                        ts: SharedString::from(format_ts_local(now_unix())),
-                        ticker: SharedString::from("N/A"),
-                        side: SharedString::from("N/A"),
-                        kind: SharedString::from("WithdrawSim"),
-                        size: SharedString::from(format!("{:.2}", amt)),
-                        status: SharedString::from("fail"),
-                        comment: SharedString::from("Insufficient sim balance"),
-                    };
-                    core.push_receipt(&app, receipt);
-                }
-            }
-        });
-    }
-
-    let timer = Timer::default();
-    {
-        let app_weak_timer = app_weak.clone();
-        let core_rc_timer = core_rc.clone();
-        timer.start(TimerMode::Repeated, Duration::from_secs(1), move || {
-            if let Some(app) = app_weak_timer.upgrade() {
-                let mut core = core_rc_timer.borrow_mut();
-
-                if let Some((snap, metrics)) = core.snapshot_for_ui() {
-                    apply_snapshot_to_ui(&app, &snap, &metrics, core.dom_depth_levels());
-
-                    if app.get_bot_auto_trade() {
-                        core.run_bot_script(&app, &metrics);
-                        core.maybe_auto_trade(&app, &metrics);
+        let runtime = runtime.clone();
+        let history_tx = tx.clone();
+        let feed_tx = tx.clone();
+        let feed_started = feed_started.clone();
+        let keplr_running = keplr_running.clone();
+        let close_scheduled = close_scheduled.clone();
+        pump.start(TimerMode::Repeated, Duration::from_millis(16), move || {
+            let frame_start = Instant::now();
+            // Drain events quickly
+            let mut any = false;
+            let mut events = 0usize;
+            while let Ok(ev) = rx.try_recv() {
+                any = true;
+                events += 1;
+                if matches!(
+                    ev,
+                    app::AppEvent::Ui(app::UiEvent::SettingsConnectWallet)
+                        | app::AppEvent::Ui(app::UiEvent::SettingsCreateSession { .. })
+                ) {
+                    let rt = runtime.borrow();
+                    if !rt.state.settings_auto_sign {
+                        let _ = feed_tx.send(app::AppEvent::Exec(app::ExecEvent::KeplrSessionFailed {
+                            message: "Enable Auto-sign first.".to_string(),
+                        }));
+                    } else if !keplr_running.get() {
+                        let ttl = rt
+                            .state
+                            .settings_session_ttl_minutes
+                            .trim()
+                            .parse::<u64>()
+                            .unwrap_or(30);
+                        let chain_id = if rt.state.settings_network.eq_ignore_ascii_case("mainnet")
+                        {
+                            "dydx-mainnet-1".to_string()
+                        } else {
+                            "dydx-testnet-4".to_string()
+                        };
+                        let cfg = keplr_bridge::KeplrBridgeConfig {
+                            chain_id,
+                            grpc_endpoint: rt.state.settings_rpc_endpoint.clone(),
+                            fee_denom: String::new(),
+                            session_ttl_minutes: ttl,
+                        };
+                        if keplr_bridge::start_keplr_bridge(feed_tx.clone(), cfg).is_ok() {
+                            keplr_running.set(true);
+                        }
                     }
                 }
+                if let app::AppEvent::Ui(app::UiEvent::SendOrder) = &ev {
+                    let rt = runtime.borrow();
+                    if rt.state.trade_real_mode && rt.state.trade_real_armed {
+                        let now = app::state::now_unix();
+                        let session_ok = rt
+                            .state
+                            .session_expires_at_unix
+                            .map(|exp| now < exp)
+                            .unwrap_or(false);
+                        if session_ok
+                            && rt.state.session_authenticator_id.is_some()
+                            && !rt.state.session_mnemonic.is_empty()
+                            && !rt.state.session_master_address.is_empty()
+                        {
+                            trade_engine::spawn_real_order(
+                                feed_tx.clone(),
+                                trade_engine::OrderRequest {
+                                    ticker: rt.state.current_ticker.clone(),
+                                    side: rt.state.trade_side.clone(),
+                                    order_type: rt.state.trade_order_type.to_lowercase(),
+                                    size: rt.state.trade_size as f64,
+                                    leverage: rt.state.trade_leverage as f64,
+                                    price_hint: if rt.state.trade_limit_price > 0.0 {
+                                        rt.state.trade_limit_price as f64
+                                    } else {
+                                        rt.state.metrics.mid
+                                    },
+                                    trigger_price: if rt.state.trade_trigger_price > 0.0 {
+                                        Some(rt.state.trade_trigger_price as f64)
+                                    } else {
+                                        None
+                                    },
+                                    post_only: rt.state.trade_post_only,
+                                    time_in_force: if rt.state.trade_time_in_force.is_empty() {
+                                        None
+                                    } else {
+                                        Some(rt.state.trade_time_in_force.to_lowercase())
+                                    },
+                                    master_address: rt.state.session_master_address.clone(),
+                                    session_mnemonic: rt.state.session_mnemonic.clone(),
+                                    authenticator_id: rt.state.session_authenticator_id.unwrap(),
+                                    grpc_endpoint: rt.state.settings_rpc_endpoint.clone(),
+                                    chain_id: rt.state.settings_network.clone(),
+                                    reduce_only: false,
+                                },
+                            );
+                        } else {
+                            let _ = feed_tx.send(app::AppEvent::Exec(app::ExecEvent::OrderFailed {
+                                message: "Session inactive or missing.".to_string(),
+                            }));
+                        }
+                    }
+                }
+                if let app::AppEvent::Ui(app::UiEvent::ClosePositionRequested) = &ev {
+                    let rt = runtime.borrow();
+                    if rt.state.position_size > 0.0
+                        && !rt.state.position_side.eq_ignore_ascii_case("flat")
+                        && rt.state.trade_real_mode
+                        && rt.state.trade_real_armed
+                    {
+                        let now = app::state::now_unix();
+                        let session_ok = rt
+                            .state
+                            .session_expires_at_unix
+                            .map(|exp| now < exp)
+                            .unwrap_or(false);
+                        if session_ok
+                            && rt.state.session_authenticator_id.is_some()
+                            && !rt.state.session_mnemonic.is_empty()
+                            && !rt.state.session_master_address.is_empty()
+                        {
+                            let close_side = if rt.state.position_side.eq_ignore_ascii_case("long")
+                            {
+                                "Sell".to_string()
+                            } else {
+                                "Buy".to_string()
+                            };
+                            trade_engine::spawn_real_order(
+                                feed_tx.clone(),
+                                trade_engine::OrderRequest {
+                                    ticker: rt.state.current_ticker.clone(),
+                                    side: close_side,
+                                    order_type: "market".to_string(),  // Always market for close
+                                    size: rt.state.position_size as f64,
+                                    leverage: rt.state.trade_leverage as f64,
+                                    price_hint: rt.state.metrics.mid,
+                                    trigger_price: None,
+                                    post_only: false,
+                                    time_in_force: None,
+                                    master_address: rt.state.session_master_address.clone(),
+                                    session_mnemonic: rt.state.session_mnemonic.clone(),
+                                    authenticator_id: rt.state.session_authenticator_id.unwrap(),
+                                    grpc_endpoint: rt.state.settings_rpc_endpoint.clone(),
+                                    chain_id: rt.state.settings_network.clone(),
+                                    reduce_only: true,
+                                },
+                            );
+                        } else {
+                            let _ = feed_tx.send(app::AppEvent::Exec(app::ExecEvent::OrderFailed {
+                                message: "Session inactive or missing.".to_string(),
+                            }));
+                        }
+                    }
+                }
+                if let app::AppEvent::Ui(app::UiEvent::CancelOpenOrdersRequested) = &ev {
+                    let rt = runtime.borrow();
+                    let now = app::state::now_unix();
+                    let session_ok = rt
+                        .state
+                        .session_expires_at_unix
+                        .map(|exp| now < exp)
+                        .unwrap_or(false);
+                    if rt.state.trade_real_mode
+                        && rt.state.trade_real_armed
+                        && session_ok
+                        && rt.state.session_authenticator_id.is_some()
+                        && !rt.state.session_mnemonic.is_empty()
+                        && !rt.state.session_master_address.is_empty()
+                    {
+                        let ticker = rt.state.current_ticker.clone();
+                        let orders: Vec<app::state::OpenOrderInfo> = rt
+                            .state
+                            .open_orders
+                            .iter()
+                            .filter(|ord| ord.ticker.eq_ignore_ascii_case(&ticker))
+                            .cloned()
+                            .collect();
+                        if !orders.is_empty() {
+                            trade_engine::spawn_cancel_orders(
+                                feed_tx.clone(),
+                                trade_engine::CancelOrdersRequest {
+                                    orders,
+                                    master_address: rt.state.session_master_address.clone(),
+                                    session_mnemonic: rt.state.session_mnemonic.clone(),
+                                    authenticator_id: rt.state.session_authenticator_id.unwrap(),
+                                    grpc_endpoint: rt.state.settings_rpc_endpoint.clone(),
+                                    chain_id: rt.state.settings_network.clone(),
+                                },
+                            );
+                        } else {
+                            let _ = feed_tx.send(app::AppEvent::Exec(
+                                app::ExecEvent::OrderCancelStatus {
+                                    ok: false,
+                                    message: "No open orders for ticker.".to_string(),
+                                },
+                            ));
+                        }
+                    } else {
+                        let _ = feed_tx.send(app::AppEvent::Exec(
+                            app::ExecEvent::OrderCancelStatus {
+                                ok: false,
+                                message: "Cancel blocked (REAL/ARM/session)".to_string(),
+                            },
+                        ));
+                    }
+                }
+                if let app::AppEvent::Ui(app::UiEvent::TickerChanged { ticker }) = &ev {
+                    let rt = runtime.borrow();
+                    if rt.state.history_valve_open && rt.state.chart_enabled {
+                        let full = rt.state.render_all_candles;
+                        spawn_history_load(history_tx.clone(), ticker.clone(), full);
+                    }
+                }
+                if let app::AppEvent::Ui(app::UiEvent::RenderModeChanged { full }) = &ev {
+                    let rt = runtime.borrow();
+                    if rt.state.history_valve_open && rt.state.chart_enabled {
+                        let ticker = rt.state.current_ticker.clone();
+                        spawn_history_load(history_tx.clone(), ticker, *full);
+                    }
+                }
+                if let app::AppEvent::Ui(app::UiEvent::ChartEnabledChanged { enabled }) = &ev {
+                    if *enabled {
+                        let rt = runtime.borrow();
+                        if rt.state.history_valve_open {
+                            let ticker = rt.state.current_ticker.clone();
+                            let full = rt.state.render_all_candles;
+                            spawn_history_load(history_tx.clone(), ticker, full);
+                        }
+                    }
+                }
+                if let app::AppEvent::Ui(app::UiEvent::HistoryValveChanged { open }) = &ev {
+                    if *open {
+                        let rt = runtime.borrow();
+                        if rt.state.chart_enabled {
+                            let ticker = rt.state.current_ticker.clone();
+                            let full = rt.state.render_all_candles;
+                            spawn_history_load(history_tx.clone(), ticker, full);
+                        }
+                    }
+                }
+                if let app::AppEvent::Ui(app::UiEvent::FeedEnabledChanged { enabled }) = &ev {
+                    if *enabled && !feed_started.get() {
+                        start_feeds(feed_tx.clone());
+                        feed_started.set(true);
+                    }
+                }
+                if let app::AppEvent::Exec(
+                    app::ExecEvent::KeplrSessionCreated { .. }
+                    | app::ExecEvent::KeplrSessionFailed { .. },
+                ) = &ev
+                {
+                    keplr_running.set(false);
+                }
+                runtime.borrow_mut().handle_event(ev);
+                {
+                    let rt = runtime.borrow();
+                    sync_account_poll_config(&account_poll_cfg, &rt.state);
+                }
+            }
 
-                let now_ts = now_unix();
-                let now_str = format_ts_local(now_ts);
-                app.set_current_time(SharedString::from(now_str));
+            // If no external events arrived, still tick once per second for clock/arming TTL, etc.
+            // We do this inside the runtime; it rate-limits itself.
+            runtime.borrow_mut().tick_if_needed();
+            runtime.borrow_mut().process_pending_history();
+
+            if any {
+                runtime.borrow_mut().render_if_dirty();
+            } else {
+                runtime.borrow_mut().render_if_dirty();
+            }
+            let frame_ms = frame_start.elapsed().as_secs_f32() * 1000.0;
+            runtime.borrow_mut().update_perf(frame_ms, events);
+
+            if runtime.borrow().state.close_after_save && !close_scheduled.get() {
+                close_scheduled.set(true);
+                let _ = slint::Timer::single_shot(Duration::from_millis(800), move || {
+                    slint::quit_event_loop();
+                });
             }
         });
     }
 
-    println!("Starting Slint Trading GUI...");
-    println!("Expected CSV dir (crate-relative): {}", base_dir.display());
+    ui.run()?;
+    Ok(())
+}
 
-    app.run().unwrap();
+fn start_market_poll(
+    tx: std::sync::mpsc::Sender<app::AppEvent>,
+    poll_interval: Arc<AtomicU64>,
+    poll_ticker: Arc<Mutex<String>>,
+) {
+    const MARKET_URL: &str = "https://indexer.dydx.trade/v4/perpetualMarkets";
+
+    std::thread::spawn(move || {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build();
+        let Ok(client) = client else {
+            return;
+        };
+        loop {
+            if let Ok(resp) = client.get(MARKET_URL).send() {
+                if let Ok(json) = resp.json::<Value>() {
+                    if let Some(markets) = json.get("markets").and_then(|v| v.as_object()) {
+                        let mut markets_list: Vec<app::MarketInfo> =
+                            Vec::with_capacity(markets.len());
+                        for (ticker, meta) in markets {
+                            let active = meta
+                                .get("status")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.eq_ignore_ascii_case("ACTIVE"))
+                                .unwrap_or(true);
+                            markets_list.push(app::MarketInfo {
+                                ticker: ticker.to_string(),
+                                active,
+                            });
+                        }
+                        if !markets_list.is_empty() {
+                            let _ = tx.send(app::AppEvent::Feed(app::FeedEvent::MarketList {
+                                markets: markets_list,
+                            }));
+                        }
+                        let now = app::state::now_unix();
+                        let ticker = poll_ticker
+                            .lock()
+                            .ok()
+                            .map(|t| t.clone())
+                            .unwrap_or_else(|| "BTC-USD".to_string());
+                        if let Some(mkt) = markets.get(&ticker) {
+                            let oracle_raw = mkt
+                                .get("oraclePrice")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            if !oracle_raw.is_empty() {
+                                let oracle_price = oracle_raw.parse::<f64>().unwrap_or(0.0);
+                                let mark_raw = mkt
+                                    .get("markPrice")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or(&oracle_raw)
+                                    .to_string();
+                                let mark_price = mark_raw.parse::<f64>().unwrap_or(0.0);
+                                let _ = tx.send(app::AppEvent::Feed(app::FeedEvent::MarketPrice {
+                                    ts_unix: now,
+                                    ticker: ticker.to_string(),
+                                    mark_price,
+                                    mark_price_raw: mark_raw,
+                                    oracle_price,
+                                    oracle_price_raw: oracle_raw,
+                                }));
+                            }
+                        }
+                    }
+                }
+            }
+            let secs = poll_interval.load(Ordering::Relaxed).max(1);
+            std::thread::sleep(Duration::from_secs(secs));
+        }
+    });
+}
+
+#[derive(Clone, Default)]
+struct AccountPollConfig {
+    address: String,
+    network: String,
+    ticker: String,
+}
+
+fn start_account_poll(
+    tx: std::sync::mpsc::Sender<app::AppEvent>,
+    cfg: Arc<Mutex<AccountPollConfig>>,
+) {
+    const MAINNET_INDEXER_HTTP: &str = "https://indexer.dydx.trade";
+    const TESTNET_INDEXER_HTTP: &str = "https://indexer.v4testnet.dydx.exchange";
+
+    std::thread::spawn(move || {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(8))
+            .build();
+        let Ok(client) = client else {
+            eprintln!("[account] http client init failed");
+            return;
+        };
+
+        loop {
+            let (address, network, ticker) = {
+                let guard = cfg.lock().unwrap_or_else(|e| e.into_inner());
+                (
+                    guard.address.clone(),
+                    guard.network.clone(),
+                    guard.ticker.clone(),
+                )
+            };
+
+            if address.trim().is_empty() {
+                std::thread::sleep(Duration::from_secs(2));
+                continue;
+            }
+
+            let rest = if network.eq_ignore_ascii_case("testnet") {
+                TESTNET_INDEXER_HTTP
+            } else {
+                MAINNET_INDEXER_HTTP
+            };
+
+            let account_url = format!("{rest}/v4/addresses/{address}/subaccountNumber/0");
+            let resp = client.get(&account_url).send();
+            let Ok(resp) = resp else {
+                let _ = tx.send(app::AppEvent::Exec(
+                    app::ExecEvent::AccountSnapshotError {
+                        message: "account request failed".to_string(),
+                    },
+                ));
+                std::thread::sleep(Duration::from_secs(5));
+                continue;
+            };
+
+            if !resp.status().is_success() {
+                let _ = tx.send(app::AppEvent::Exec(
+                    app::ExecEvent::AccountSnapshotError {
+                        message: format!("account http {}", resp.status()),
+                    },
+                ));
+                std::thread::sleep(Duration::from_secs(5));
+                continue;
+            }
+
+            let json = resp.json::<Value>();
+            let Ok(json) = json else {
+                let _ = tx.send(app::AppEvent::Exec(
+                    app::ExecEvent::AccountSnapshotError {
+                        message: "account decode failed".to_string(),
+                    },
+                ));
+                std::thread::sleep(Duration::from_secs(5));
+                continue;
+            };
+
+            let sub = match json.get("subaccount") {
+                Some(val) => val,
+                None => {
+                    let _ = tx.send(app::AppEvent::Exec(
+                        app::ExecEvent::AccountSnapshotError {
+                            message: "missing subaccount".to_string(),
+                        },
+                    ));
+                    std::thread::sleep(Duration::from_secs(5));
+                    continue;
+                }
+            };
+
+            let equity = parse_json_number(sub.get("equity")).unwrap_or(0.0);
+            let free = parse_json_number(sub.get("freeCollateral")).unwrap_or(0.0);
+            let margin_enabled = sub
+                .get("marginEnabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+
+            let _ = tx.send(app::AppEvent::Exec(app::ExecEvent::AccountSnapshot {
+                equity,
+                free_collateral: free,
+                margin_enabled,
+            }));
+
+            if !ticker.trim().is_empty() {
+                let pos_url = format!(
+                    "{rest}/v4/perpetualPositions?address={address}&subaccountNumber=0"
+                );
+                let pos_resp = client.get(&pos_url).send();
+                let Ok(pos_resp) = pos_resp else {
+                    let _ = tx.send(app::AppEvent::Exec(
+                        app::ExecEvent::PositionSnapshotError {
+                            message: "positions request failed".to_string(),
+                        },
+                    ));
+                    std::thread::sleep(Duration::from_secs(5));
+                    continue;
+                };
+                if !pos_resp.status().is_success() {
+                    let _ = tx.send(app::AppEvent::Exec(
+                        app::ExecEvent::PositionSnapshotError {
+                            message: format!("positions http {}", pos_resp.status()),
+                        },
+                    ));
+                    std::thread::sleep(Duration::from_secs(5));
+                    continue;
+                }
+                let pos_json = pos_resp.json::<Value>();
+                let Ok(pos_json) = pos_json else {
+                    let _ = tx.send(app::AppEvent::Exec(
+                        app::ExecEvent::PositionSnapshotError {
+                            message: "positions decode failed".to_string(),
+                        },
+                    ));
+                    std::thread::sleep(Duration::from_secs(5));
+                    continue;
+                };
+                let mut found = false;
+                if let Some(items) = pos_json.get("positions").and_then(|v| v.as_array()) {
+                    for pos in items {
+                        let market = pos.get("market").and_then(|v| v.as_str()).unwrap_or("");
+                        if !market.eq_ignore_ascii_case(ticker.trim()) {
+                            continue;
+                        }
+                        let side_raw = pos.get("side").and_then(|v| v.as_str()).unwrap_or("");
+                        let side = match side_raw.to_ascii_lowercase().as_str() {
+                            "long" => "Long",
+                            "short" => "Short",
+                            _ => "Flat",
+                        };
+                        let size = parse_json_number(pos.get("size")).unwrap_or(0.0);
+                        let entry = parse_json_number(pos.get("entryPrice")).unwrap_or(0.0);
+                        let pnl = parse_json_number(pos.get("unrealizedPnl")).unwrap_or(0.0);
+                        let status = pos
+                            .get("status")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("UNKNOWN");
+                        let _ = tx.send(app::AppEvent::Exec(app::ExecEvent::PositionSnapshot {
+                            ticker: market.to_string(),
+                            side: side.to_string(),
+                            size,
+                            entry_price: entry,
+                            unrealized_pnl: pnl,
+                            status: status.to_string(),
+                        }));
+                        found = true;
+                        break;
+                    }
+                }
+                if !found {
+                    let _ = tx.send(app::AppEvent::Exec(app::ExecEvent::PositionSnapshot {
+                        ticker: ticker.clone(),
+                        side: "Flat".to_string(),
+                        size: 0.0,
+                        entry_price: 0.0,
+                        unrealized_pnl: 0.0,
+                        status: "FLAT".to_string(),
+                    }));
+                }
+            }
+
+            let orders_url = format!(
+                "{rest}/v4/orders?address={address}&subaccountNumber=0&status=OPEN&limit=200"
+            );
+            let orders_resp = client.get(&orders_url).send();
+            let Ok(orders_resp) = orders_resp else {
+                let _ = tx.send(app::AppEvent::Exec(app::ExecEvent::OpenOrdersError {
+                    message: "orders request failed".to_string(),
+                }));
+                std::thread::sleep(Duration::from_secs(5));
+                continue;
+            };
+            if !orders_resp.status().is_success() {
+                let _ = tx.send(app::AppEvent::Exec(app::ExecEvent::OpenOrdersError {
+                    message: format!("orders http {}", orders_resp.status()),
+                }));
+                std::thread::sleep(Duration::from_secs(5));
+                continue;
+            }
+            let orders_json = orders_resp.json::<Value>();
+            let Ok(orders_json) = orders_json else {
+                let _ = tx.send(app::AppEvent::Exec(app::ExecEvent::OpenOrdersError {
+                    message: "orders decode failed".to_string(),
+                }));
+                std::thread::sleep(Duration::from_secs(5));
+                continue;
+            };
+            let mut open_orders: Vec<app::OpenOrderInfo> = Vec::new();
+            if let Some(items) = orders_json.get("orders").and_then(|v| v.as_array()) {
+                for order in items {
+                    let ticker_raw = order.get("ticker").and_then(|v| v.as_str()).unwrap_or("");
+                    let client_id = parse_json_u32(order.get("clientId"));
+                    let clob_pair_id = parse_json_u32(order.get("clobPairId"));
+                    let order_flags = parse_json_u32(order.get("orderFlags"));
+                    if client_id.is_none() || clob_pair_id.is_none() || order_flags.is_none() {
+                        continue;
+                    }
+                    let good_til_block = parse_json_u32(order.get("goodTilBlock"));
+                    let good_til_block_time = order
+                        .get("goodTilBlockTime")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    open_orders.push(app::OpenOrderInfo {
+                        ticker: ticker_raw.to_string(),
+                        client_id: client_id.unwrap_or(0),
+                        clob_pair_id: clob_pair_id.unwrap_or(0),
+                        order_flags: order_flags.unwrap_or(0),
+                        good_til_block,
+                        good_til_block_time,
+                    });
+                }
+            }
+            let total = open_orders.len();
+            let ticker_count = open_orders
+                .iter()
+                .filter(|ord| ord.ticker.eq_ignore_ascii_case(&ticker))
+                .count();
+            let _ = tx.send(app::AppEvent::Exec(app::ExecEvent::OpenOrdersSnapshot {
+                total,
+                ticker: ticker.clone(),
+                ticker_count,
+                orders: open_orders,
+            }));
+
+            std::thread::sleep(Duration::from_secs(5));
+        }
+    });
+}
+
+fn parse_json_number(value: Option<&Value>) -> Option<f64> {
+    let value = value?;
+    if let Some(num) = value.as_f64() {
+        return Some(num);
+    }
+    if let Some(text) = value.as_str() {
+        return text.trim().parse::<f64>().ok();
+    }
+    None
+}
+
+fn parse_json_u32(value: Option<&Value>) -> Option<u32> {
+    let value = value?;
+    if let Some(num) = value.as_u64() {
+        return u32::try_from(num).ok();
+    }
+    if let Some(text) = value.as_str() {
+        return text.trim().parse::<u32>().ok();
+    }
+    None
+}
+
+fn sync_account_poll_config(cfg: &Arc<Mutex<AccountPollConfig>>, state: &app::AppState) {
+    let address = if !state.settings_wallet_address.trim().is_empty() {
+        state.settings_wallet_address.clone()
+    } else {
+        state.session_master_address.clone()
+    };
+    let network = if state.settings_network.trim().is_empty() {
+        "Mainnet".to_string()
+    } else {
+        state.settings_network.clone()
+    };
+    let ticker = state.current_ticker.clone();
+    let mut guard = cfg.lock().unwrap_or_else(|e| e.into_inner());
+    guard.address = address;
+    guard.network = network;
+    guard.ticker = ticker;
+}
+
+fn spawn_history_load(tx: std::sync::mpsc::Sender<app::AppEvent>, ticker: String, full: bool) {
+    std::thread::spawn(move || {
+        let ticks = app::AppState::read_mid_ticks_for_ticker(&ticker, full);
+        let _ = tx.send(app::AppEvent::HistoryLoaded { ticker, ticks, full });
+    });
+}
+
+fn start_feeds(tx: std::sync::mpsc::Sender<app::AppEvent>) {
+    // Live feed: tail persisted daemon output so data collected 24/7 is available immediately.
+    feed::daemon::start_daemon_bridge(tx.clone(), true);
+
+    // Dummy feed fallback so the UI stays functional if the daemon is not running yet.
+    let has_live_cache =
+        feed_shared::snapshot_path().exists() || feed_shared::event_log_path().exists();
+    if !has_live_cache {
+        feed::dummy::start_dummy_feed(tx);
+    }
 }

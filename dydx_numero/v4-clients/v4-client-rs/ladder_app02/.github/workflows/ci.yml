@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, add-draw, optimization_two ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        rust: [stable]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust }}
+          profile: minimal
+          override: true
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build (release)
+        run: |
+          cargo build --release --bin data_daemon02
+
+      - name: Run clippy
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          rustup component add clippy || true
+          cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: data_daemon02-${{ matrix.os }}
+          path: target/release/data_daemon02* || target/**/release/data_daemon02*
+name: CI
+
+on:
+  push:
+    branches: [ main, add-draw, optimization_two ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build (release)
+        run: cargo build --release --workspace
+
+      - name: Run clippy
+        uses: actions-rs/clippy-check@v1
+        with:
+          use-nightly: false
+
+      - name: Run tests
+        run: cargo test --workspace --all-features --no-fail-fast
+
+      - name: Audit dependencies
+        uses: actions-rs/cargo-audit@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
