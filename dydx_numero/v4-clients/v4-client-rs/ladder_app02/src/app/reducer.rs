@@ -129,6 +129,25 @@ fn reduce_ui(state: &mut AppState, ev: UiEvent) -> bool {
             state.mark_price_raw.clear();
             state.oracle_price_raw.clear();
             state.last_price_raw.clear();
+            state.open_interest_raw.clear();
+            state.volume_24h_raw.clear();
+            state.price_change_24h_raw.clear();
+            state.trades_24h_raw.clear();
+            state.next_funding_rate_raw.clear();
+            state.clob_pair_id_raw.clear();
+            state.initial_margin_fraction_raw.clear();
+            state.maintenance_margin_fraction_raw.clear();
+            state.tick_size_raw.clear();
+            state.step_size_raw.clear();
+            state.step_base_quantums_raw.clear();
+            state.subticks_per_tick_raw.clear();
+            state.market_type_raw.clear();
+            state.atomic_resolution_raw.clear();
+            state.quantum_conversion_exponent_raw.clear();
+            state.open_interest_lower_cap_raw.clear();
+            state.open_interest_upper_cap_raw.clear();
+            state.base_open_interest_raw.clear();
+            state.default_funding_rate_1h_raw.clear();
             state.bids.clear();
             state.asks.clear();
             state.recent_trades.clear();
@@ -1015,6 +1034,25 @@ fn reduce_feed(state: &mut AppState, ev: FeedEvent) -> bool {
             mark_price_raw,
             oracle_price,
             oracle_price_raw,
+            open_interest_raw,
+            volume_24h_raw,
+            price_change_24h_raw,
+            trades_24h_raw,
+            next_funding_rate_raw,
+            clob_pair_id_raw,
+            initial_margin_fraction_raw,
+            maintenance_margin_fraction_raw,
+            tick_size_raw,
+            step_size_raw,
+            step_base_quantums_raw,
+            subticks_per_tick_raw,
+            market_type_raw,
+            atomic_resolution_raw,
+            quantum_conversion_exponent_raw,
+            open_interest_lower_cap_raw,
+            open_interest_upper_cap_raw,
+            base_open_interest_raw,
+            default_funding_rate_1h_raw,
         } => {
             if !state.is_ticker_feed_enabled(&ticker) {
                 return false;
@@ -1036,6 +1074,25 @@ fn reduce_feed(state: &mut AppState, ev: FeedEvent) -> bool {
                     state.oracle_price_raw = format_num_compact(oracle_price, PRICE_DECIMALS);
                 }
             }
+            state.open_interest_raw = open_interest_raw;
+            state.volume_24h_raw = volume_24h_raw;
+            state.price_change_24h_raw = price_change_24h_raw;
+            state.trades_24h_raw = trades_24h_raw;
+            state.next_funding_rate_raw = next_funding_rate_raw;
+            state.clob_pair_id_raw = clob_pair_id_raw;
+            state.initial_margin_fraction_raw = initial_margin_fraction_raw;
+            state.maintenance_margin_fraction_raw = maintenance_margin_fraction_raw;
+            state.tick_size_raw = tick_size_raw;
+            state.step_size_raw = step_size_raw;
+            state.step_base_quantums_raw = step_base_quantums_raw;
+            state.subticks_per_tick_raw = subticks_per_tick_raw;
+            state.market_type_raw = market_type_raw;
+            state.atomic_resolution_raw = atomic_resolution_raw;
+            state.quantum_conversion_exponent_raw = quantum_conversion_exponent_raw;
+            state.open_interest_lower_cap_raw = open_interest_lower_cap_raw;
+            state.open_interest_upper_cap_raw = open_interest_upper_cap_raw;
+            state.base_open_interest_raw = base_open_interest_raw;
+            state.default_funding_rate_1h_raw = default_funding_rate_1h_raw;
             if state.trade_margin_linked {
                 sync_margin_from_leverage(state);
             }

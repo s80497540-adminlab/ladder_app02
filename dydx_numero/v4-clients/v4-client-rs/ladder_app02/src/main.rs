@@ -379,6 +379,25 @@ fn start_market_poll(
 ) {
     const MARKET_URL: &str = "https://indexer.dydx.trade/v4/perpetualMarkets";
 
+    fn raw_market_field(meta: &Value, key: &str) -> String {
+        let Some(value) = meta.get(key) else {
+            return String::new();
+        };
+        if let Some(s) = value.as_str() {
+            return s.to_string();
+        }
+        if let Some(i) = value.as_i64() {
+            return i.to_string();
+        }
+        if let Some(u) = value.as_u64() {
+            return u.to_string();
+        }
+        if let Some(f) = value.as_f64() {
+            return format!("{}", f);
+        }
+        String::new()
+    }
+
     std::thread::spawn(move || {
         let client = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(5))
@@ -415,19 +434,43 @@ fn start_market_poll(
                             .map(|t| t.clone())
                             .unwrap_or_else(|| "BTC-USD".to_string());
                         if let Some(mkt) = markets.get(&ticker) {
-                            let oracle_raw = mkt
-                                .get("oraclePrice")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string();
+                            let oracle_raw = raw_market_field(mkt, "oraclePrice");
                             if !oracle_raw.is_empty() {
                                 let oracle_price = oracle_raw.parse::<f64>().unwrap_or(0.0);
-                                let mark_raw = mkt
-                                    .get("markPrice")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or(&oracle_raw)
-                                    .to_string();
+                                let mark_raw_value = raw_market_field(mkt, "markPrice");
+                                let mark_raw = if mark_raw_value.is_empty() {
+                                    oracle_raw.clone()
+                                } else {
+                                    mark_raw_value
+                                };
                                 let mark_price = mark_raw.parse::<f64>().unwrap_or(0.0);
+                                let open_interest_raw = raw_market_field(mkt, "openInterest");
+                                let volume_24h_raw = raw_market_field(mkt, "volume24H");
+                                let price_change_24h_raw = raw_market_field(mkt, "priceChange24H");
+                                let trades_24h_raw = raw_market_field(mkt, "trades24H");
+                                let next_funding_rate_raw = raw_market_field(mkt, "nextFundingRate");
+                                let clob_pair_id_raw = raw_market_field(mkt, "clobPairId");
+                                let initial_margin_fraction_raw =
+                                    raw_market_field(mkt, "initialMarginFraction");
+                                let maintenance_margin_fraction_raw =
+                                    raw_market_field(mkt, "maintenanceMarginFraction");
+                                let tick_size_raw = raw_market_field(mkt, "tickSize");
+                                let step_size_raw = raw_market_field(mkt, "stepSize");
+                                let step_base_quantums_raw =
+                                    raw_market_field(mkt, "stepBaseQuantums");
+                                let subticks_per_tick_raw = raw_market_field(mkt, "subticksPerTick");
+                                let market_type_raw = raw_market_field(mkt, "marketType");
+                                let atomic_resolution_raw =
+                                    raw_market_field(mkt, "atomicResolution");
+                                let quantum_conversion_exponent_raw =
+                                    raw_market_field(mkt, "quantumConversionExponent");
+                                let open_interest_lower_cap_raw =
+                                    raw_market_field(mkt, "openInterestLowerCap");
+                                let open_interest_upper_cap_raw =
+                                    raw_market_field(mkt, "openInterestUpperCap");
+                                let base_open_interest_raw = raw_market_field(mkt, "baseOpenInterest");
+                                let default_funding_rate_1h_raw =
+                                    raw_market_field(mkt, "defaultFundingRate1H");
                                 let _ = tx.send(app::AppEvent::Feed(app::FeedEvent::MarketPrice {
                                     ts_unix: now,
                                     ticker: ticker.to_string(),
@@ -435,6 +478,25 @@ fn start_market_poll(
                                     mark_price_raw: mark_raw,
                                     oracle_price,
                                     oracle_price_raw: oracle_raw,
+                                    open_interest_raw,
+                                    volume_24h_raw,
+                                    price_change_24h_raw,
+                                    trades_24h_raw,
+                                    next_funding_rate_raw,
+                                    clob_pair_id_raw,
+                                    initial_margin_fraction_raw,
+                                    maintenance_margin_fraction_raw,
+                                    tick_size_raw,
+                                    step_size_raw,
+                                    step_base_quantums_raw,
+                                    subticks_per_tick_raw,
+                                    market_type_raw,
+                                    atomic_resolution_raw,
+                                    quantum_conversion_exponent_raw,
+                                    open_interest_lower_cap_raw,
+                                    open_interest_upper_cap_raw,
+                                    base_open_interest_raw,
+                                    default_funding_rate_1h_raw,
                                 }));
                             }
                         }

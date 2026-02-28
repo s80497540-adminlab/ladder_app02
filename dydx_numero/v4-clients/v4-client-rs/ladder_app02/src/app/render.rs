@@ -241,6 +241,58 @@ pub fn render(state: &AppState, ui: &crate::AppWindow) {
     ui.set_last_price_main(SharedString::from(last_main));
     ui.set_last_price_pad(SharedString::from(last_pad));
 
+    let (oi_main, oi_pad) = if state.open_interest_raw.trim().is_empty() {
+        (String::new(), String::new())
+    } else {
+        split_number_raw(&state.open_interest_raw, SIZE_DECIMALS)
+    };
+    let (vol24_main, vol24_pad) = if state.volume_24h_raw.trim().is_empty() {
+        (String::new(), String::new())
+    } else {
+        split_number_raw(&state.volume_24h_raw, 2)
+    };
+    ui.set_open_interest_main(SharedString::from(oi_main));
+    ui.set_open_interest_pad(SharedString::from(oi_pad));
+    ui.set_volume_24h_main(SharedString::from(vol24_main));
+    ui.set_volume_24h_pad(SharedString::from(vol24_pad));
+    ui.set_price_change_24h_raw(SharedString::from(state.price_change_24h_raw.clone()));
+    ui.set_trades_24h_raw(SharedString::from(state.trades_24h_raw.clone()));
+    ui.set_next_funding_rate_raw(SharedString::from(state.next_funding_rate_raw.clone()));
+    ui.set_clob_pair_id_raw(SharedString::from(state.clob_pair_id_raw.clone()));
+    ui.set_initial_margin_fraction_raw(SharedString::from(
+        state.initial_margin_fraction_raw.clone(),
+    ));
+    ui.set_maintenance_margin_fraction_raw(SharedString::from(
+        state.maintenance_margin_fraction_raw.clone(),
+    ));
+    ui.set_tick_size_raw(SharedString::from(state.tick_size_raw.clone()));
+    ui.set_step_size_raw(SharedString::from(state.step_size_raw.clone()));
+    ui.set_step_base_quantums_raw(SharedString::from(
+        state.step_base_quantums_raw.clone(),
+    ));
+    ui.set_subticks_per_tick_raw(SharedString::from(
+        state.subticks_per_tick_raw.clone(),
+    ));
+    ui.set_market_type_raw(SharedString::from(state.market_type_raw.clone()));
+    ui.set_atomic_resolution_raw(SharedString::from(
+        state.atomic_resolution_raw.clone(),
+    ));
+    ui.set_quantum_conversion_exponent_raw(SharedString::from(
+        state.quantum_conversion_exponent_raw.clone(),
+    ));
+    ui.set_open_interest_lower_cap_raw(SharedString::from(
+        state.open_interest_lower_cap_raw.clone(),
+    ));
+    ui.set_open_interest_upper_cap_raw(SharedString::from(
+        state.open_interest_upper_cap_raw.clone(),
+    ));
+    ui.set_base_open_interest_raw(SharedString::from(
+        state.base_open_interest_raw.clone(),
+    ));
+    ui.set_default_funding_rate_1h_raw(SharedString::from(
+        state.default_funding_rate_1h_raw.clone(),
+    ));
+
     // Book models
     let bids: Vec<BookLevel> = state
         .bids

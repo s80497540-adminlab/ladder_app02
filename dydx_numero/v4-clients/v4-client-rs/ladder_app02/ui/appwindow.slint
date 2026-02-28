@@ -1836,6 +1836,27 @@ export component AppWindow inherits Window {
     in-out property <string> oracle_price_pad;
     in-out property <string> last_price_main;
     in-out property <string> last_price_pad;
+    in-out property <string> open_interest_main;
+    in-out property <string> open_interest_pad;
+    in-out property <string> volume_24h_main;
+    in-out property <string> volume_24h_pad;
+    in-out property <string> price_change_24h_raw;
+    in-out property <string> trades_24h_raw;
+    in-out property <string> next_funding_rate_raw;
+    in-out property <string> clob_pair_id_raw;
+    in-out property <string> initial_margin_fraction_raw;
+    in-out property <string> maintenance_margin_fraction_raw;
+    in-out property <string> tick_size_raw;
+    in-out property <string> step_size_raw;
+    in-out property <string> step_base_quantums_raw;
+    in-out property <string> subticks_per_tick_raw;
+    in-out property <string> market_type_raw;
+    in-out property <string> atomic_resolution_raw;
+    in-out property <string> quantum_conversion_exponent_raw;
+    in-out property <string> open_interest_lower_cap_raw;
+    in-out property <string> open_interest_upper_cap_raw;
+    in-out property <string> base_open_interest_raw;
+    in-out property <string> default_funding_rate_1h_raw;
 
     in-out property <[BookLevel]> bids;
     in-out property <[BookLevel]> asks;
@@ -1860,6 +1881,7 @@ export component AppWindow inherits Window {
     in-out property <bool> show_liquidity_chart: false;
     in-out property <bool> show_imbalance_chart: false;
     in-out property <bool> show_spread_chart: false;
+    in-out property <bool> show_market_meta: true;
     
     in-out property <bool> volume_profile_normalize: true;
     in-out property <bool> liquidity_normalize: true;
@@ -1902,6 +1924,9 @@ export component AppWindow inherits Window {
     in-out property <float> chart_pan_y: 0.0;
     in-out property <float> chart_cursor_x: 0.5;
     in-out property <float> chart_cursor_y: 0.5;
+    in-out property <length> market_meta_offset_x: 0px;
+    in-out property <length> market_meta_offset_y: 1px;
+    in-out property <length> market_meta_height: grid_row_h * 1.6;
 
     in-out property <float> trade_chart_x_zoom: 1.0;
     in-out property <float> trade_chart_y_zoom: 1.0;
@@ -1919,6 +1944,10 @@ export component AppWindow inherits Window {
 
     in-out property <length> inline_chart_height: grid_row_h * 6;
     in-out property <bool> is_fullscreen: false;
+
+    init => {
+        meta_shortcuts.focus();
+    }
 
     in-out property <[string]> draw_tools: ["Pan", "Line", "Rect", "Ruler", "Poly", "Pencil"];
     in-out property <string> draw_tool: "Pan";
@@ -3952,6 +3981,212 @@ export component AppWindow inherits Window {
                     x: col_spacing * 3 + label_w + 2px;
                     y: 0px;
                 }
+
+                Text {
+                    x: col_spacing * 4;
+                    y: 0px;
+                    width: label_w;
+                    height: parent.height;
+                    text: "OI:";
+                    color: #b8c5ff;
+                    font-size: 20px;
+                    vertical-alignment: center;
+                    padding-left: 4px;
+                }
+                ZeroPadText {
+                    main: root.open_interest_main == "" ? "--" : root.open_interest_main;
+                    pad: root.open_interest_main == "" ? "" : root.open_interest_pad;
+                    main_color: #e8f6ff;
+                    pad_color: #7aa8ff;
+                    font_size: 18px;
+                    x: col_spacing * 4 + label_w + 2px;
+                    y: 0px;
+                }
+
+                Text {
+                    x: col_spacing * 5;
+                    y: 0px;
+                    width: label_w;
+                    height: parent.height;
+                    text: "Vol24:";
+                    color: #b8c5ff;
+                    font-size: 20px;
+                    vertical-alignment: center;
+                    padding-left: 4px;
+                }
+                ZeroPadText {
+                    main: root.volume_24h_main == "" ? "--" : root.volume_24h_main;
+                    pad: root.volume_24h_main == "" ? "" : root.volume_24h_pad;
+                    main_color: #e8f6ff;
+                    pad_color: #7aa8ff;
+                    font_size: 18px;
+                    x: col_spacing * 5 + label_w + 2px;
+                    y: 0px;
+                }
+
+                AppButton {
+                    x: parent.width - 244px;
+                    y: 2px;
+                    width: 88px;
+                    height: parent.height - 4px;
+                    text: root.show_market_meta ? "Meta: On" : "Meta: Off";
+                    clicked => { root.show_market_meta = !root.show_market_meta; }
+                }
+
+                AppButton {
+                    x: parent.width - 152px;
+                    y: 2px;
+                    width: 52px;
+                    height: parent.height - 4px;
+                    text: "Reset";
+                    clicked => {
+                        root.market_meta_offset_x = 0px;
+                        root.market_meta_offset_y = 1px;
+                        root.market_meta_height = root.grid_row_h * 1.6;
+                    }
+                }
+
+                AppButton {
+                    x: parent.width - 96px;
+                    y: 2px;
+                    width: 42px;
+                    height: parent.height - 4px;
+                    text: "Meta -";
+                    enabled: root.show_market_meta;
+                    clicked => {
+                        let next = root.market_meta_height - (root.grid_row_h * 0.2);
+                        root.market_meta_height = Math.max(root.grid_row_h * 0.8, next);
+                    }
+                }
+
+                AppButton {
+                    x: parent.width - 50px;
+                    y: 2px;
+                    width: 42px;
+                    height: parent.height - 4px;
+                    text: "Meta +";
+                    enabled: root.show_market_meta;
+                    clicked => {
+                        let next = root.market_meta_height + (root.grid_row_h * 0.2);
+                        root.market_meta_height = Math.min(root.grid_row_h * 3.4, next);
+                    }
+                }
+
+                Text {
+                    x: parent.width - 338px;
+                    y: 2px;
+                    width: 88px;
+                    height: parent.height - 4px;
+                    text: "keys: + / - / 0";
+                    color: #8ea8d8;
+                    font-size: 10px;
+                    vertical-alignment: center;
+                    horizontal-alignment: right;
+                }
+            }
+
+            Rectangle {
+                property <bool> is_advanced: root.chart_view_mode == "Advanced";
+                property <length> chart_left: root.chart_left_x;
+                property <length> chart_top: root.chart_left_y;
+                property <length> chart_w: root.grid_col_w * 26;
+                property <length> meta_h: root.market_meta_height;
+                property <length> pad_x: 8px;
+                property <length> line_h: (meta_h - 10px) / 3;
+                property <length> col_w: (chart_w - (pad_x * 2) - 8px) / 2;
+
+                x: chart_left + root.grid_col_w + root.market_meta_offset_x;
+                y: chart_top + root.grid_row_h + root.market_meta_offset_y;
+                width: chart_w;
+                height: meta_h;
+                background: is_advanced ? #0f1324cc : #0e1422cc;
+                border-width: 1px;
+                border-color: is_advanced ? #2f3550 : #273042;
+                border-radius: 3px;
+                z: 1;
+                visible: root.show_market_meta;
+
+                Text {
+                    x: pad_x;
+                    y: 4px;
+                    width: col_w;
+                    height: line_h;
+                    text: "Δ24h: " + (root.price_change_24h_raw == "" ? "--" : root.price_change_24h_raw)
+                        + "  |  Trades24: " + (root.trades_24h_raw == "" ? "--" : root.trades_24h_raw)
+                        + "  |  Funding: " + (root.next_funding_rate_raw == "" ? "--" : root.next_funding_rate_raw);
+                    color: #b8c5ff;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                Text {
+                    x: pad_x + col_w + 8px;
+                    y: 4px;
+                    width: col_w;
+                    height: line_h;
+                    text: "Type: " + (root.market_type_raw == "" ? "--" : root.market_type_raw)
+                        + "  |  Clob: " + (root.clob_pair_id_raw == "" ? "--" : root.clob_pair_id_raw)
+                        + "  |  DefFund1H: " + (root.default_funding_rate_1h_raw == "" ? "--" : root.default_funding_rate_1h_raw);
+                    color: #b8c5ff;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+
+                Text {
+                    x: pad_x;
+                    y: 4px + line_h;
+                    width: col_w;
+                    height: line_h;
+                    text: "IM: " + (root.initial_margin_fraction_raw == "" ? "--" : root.initial_margin_fraction_raw)
+                        + "  |  MM: " + (root.maintenance_margin_fraction_raw == "" ? "--" : root.maintenance_margin_fraction_raw)
+                        + "  |  Tick: " + (root.tick_size_raw == "" ? "--" : root.tick_size_raw);
+                    color: #9fb6de;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                Text {
+                    x: pad_x + col_w + 8px;
+                    y: 4px + line_h;
+                    width: col_w;
+                    height: line_h;
+                    text: "Step: " + (root.step_size_raw == "" ? "--" : root.step_size_raw)
+                        + "  |  StepQ: " + (root.step_base_quantums_raw == "" ? "--" : root.step_base_quantums_raw)
+                        + "  |  Subticks: " + (root.subticks_per_tick_raw == "" ? "--" : root.subticks_per_tick_raw);
+                    color: #9fb6de;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+
+                Text {
+                    x: pad_x;
+                    y: 4px + line_h * 2;
+                    width: col_w;
+                    height: line_h;
+                    text: "Atomic: " + (root.atomic_resolution_raw == "" ? "--" : root.atomic_resolution_raw)
+                        + "  |  QExp: " + (root.quantum_conversion_exponent_raw == "" ? "--" : root.quantum_conversion_exponent_raw)
+                        + "  |  BaseOI: " + (root.base_open_interest_raw == "" ? "--" : root.base_open_interest_raw);
+                    color: #90a9d5;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                Text {
+                    x: pad_x + col_w + 8px;
+                    y: 4px + line_h * 2;
+                    width: col_w;
+                    height: line_h;
+                    text: "OI Cap L/U: "
+                        + (root.open_interest_lower_cap_raw == "" ? "--" : root.open_interest_lower_cap_raw)
+                        + " / "
+                        + (root.open_interest_upper_cap_raw == "" ? "--" : root.open_interest_upper_cap_raw);
+                    color: #90a9d5;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
             }
 
             // Backdrop removed - dropdown stays open until manually closed
@@ -4633,5 +4868,34 @@ export component AppWindow inherits Window {
         }
 
         // Popout drawn LAST so it sits on top, and NOT scrolled
+    }
+
+    meta_shortcuts := FocusScope {
+        key-pressed(event) => {
+            if !root.show_market_meta {
+                return reject;
+            }
+
+            if event.text == "+" || event.text == "=" {
+                let next = root.market_meta_height + (root.grid_row_h * 0.2);
+                root.market_meta_height = Math.min(root.grid_row_h * 3.4, next);
+                return accept;
+            }
+
+            if event.text == "-" || event.text == "_" {
+                let next = root.market_meta_height - (root.grid_row_h * 0.2);
+                root.market_meta_height = Math.max(root.grid_row_h * 0.8, next);
+                return accept;
+            }
+
+            if event.text == "0" {
+                root.market_meta_offset_x = 0px;
+                root.market_meta_offset_y = 1px;
+                root.market_meta_height = root.grid_row_h * 1.6;
+                return accept;
+            }
+
+            return reject;
+        }
     }
 }

@@ -78,6 +78,10 @@ pub struct AppConfig {
     // window geometry
     pub window_width_px: f32,
     pub window_height_px: f32,
+    pub show_market_meta: bool,
+        pub market_meta_offset_x_px: f32,
+        pub market_meta_offset_y_px: f32,
+        pub market_meta_height_px: f32,
 }
 
 impl Default for AppConfig {
@@ -128,9 +132,13 @@ impl Default for AppConfig {
             orderbook_y_px: 80.0,
             settings_x_px: 392.0,
             settings_y_px: 80.0,
+            show_market_meta: true,
 
             window_width_px: 1600.0,
             window_height_px: 1000.0,
+            market_meta_offset_x_px: 0.0,
+            market_meta_offset_y_px: 1.0,
+            market_meta_height_px: 90.0,
         }
     }
 }
@@ -194,6 +202,7 @@ impl Persistence {
         ui.set_show_trades(cfg.show_trades);
         ui.set_show_volume(cfg.show_volume);
         ui.set_session_recording(cfg.session_recording);
+        ui.set_show_market_meta(cfg.show_market_meta);
 
         ui.set_dom_depth_levels(cfg.dom_depth_levels);
 
@@ -228,6 +237,9 @@ impl Persistence {
         ui.set_orderbook_y((cfg.orderbook_y_px).into());
         ui.set_settings_x((cfg.settings_x_px).into());
         ui.set_settings_y((cfg.settings_y_px).into());
+        ui.set_market_meta_offset_x((cfg.market_meta_offset_x_px).into());
+        ui.set_market_meta_offset_y((cfg.market_meta_offset_y_px).into());
+        ui.set_market_meta_height((cfg.market_meta_height_px.max(40.0)).into());
 
         // Window geometry via Window API (Slint doesn't generate set_width/set_height on your AppWindow)
         // Minimum window size bumped for readability.
@@ -255,6 +267,7 @@ impl Persistence {
             show_trades: ui.get_show_trades(),
             show_volume: ui.get_show_volume(),
             session_recording: ui.get_session_recording(),
+            show_market_meta: ui.get_show_market_meta(),
 
             dom_depth_levels: ui.get_dom_depth_levels(),
 
@@ -289,6 +302,9 @@ impl Persistence {
 
             window_width_px: size.width as f32,
             window_height_px: size.height as f32,
+            market_meta_offset_x_px: len_to_px(ui.get_market_meta_offset_x()),
+            market_meta_offset_y_px: len_to_px(ui.get_market_meta_offset_y()),
+            market_meta_height_px: len_to_px(ui.get_market_meta_height()),
         }
     }
 
